@@ -142,9 +142,14 @@ marks an older one with «Нет сквадов» until it is edited.
 ## Dashboard aggregates
 
 Every FR-142 number is a SQL aggregate over `transactions`, `subscriptions`,
-`users` and `accounts`, cached in Valkey for 60 seconds. Revenue counts
-`purchase` and `topup` minus `refund`; the trial conversion is a cohort by trial
-date. `test/m4.admin.integration.test.mjs` re-computes each aggregate with an
+`users` and `accounts`, cached in Valkey for 60 seconds. Revenue, the payment
+count, the average check, the daily chart and the top providers count the money
+providers brought in: top-ups and purchases, except purchases paid from the
+balance, which spend a top-up already counted. A refund goes to the balance, so
+the money stays with the shop (it shows in the users' balance) and is not
+subtracted. This is an owner decision of 2026-09-26 that departs from FR-142's
+`purchase + topup − refund`, which counted a top-up and the purchase paid from
+it twice. The trial conversion is a cohort by trial date. `test/m4.admin.integration.test.mjs` re-computes each aggregate with an
 independent SQL control on fixtures (AC-142) and also covers AC-140 search and
 AC-141 audited actions.
 

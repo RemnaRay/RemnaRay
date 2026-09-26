@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@remnaray/db';
 import { z } from 'zod';
 
 import { Infrastructure } from '../../infra/infra.module';
@@ -27,6 +28,17 @@ function toBigInt(value: unknown): bigint {
 function toNumber(value: unknown): number {
   return Number(toBigInt(value));
 }
+
+/**
+ * Money a provider brought in: top-ups and purchases, except purchases paid
+ * from the balance, which spend a top-up already counted. Owner decision F31
+ * (2026-09-26), a deliberate deviation from FR-142's `purchase + topup −
+ * refund`, which counted that money twice; a refund goes to the balance, so
+ * the money stays with the shop (the users' balance, the liability widget)
+ * and is not subtracted either.
+ */
+const RECEIVED = Prisma.sql`status = 'completed' AND type IN ('purchase', 'topup')
+  AND provider IS NOT NULL AND provider <> 'balance'`;
 
 /**
  * FR-142 widgets. Every number is a SQL aggregate over `transactions`,
@@ -72,19 +84,13 @@ export class DashboardService {
       providerRows,
     ] = await Promise.all([
       db.$queryRaw<{ revenue: bigint | null }[]>`
-          SELECT COALESCE(SUM(
-            CASE WHEN type = 'refund' THEN -ABS(amount_minor) ELSE amount_minor END
-          ), 0)::bigint AS revenue
+          SELECT COALESCE(SUM(amount_minor), 0)::bigint AS revenue
           FROM transactions
-          WHERE status = 'completed'
-            AND type IN ('purchase', 'topup', 'refund')
-            AND created_at >= ${from} AND created_at <= ${to}`,
+          WHERE ${RECEIVED} AND created_at >= ${from} AND created_at <= ${to}`,
       db.$queryRaw<{ payments: bigint; total: bigint | null }[]>`
           SELECT COUNT(*)::bigint AS payments, COALESCE(SUM(amount_minor), 0)::bigint AS total
           FROM transactions
-          WHERE status = 'completed'
-            AND type IN ('purchase', 'topup')
-            AND created_at >= ${from} AND created_at <= ${to}`,
+          WHERE ${RECEIVED} AND created_at >= ${from} AND created_at <= ${to}`,
       db.user.count({ where: { createdAt: { gte: from, lte: to } } }),
       db.$queryRaw<{ trials: bigint }[]>`
           SELECT COUNT(*)::bigint AS trials
@@ -116,11 +122,10 @@ export class DashboardService {
           FROM transactions
           WHERE type = 'referral_reward' AND status = 'completed'
             AND created_at >= ${from} AND created_at <= ${to}`,
-      db.$queryRaw<{ provider: string | null; total: bigint | null; payments: bigint }[]>`
+      db.$queryRaw<{ provider: string; total: bigint | null; payments: bigint }[]>`
           SELECT provider, COALESCE(SUM(amount_minor), 0)::bigint AS total, COUNT(*)::bigint AS payments
           FROM transactions
-          WHERE status = 'completed' AND type IN ('purchase', 'topup')
-            AND created_at >= ${from} AND created_at <= ${to}
+          WHERE ${RECEIVED} AND created_at >= ${from} AND created_at <= ${to}
           GROUP BY provider
           ORDER BY total DESC
           LIMIT 5`,
@@ -144,7 +149,7 @@ export class DashboardService {
       userBalanceLiability: money(toBigInt(liabilityRows[0]?.liability ?? 0)),
       referralRewards: money(toBigInt(referralRows[0]?.rewards ?? 0)),
       topProviders: providerRows.map((row) => ({
-        provider: row.provider ?? 'balance',
+        provider: row.provider,
         total: money(toBigInt(row.total ?? 0)),
         payments: toNumber(row.payments),
       })),
@@ -157,10 +162,9 @@ export class DashboardService {
     const [revenue, registrations] = await Promise.all([
       this.infra.db.$queryRaw<{ day: Date; total: bigint | null }[]>`
         SELECT date_trunc('day', created_at) AS day,
-               COALESCE(SUM(CASE WHEN type = 'refund' THEN -ABS(amount_minor) ELSE amount_minor END), 0)::bigint AS total
+               COALESCE(SUM(amount_minor), 0)::bigint AS total
         FROM transactions
-        WHERE status = 'completed' AND type IN ('purchase', 'topup', 'refund')
-          AND created_at >= ${from} AND created_at <= ${to}
+        WHERE ${RECEIVED} AND created_at >= ${from} AND created_at <= ${to}
         GROUP BY 1 ORDER BY 1`,
       this.infra.db.$queryRaw<{ day: Date; total: bigint }[]>`
         SELECT date_trunc('day', created_at) AS day, COUNT(*)::bigint AS total

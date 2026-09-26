@@ -459,7 +459,7 @@ refused: <code> (<reason>)`; the answer is unchanged. Evidence: verifier
   `POST /api/internal/v1/me/invoices/<id>/check`; status and code awaited
   from the owner. A repeated press would also hit Telegram's «message is not
   modified» in `show()`.
-- **F31 (P1, owner decision) — dashboard revenue counted a top-up and the
+- **F31 Done (P1, owner decision) — dashboard revenue counted a top-up and the
   balance purchase paid from it (300 + 299 = 599 ₽).** FR-142 literally sums
   `purchase + topup − refund`, which counts money spent from the balance
   twice. Owner decision (variant Б): revenue, payments and the average check
@@ -467,6 +467,11 @@ refused: <code> (<reason>)`; the answer is unchanged. Evidence: verifier
   is not `balance`; refunds to the balance are **not** subtracted (the money
   stays with the shop as the users' balance, shown as the liability).
   Top providers leave out `balance`. Deliberate deviation from FR-142.
+  Done: one `RECEIVED` condition in `dashboard.service.ts` for revenue,
+  payments, the average, the daily series and top providers;
+  `docs/admin.md` records the deviation. Evidence: `m4.admin` integration
+  with a balance purchase and a refund in the fixture — old SQL 129 700,
+  expected 109 800 → green.
 - **F32 (P2) — console transactions:** «Вернуть на баланс» is offered on a
   `topup` row, which the API refuses (refunds are purchases only since
   `0d11ff7`); types show raw codes and a balance purchase is not named as

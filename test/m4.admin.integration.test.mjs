@@ -102,6 +102,15 @@ test(
             provider: 'yookassa',
           },
           {
+            // Paid from the balance the top-up filled: no new money (F31).
+            userId: created[2].id,
+            type: 'purchase',
+            status: 'completed',
+            amountMinor: 29900n,
+            currency: 'RUB',
+            provider: 'balance',
+          },
+          {
             userId: created[0].id,
             type: 'refund',
             status: 'completed',
@@ -163,15 +172,20 @@ test(
       const to = new Date(Date.now() + 86_400_000);
       const overview = await dashboard.overview({ from: from.toISOString(), to: to.toISOString() });
 
-      // AC-142: independent SQL control for every aggregate.
+      // AC-142: independent SQL control for every aggregate. Revenue is the
+      // money providers brought in (owner decision F31, 2026-09-26): top-ups
+      // and purchases not paid from the balance; refunds to the balance keep
+      // the money in the shop and are not subtracted.
       const [control] = await prisma.$queryRaw`
         SELECT
-          (SELECT COALESCE(SUM(CASE WHEN type = 'refund' THEN -amount_minor ELSE amount_minor END), 0)
+          (SELECT COALESCE(SUM(amount_minor), 0)
              FROM transactions
-            WHERE status = 'completed' AND type IN ('purchase','topup','refund')
+            WHERE status = 'completed' AND type IN ('purchase','topup')
+              AND provider IS NOT NULL AND provider <> 'balance'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS revenue,
           (SELECT COUNT(*) FROM transactions
             WHERE status = 'completed' AND type IN ('purchase','topup')
+              AND provider IS NOT NULL AND provider <> 'balance'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS payments,
           (SELECT COUNT(*) FROM users WHERE created_at BETWEEN ${from} AND ${to})::bigint AS new_users,
           (SELECT COUNT(*) FROM subscriptions WHERE source = 'trial'
@@ -189,7 +203,8 @@ test(
       assert.equal(overview.activeSubscriptions, Number(control.active));
       assert.equal(overview.userBalanceLiability.amountMinor, Number(control.liability));
       assert.equal(overview.referralRewards.amountMinor, Number(control.rewards));
-      assert.equal(overview.revenue.amountMinor, 99800);
+      assert.equal(overview.revenue.amountMinor, 109800);
+      assert.equal(overview.payments, 3);
       assert.equal(overview.averagePayment.amountMinor, Math.floor(109800 / 3));
       assert.equal(overview.expiringInThreeDays, 1);
       assert.equal(overview.trialConversionPercent, 50);
