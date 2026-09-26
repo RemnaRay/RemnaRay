@@ -337,7 +337,12 @@ panel users yet).
   (profile scope; in the documented example, not in `claims_supported`) —
   confirm on the first live login. Evidence: verifier tests (11), service
   tests, web widget/CSP tests, E2E sign-in with a locally published JWKS
-  (38 passed). Stand: add `https://<domain>` as an Allowed URL before testing.
+  (38 passed). Stand: in the BotFather mini app → Login Widget press **Switch
+  to OpenID Connect Login** (the stand's bot is still on the legacy
+  `/setdomain` widget — owner screenshot 2026-09-26), then allow
+  `https://<domain>`, `https://<domain>/ru` and `https://<domain>/en` (the
+  library's `redirect_uri` is `location.origin + location.pathname`) and
+  compare the shown Client ID with the bot token's id; `docs/setup.md` says so.
 
 **P2 — usability**
 

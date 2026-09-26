@@ -64,14 +64,28 @@ link and the administration URL.
 
 The landing page's «Войти» uses Telegram Login over OpenID Connect
 (core.telegram.org/widgets/login). Telegram only signs a visitor in on a page
-the bot allows. After the wizard, open @BotFather, open its mini app, choose the
-shop's bot → **Login Widget** and add the shop's origin as an Allowed URL:
-`https://<domain>` (the domain of step 2). Nothing else is needed: the Client ID
-is the bot's id, which the API reads from the bot token, and the Client Secret
-is not used (the page receives a signed `id_token`, which the API checks
-against Telegram's public keys). Until the URL is allowed, the Telegram popup
-refuses the login; customers can still sign in from the bot with «Открыть
-кабинет».
+the bot allows. After the wizard, open @BotFather, open its mini app and choose
+the shop's bot → **Login Widget**:
+
+1. A bot still on the legacy widget shows its `/setdomain` domain and **Switch
+   to OpenID Connect Login**. Press it: the legacy widget is replaced (the
+   site no longer uses it, and the bot's «Открыть кабинет» link does not
+   depend on it).
+2. Add the Allowed URLs: the origin `https://<domain>` (the domain of step 2)
+   and the landing pages the button is on, `https://<domain>/ru` and
+   `https://<domain>/en`. The library sends the page it runs on
+   (`location.origin + location.pathname`) as its `redirect_uri`.
+3. Check that the **Client ID** BotFather shows is the number before the colon
+   in the bot token: the API reads the Client ID from the token and refuses a
+   token issued for another one.
+4. Leave the signing algorithm (**Advanced**) at RS256 or ES256; EdDSA and
+   ES256K carry no profile, and the API refuses them.
+
+The **Client Secret** is not needed and goes nowhere: it serves the
+authorization-code flow, while this page receives a signed `id_token` straight
+from the popup and the API checks it against Telegram's public keys. Until the
+URLs are allowed, the Telegram popup refuses the login; customers can still
+sign in from the bot with «Открыть кабинет».
 
 ## Resuming
 
