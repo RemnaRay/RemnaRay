@@ -433,6 +433,52 @@ defect; five findings were confirmed and repaired, one commit each:
 Checks after the repairs: format, lint, typecheck, 30 turbo test tasks, root
 tests, 25/25 integration, E2E 38 passed.
 
+### Second walk (2026-09-26 evening, after the redeploy)
+
+The owner redeployed with the repairs and walked the stand again. Findings,
+recorded before repair; owner decisions of 2026-09-26 are quoted with each.
+
+- **F34 (P0, auth) — the site's OIDC login answered `AUTH_INVALID_SIGNATURE`.**
+  Evidence: the owner's `id_token` (header and payload only): `kid oidc-1`
+  RS256, `aud "8619282969"` (the Client ID BotFather shows), `iss`, `nonce`
+  as issued, `exp − iat = 30 s`, and `"id": "7556126867"` — a **string**. The
+  `[verify]` item of F29 is answered: Telegram sends `id` as a string of
+  digits, not the number of its documentation example; the verifier required
+  a number. Also: every refused check answers the same code and nothing is
+  logged, so the cause needed the token. Repair: accept a decimal string or
+  a safe integer; log which check refused (no token).
+- **F30 (P1) — bot «Проверить оплату» on an unpaid invoice → «Произошла
+  ошибка».** Bot log `incidentId zB7PFMjZ`: `description: 'api_error'` for
+  `POST /api/internal/v1/me/invoices/<id>/check`; status and code awaited
+  from the owner. A repeated press would also hit Telegram's «message is not
+  modified» in `show()`.
+- **F31 (P1, owner decision) — dashboard revenue counted a top-up and the
+  balance purchase paid from it (300 + 299 = 599 ₽).** FR-142 literally sums
+  `purchase + topup − refund`, which counts money spent from the balance
+  twice. Owner decision (variant Б): revenue, payments and the average check
+  count money received from providers — top-ups and purchases whose provider
+  is not `balance`; refunds to the balance are **not** subtracted (the money
+  stays with the shop as the users' balance, shown as the liability).
+  Top providers leave out `balance`. Deliberate deviation from FR-142.
+- **F32 (P2) — console transactions:** «Вернуть на баланс» is offered on a
+  `topup` row, which the API refuses (refunds are purchases only since
+  `0d11ff7`); types show raw codes and a balance purchase is not named as
+  such. Repair: the button on purchases only; localized type and «с
+  баланса».
+- **F33 (P2, owner request) — the landing's «Войти» scrolls to the block at
+  the bottom of the page.** Repair: «Войти» opens a modal with the Telegram
+  sign-in.
+- **F35 (P1, owner decision) — support: a customer cannot answer an
+  operator.** «Поддержка» waits for exactly one message, so every further
+  message needs the button again. Owner decisions: an **optional separate
+  support bot** — its token is an optional step of the setup wizard and a
+  field in the console's settings. When it is set, «Поддержка» in the shop
+  bot opens the support bot; every message there goes straight to the
+  customer's forum topic, and the operators' answers in the topic come from
+  the support bot. Without it, support stays in the shop bot, but the
+  conversation stays open (no second press). Text, photos, files and voice
+  messages are copied both ways. Beyond FR-124.
+
 ### Next
 
 1. P0, P1 except F9/F17, and P2 — done (F1–F8, F10–F16, F18–F28).
@@ -443,10 +489,9 @@ tests, 25/25 integration, E2E 38 passed.
    the console zone, the console zone raised to about 120 r/m (burst 120),
    the rest as section 21.3; the deviation is recorded. F29 — move the site
    login to Telegram's OIDC now. Order: F9, F17, F29.
-3. Redeploy the stand (fresh data; the seven fake payments go with it), check
-   in the panel whether the owner's own user lost its squads to the MONTH plan
-   (F28), re-run the acceptance walk including support topics (F14) and the
-   bot screens (F9, F13, F15, F16, F27), then the M5-004 gates.
+3. Redeploy and second walk — done (2026-09-26 evening); its findings are
+   F30–F35 above. Repair order: F34, F30, F31, F32, F33, F35.
+4. Then redeploy, re-check those on the stand, and the M5-004 gates.
 
 F17 inventory (for the discussion): nginx zones per IP — `rr_general` 20 r/s
 (burst 50, site pages), `rr_api` 10 r/s (burst 30, `/api/`), `rr_auth` 5 r/m
