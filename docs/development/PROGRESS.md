@@ -642,6 +642,22 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      `GET api/admin/v1/support/tickets`, `tickets/:id`. Evidence: web page
      tests (list, stats, read-only vs editable), `m4.support` list filters,
      cursor and history on PostgreSQL.
+     Wrap-up: changesets (`c48d22f`). Independent read-only review of
+     `c947a44..c48d22f` — no critical or high defect; the trust boundaries
+     (operators' chat check, customer-owned rating/close, admin-only card
+     actions, `support.write`) and money paths (`adjustBalance`, limits,
+     kopecks, command idempotency) hold. Repaired, one commit each: the card
+     over Telegram's 4096 characters with a long admin note (`60ffd57`); a
+     take or first answer reopening a ticket closed meanwhile (`dcec288`); the
+     link button's 500 for a customer who blocked the bot (`0cb3afb`); card
+     actions de-duplicated per ticket and action for a minute, not per
+     operator for 10 s (`548f6a8`); `/credit 1 000 …` refused (`a8811b7`);
+     anonymous-admin answers passed on (`f5b5462`); strict UUIDs in buttons and
+     FAQ ids (`dfbb223`); popups as plain text (`8b5b7a9`). Checks: format,
+     lint, typecheck (21), turbo test (30), root 55, `test:m4` 7/7 (with
+     `m4.support`), E2E 38 passed. Known, not F36: `changeset status` fails
+     on dev because 35 existing changesets mix private apps with public
+     packages (changesets v3 refuses); CI does not run it.
 
 ### Next
 
@@ -668,9 +684,13 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
    bot an administrator of the operators' forum with «Управление темами»).
    Then the M5-004 gates.
 5. Done on the stand (third walk, 2026-09-27): sign-in, «Проверить оплату»,
-   the dashboard and the separate support bot. Now: F36 stages 2–7, then the
-   batch's changesets, an independent review, the full checks, and the owner's
-   redeploy and walk of the tickets.
+   the dashboard and the separate support bot. F36 (support tickets) is
+   implemented and reviewed (`2097aef`…`8b5b7a9`). Next: push, rebuild the
+   `:dev` images, `git pull` and `./scripts/rr up` on the stand (migration
+   0010 runs on start), then the owner walks the tickets: the support bot in
+   the forum, card buttons, notes, `/t`, rating, reminders, card actions
+   (with the owner's Telegram ID set in «Администраторы»), FAQ and the
+   console's «Поддержка». Then the M5-004 gates.
 
 F17 inventory (for the discussion): nginx zones per IP — `rr_general` 20 r/s
 (burst 50, site pages), `rr_api` 10 r/s (burst 30, `/api/`), `rr_auth` 5 r/m
