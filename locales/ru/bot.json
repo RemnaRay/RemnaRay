@@ -223,5 +223,9 @@
   "bot.support.op.templates": "Шаблоны (/t код):",
   "bot.support.op.templateLine": "<code>{code}</code> — {title}",
   "bot.support.op.templatesNone": "Шаблонов пока нет — их добавляют в консоли: «Поддержка» → «Шаблоны».",
-  "bot.support.op.templateUnknown": "Шаблона «{code}» нет. /t — список шаблонов."
+  "bot.support.op.templateUnknown": "Шаблона «{code}» нет. /t — список шаблонов.",
+  "bot.support.rate.ask": "Оцените, пожалуйста, как мы помогли:",
+  "bot.support.rate.thanks": "Спасибо за оценку!",
+  "bot.support.rate.already": "Оценка уже учтена.",
+  "bot.support.op.rated": "{stars} Оценка тикета #{number}: {rating}"
 }

@@ -39,6 +39,16 @@ buttons work only in that chat. The first answer takes a ticket nobody took.
 In the topic, `/close`, `/silent` and `/card` do the same as the buttons. An
 operator writing to a customer without an open ticket opens one.
 
+**Rating.** A closed ticket's notice asks the customer to rate the help
+(★1–★5); only the first rating of their own closed ticket counts. The rating
+appears in the topic (`★★★★☆ Оценка тикета #N: 4`) and on the card. A silent
+close asks nothing.
+
+**Statistics.** `GET /api/admin/v1/support/stats?from&to` (the last 30 days
+by default; `support.read`): tickets opened and closed, open now, the time to
+the first answer (average and median), the time to the close, the average
+rating, and the same per operator who took tickets.
+
 **Notes and templates.** A message starting with `//` is an internal note:
 it is kept with the ticket and never sent to the customer. `/t` lists the
 answer templates, `/t <code>` sends one to the customer in their language

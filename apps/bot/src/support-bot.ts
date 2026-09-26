@@ -16,6 +16,7 @@ import { ApiClientError, type ApiClient } from './api-client.js';
 import { incidentId, outgoingThrottle } from './bot.js';
 import { normalizeLocale, type BotI18n } from './i18n.js';
 import { supportRelay } from './support.js';
+import { RATING_DATA, rateTicket, ratingKeyboard } from './support-rating.js';
 import { isSupportMessage, messageInfo, movedTo } from './support-inbox.js';
 
 export type SupportContext = Context & {
@@ -94,12 +95,16 @@ export function createSupportBot(options: {
   bot.command('start', (ctx) => ctx.reply(ctx.t('bot.support.start')));
   bot.callbackQuery('support:end', async (ctx) => {
     const { ticket } = await api.closeSupport(ctx.from.id, 'support');
+    if (!ticket) {
+      await ctx.reply(ctx.t('bot.support.ticket.none'));
+      return;
+    }
     await ctx.reply(
-      ticket
-        ? ctx.t('bot.support.ticket.closedByCustomer', { number: ticket.number })
-        : ctx.t('bot.support.ticket.none'),
+      `${ctx.t('bot.support.ticket.closedByCustomer', { number: ticket.number })}\n\n${ctx.t('bot.support.rate.ask')}`,
+      { reply_markup: ratingKeyboard(ticket.id) },
     );
   });
+  bot.callbackQuery(RATING_DATA, rateTicket(api));
   bot.on('message', supportBotInbox(api));
   bot.catch(supportBotErrorHandler);
   return { bot };

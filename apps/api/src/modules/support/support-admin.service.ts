@@ -1,4 +1,5 @@
 import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@remnaray/db';
 import { z } from 'zod';
 
 import { Infrastructure } from '../../infra/infra.module';
@@ -19,10 +20,106 @@ export const templateSchema = z.object({
   sortOrder: z.number().int().min(0).max(10_000).default(100),
 });
 
+export const periodSchema = z.object({
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+});
+
+type Totals = {
+  opened: bigint;
+  closed: bigint;
+  open_now: bigint;
+  avg_first_response: number | null;
+  median_first_response: number | null;
+  avg_resolution: number | null;
+  avg_rating: number | null;
+  rated: bigint;
+};
+type AssigneeRow = {
+  telegram_id: bigint;
+  name: string | null;
+  closed: bigint;
+  open_now: bigint;
+  avg_first_response: number | null;
+  avg_rating: number | null;
+  rated: bigint;
+};
+
 /** The console's side of support (owner decision F36): templates, FAQ, tickets, statistics. */
 @Injectable()
 export class SupportAdminService {
   constructor(private readonly infra: Infrastructure) {}
+
+  /**
+   * Support over a period (the last 30 days by default): tickets opened and
+   * closed, open now, the time to the first answer (average and median) and
+   * to the close, the ratings, and the same per operator who took tickets.
+   * Times are in seconds.
+   */
+  async stats(query: unknown) {
+    const input = periodSchema.parse(query ?? {});
+    const to = input.to ? new Date(input.to) : new Date();
+    const from = input.from ? new Date(input.from) : new Date(to.getTime() - 30 * 86_400_000);
+    if (from >= to) throw new ApiError('VALIDATION_ERROR', HttpStatus.BAD_REQUEST);
+    const created = Prisma.sql`created_at >= ${from} AND created_at < ${to}`;
+    const closedIn = Prisma.sql`closed_at >= ${from} AND closed_at < ${to}`;
+    const ratedIn = Prisma.sql`rated_at >= ${from} AND rated_at < ${to}`;
+    const firstResponse = Prisma.sql`extract(epoch FROM first_response_at - created_at)`;
+    const [totals] = await this.infra.db.$queryRaw<Totals[]>(Prisma.sql`
+      SELECT
+        count(*) FILTER (WHERE ${created}) AS opened,
+        count(*) FILTER (WHERE ${closedIn}) AS closed,
+        count(*) FILTER (WHERE status <> 'closed') AS open_now,
+        avg(${firstResponse}) FILTER (WHERE ${created} AND first_response_at IS NOT NULL)::float8
+          AS avg_first_response,
+        (percentile_cont(0.5) WITHIN GROUP (ORDER BY ${firstResponse})
+          FILTER (WHERE ${created} AND first_response_at IS NOT NULL))::float8
+          AS median_first_response,
+        avg(extract(epoch FROM closed_at - created_at)) FILTER (WHERE ${closedIn})::float8
+          AS avg_resolution,
+        avg(rating) FILTER (WHERE ${ratedIn})::float8 AS avg_rating,
+        count(rating) FILTER (WHERE ${ratedIn}) AS rated
+      FROM support_tickets`);
+    const assignees = await this.infra.db.$queryRaw<AssigneeRow[]>(Prisma.sql`
+      SELECT
+        assignee_telegram_id AS telegram_id,
+        (array_agg(assignee_name ORDER BY updated_at DESC))[1] AS name,
+        count(*) FILTER (WHERE ${closedIn}) AS closed,
+        count(*) FILTER (WHERE status <> 'closed') AS open_now,
+        avg(${firstResponse}) FILTER (WHERE ${created} AND first_response_at IS NOT NULL)::float8
+          AS avg_first_response,
+        avg(rating) FILTER (WHERE ${ratedIn})::float8 AS avg_rating,
+        count(rating) FILTER (WHERE ${ratedIn}) AS rated
+      FROM support_tickets
+      WHERE assignee_telegram_id IS NOT NULL
+      GROUP BY assignee_telegram_id
+      HAVING count(*) FILTER (WHERE ${created} OR ${closedIn} OR status <> 'closed') > 0
+      ORDER BY closed DESC, telegram_id`);
+    const seconds = (value: number | null) => (value === null ? null : Math.round(value));
+    const average = (value: number | null) =>
+      value === null ? null : Math.round(value * 100) / 100;
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      opened: Number(totals?.opened ?? 0n),
+      closed: Number(totals?.closed ?? 0n),
+      openNow: Number(totals?.open_now ?? 0n),
+      firstResponseSeconds: {
+        average: seconds(totals?.avg_first_response ?? null),
+        median: seconds(totals?.median_first_response ?? null),
+      },
+      resolutionSeconds: seconds(totals?.avg_resolution ?? null),
+      rating: { average: average(totals?.avg_rating ?? null), count: Number(totals?.rated ?? 0n) },
+      operators: assignees.map((row) => ({
+        telegramId: row.telegram_id.toString(),
+        name: row.name,
+        closed: Number(row.closed),
+        openNow: Number(row.open_now),
+        firstResponseSeconds: seconds(row.avg_first_response),
+        rating: { average: average(row.avg_rating), count: Number(row.rated) },
+      })),
+    };
+  }
 
   async templates() {
     const rows = await this.infra.db.supportTemplate.findMany({

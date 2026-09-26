@@ -36,7 +36,9 @@ function screen(
   const api = {
     getConfig: () => ({ supportForwardChatId, supportContact, supportBot }),
     openSupport: vi.fn().mockResolvedValue(undefined),
-    closeSupport: vi.fn().mockResolvedValue({ ticket: { number: 12 } }),
+    closeSupport: vi
+      .fn()
+      .mockResolvedValue({ ticket: { id: '00000000-0000-4000-8000-000000000001', number: 12 } }),
   };
   return { ctx, api, params, shown };
 }
@@ -60,8 +62,13 @@ describe('bot support screen (FR-124)', () => {
     await endSupport(ctx, api as never);
     expect(api.closeSupport).toHaveBeenCalledWith(123);
     // F36: the customer's «Завершить» closes their ticket by number.
-    expect(shown[1]?.text).toBe('bot.screen.support.endedTicket');
+    expect(shown[1]?.text).toBe('bot.screen.support.endedTicket\n\nbot.support.rate.ask');
     expect(params).toContainEqual({ key: 'bot.screen.support.endedTicket', number: 12 });
+    // …and may rate it.
+    expect(shown[1]?.buttons).toEqual([
+      ...[1, 2, 3, 4, 5].map((n) => `rate:00000000-0000-4000-8000-000000000001:${String(n)}`),
+      'home',
+    ]);
 
     api.closeSupport.mockResolvedValueOnce({ ticket: null });
     await endSupport(ctx, api as never);

@@ -223,5 +223,9 @@
   "bot.support.op.templates": "Templates (/t code):",
   "bot.support.op.templateLine": "<code>{code}</code> — {title}",
   "bot.support.op.templatesNone": "No templates yet — add them in the console: «Support» → «Templates».",
-  "bot.support.op.templateUnknown": "There is no template «{code}». /t lists them."
+  "bot.support.op.templateUnknown": "There is no template «{code}». /t lists them.",
+  "bot.support.rate.ask": "Please rate how we helped:",
+  "bot.support.rate.thanks": "Thank you for the rating!",
+  "bot.support.rate.already": "Your rating is already counted.",
+  "bot.support.op.rated": "{stars} Ticket #{number} rated {rating}"
 }

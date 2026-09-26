@@ -24,6 +24,8 @@ test(
       const { TicketsRepository } =
         await import('../apps/api/dist/modules/support/tickets.repository.js');
       const { loadCardData } = await import('../apps/api/dist/modules/support/card-data.js');
+      const { SupportAdminService } =
+        await import('../apps/api/dist/modules/support/support-admin.service.js');
       const prisma = createPrismaClient(databaseUrl);
       const tickets = new TicketsRepository({ db: prisma });
 
@@ -105,6 +107,60 @@ test(
       assert.equal(card.support.previous?.number, 1n);
       assert.equal(card.subscription, null);
       assert.equal(card.user.telegramId, '42');
+
+      // Statistics over a period (F36): times in seconds, per operator.
+      const now = Date.now();
+      const at = (minutesAgo) => new Date(now - minutesAgo * 60_000);
+      const other = await prisma.user.create({
+        data: { telegramId: 43n, firstName: 'Boris', language: 'en', referralCode: 'SUPPORT2' },
+      });
+      await prisma.supportTicket.update({
+        where: { id: second.ticket.id },
+        data: {
+          createdAt: at(100),
+          firstResponseAt: at(90),
+          takenAt: at(90),
+          assigneeTelegramId: 7n,
+          assigneeName: 'Olga',
+          status: 'closed',
+          closedAt: at(40),
+          closedBy: 'operator',
+          rating: 5,
+          ratedAt: at(39),
+        },
+      });
+      await prisma.supportTicket.create({
+        data: {
+          userId: other.id,
+          channel: 'shop',
+          createdAt: at(50),
+          firstResponseAt: at(20),
+          takenAt: at(20),
+          status: 'in_progress',
+          assigneeTelegramId: 8n,
+          assigneeName: 'Pavel',
+        },
+      });
+      // The first ticket was created now; move it out of the period.
+      await prisma.supportTicket.update({
+        where: { id: first.id },
+        data: { createdAt: at(60 * 24 * 40), closedAt: at(60 * 24 * 40) },
+      });
+      const admin = new SupportAdminService({ db: prisma });
+      const stats = await admin.stats({});
+      assert.equal(stats.opened, 2);
+      assert.equal(stats.closed, 1);
+      assert.equal(stats.openNow, 1);
+      assert.deepEqual(stats.firstResponseSeconds, { average: 1200, median: 1200 });
+      assert.equal(stats.resolutionSeconds, 3600);
+      assert.deepEqual(stats.rating, { average: 5, count: 1 });
+      assert.deepEqual(
+        stats.operators.map((row) => [row.name, row.closed, row.openNow, row.firstResponseSeconds]),
+        [
+          ['Olga', 1, 0, 600],
+          ['Pavel', 0, 1, 1800],
+        ],
+      );
 
       await prisma.$disconnect();
     } finally {

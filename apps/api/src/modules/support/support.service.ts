@@ -189,7 +189,10 @@ export class SupportService {
   }
 
   /** The customer closes their ticket («Завершить», «Закрыть обращение»). */
-  async customerClose(telegramId: string, via: SupportVia): Promise<{ number: number } | null> {
+  async customerClose(
+    telegramId: string,
+    via: SupportVia,
+  ): Promise<{ id: string; number: number } | null> {
     await this.infra.redis.del(openKey(telegramId));
     const customer = await this.customer(telegramId);
     if (!customer) return null;
@@ -208,7 +211,47 @@ export class SupportService {
       await this.refreshCard(closed);
       await this.renameTopic(closed, customer, destination);
     });
-    return { number: Number(closed.number) };
+    return { id: closed.id, number: Number(closed.number) };
+  }
+
+  /**
+   * The customer rates their closed ticket (1–5), once. The operators see the
+   * rating in the topic and on the card.
+   */
+  async rate(
+    telegramId: string,
+    ticketId: string,
+    rating: number,
+  ): Promise<{ accepted: boolean; number: number | null }> {
+    const customer = await this.customer(telegramId);
+    if (!customer) return { accepted: false, number: null };
+    const { count } = await this.infra.db.supportTicket.updateMany({
+      where: { id: ticketId, userId: customer.id, status: 'closed', rating: null },
+      data: { rating, ratedAt: new Date() },
+    });
+    const ticket = await this.tickets.byId(ticketId);
+    if (count === 0 || !ticket || ticket.userId !== customer.id)
+      return {
+        accepted: false,
+        number: ticket?.userId === customer.id ? Number(ticket.number) : null,
+      };
+    await this.bestEffort(async () => {
+      if (ticket.chatId === null) return;
+      const destination = await this.destinationForChat(Number(ticket.chatId));
+      if (!destination) return;
+      const t = await this.operatorTranslate();
+      await this.postSystem(
+        ticket,
+        destination,
+        t('bot.support.op.rated', {
+          number: Number(ticket.number),
+          rating,
+          stars: '★'.repeat(rating) + '☆'.repeat(5 - rating),
+        }),
+      );
+      await this.refreshCard(ticket);
+    });
+    return { accepted: true, number: Number(ticket.number) };
   }
 
   private async command(
@@ -471,7 +514,9 @@ export class SupportService {
     await this.bestEffort(async () => {
       const t = await this.operatorTranslate();
       if (customer && !silently)
-        await this.tellCustomer(current, customer, 'bot.support.ticket.closed', destination);
+        await this.tellCustomer(current, customer, 'bot.support.ticket.closed', destination, {
+          rating: true,
+        });
       await this.postSystem(
         current,
         destination,
@@ -750,12 +795,16 @@ export class SupportService {
     customer: Customer,
     key: string,
     destination: Destination,
+    options: { rating?: boolean } = {},
   ): Promise<void> {
     const t = await this.customerTranslate(customer.language);
     await telegramCall(destination.token, 'sendMessage', {
       chat_id: Number(customer.telegramId),
-      text: t(key, { number: Number(ticket.number) }),
+      text: options.rating
+        ? `${t(key, { number: Number(ticket.number) })}\n\n${t('bot.support.rate.ask')}`
+        : t(key, { number: Number(ticket.number) }),
       parse_mode: 'HTML',
+      ...(options.rating ? { reply_markup: ratingKeyboard(ticket.id) } : {}),
     });
   }
 
@@ -867,6 +916,18 @@ export class SupportService {
     await this.infra.redis.set(key, forum ? '1' : '0', 'EX', FORUM_TTL_SECONDS);
     return forum;
   }
+}
+
+/** ★1…★5 under a closed ticket's notice: `rate:<ticket id>:<n>`. */
+export function ratingKeyboard(ticketId: string) {
+  return {
+    inline_keyboard: [
+      [1, 2, 3, 4, 5].map((rating) => ({
+        text: `${String(rating)}★`,
+        callback_data: `rate:${ticketId}:${String(rating)}`,
+      })),
+    ],
+  };
 }
 
 /** A template's text in the customer's language, else the shop's, else any. */

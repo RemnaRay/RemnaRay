@@ -8,6 +8,7 @@ const catalogs: Record<string, Record<string, string>> = {
     'bot.support.start': 'Поддержка {brand}',
     'bot.support.ticket.created': 'Обращение #{number}',
     'bot.support.ticket.closedByCustomer': 'Закрыто #{number}',
+    'bot.support.rate.ask': 'Оцените',
     'bot.btn.supportClose': 'Закрыть обращение',
     'bot.support.unsupported': 'Нельзя',
     'bot.support.off': 'В основном боте',
@@ -30,7 +31,7 @@ function harness(
       }),
     forwardSupport: forward,
     upsertUser: vi.fn().mockResolvedValue({ user: { language: 'ru' } }),
-    closeSupport: vi.fn().mockResolvedValue({ ticket: { number: 3 } }),
+    closeSupport: vi.fn().mockResolvedValue({ ticket: { id: 't1', number: 3 } }),
     operatorSupport: vi.fn().mockResolvedValue({ handled: true }),
     supportCallback: vi.fn().mockResolvedValue({ text: 'Yours #3' }),
   };
@@ -122,7 +123,12 @@ describe('the support bot (owner decision F35)', () => {
     } as never);
     expect(api.closeSupport).toHaveBeenCalledWith(42, 'support');
     expect(calls.map((call) => call.method)).toEqual(['answerCallbackQuery', 'sendMessage']);
-    expect(calls[1]?.payload['text']).toBe('Закрыто #3');
+    expect(calls[1]?.payload['text']).toBe('Закрыто #3\n\nОцените');
+    expect(calls[1]?.payload['reply_markup']).toMatchObject({
+      inline_keyboard: [
+        [{ callback_data: 'rate:t1:1' }, {}, {}, {}, { callback_data: 'rate:t1:5' }],
+      ],
+    });
   });
 
   it('says what it cannot pass on, and when support moved back to the shop bot', async () => {

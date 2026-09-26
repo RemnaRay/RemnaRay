@@ -592,7 +592,14 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      service tests (note, list, ru/en fallback, support-bot plain text, no
      ticket), console service tests (CRUD, duplicate code, bad input), RBAC
      test.
-  3. Rating and statistics. 4. Topic status,
+  3. **Done — rating and statistics.** A close (by an operator, or by the
+     customer) asks for ★1–★5 (`rate:<ticket>:<n>`); `support/rate` takes the
+     first rating of the customer's own closed ticket (conditional update)
+     and posts it to the topic and the card. `GET /api/admin/v1/support/stats`
+     (SQL over `support_tickets`): opened, closed, open now, first answer
+     average/median, resolution, rating, per assignee. Evidence: service
+     rating tests (open ticket, once, someone else's), bot rating tests,
+     `m4.support` stats on PostgreSQL. 4. Topic status,
      reminders, auto-close. 5. Actions from the card. 6. Self-help FAQ.
   4. Console section.
 

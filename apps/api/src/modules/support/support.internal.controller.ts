@@ -42,6 +42,7 @@ const callbackSchema = z.object({
   via,
 });
 const closeSchema = z.object({ via });
+const rateSchema = z.object({ ticketId: z.uuid(), rating: z.number().int().min(1).max(5) });
 
 /**
  * Section 9.5 support routes with the owner's F35/F36 decisions: the bot
@@ -78,6 +79,14 @@ export class SupportInternalController {
   async close(@Headers('x-acting-user') actingUser: string | undefined, @Body() body: unknown) {
     const input = closeSchema.parse(body ?? {});
     return { ticket: await this.support.customerClose(telegramIdOf(actingUser), input.via) };
+  }
+
+  /** The customer rates their closed ticket, once. */
+  @Post('rate')
+  @HttpCode(200)
+  async rate(@Headers('x-acting-user') actingUser: string | undefined, @Body() body: unknown) {
+    const input = rateSchema.parse(body);
+    return this.support.rate(telegramIdOf(actingUser), input.ticketId, input.rating);
   }
 
   /** A message in the operators' chat: an answer, a note or a command. */

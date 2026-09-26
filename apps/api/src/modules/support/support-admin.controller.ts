@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 
@@ -21,6 +22,11 @@ import { SupportAdminService } from './support-admin.service';
 @Permissions('support.read')
 export class SupportAdminController {
   constructor(private readonly support: SupportAdminService) {}
+
+  @Get('stats')
+  stats(@Query() query: unknown) {
+    return this.support.stats(query);
+  }
 
   @Get('templates')
   templates() {

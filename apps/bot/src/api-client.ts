@@ -285,11 +285,22 @@ export class ApiClient {
 
   /** «Завершить» / «Закрыть обращение»: the customer closes their ticket. */
   closeSupport(telegramId: number, via: SupportVia = 'shop') {
-    return this.request<{ ticket: { number: number } | null }>('/api/internal/v1/support/close', {
-      method: 'POST',
-      userId: telegramId,
-      body: { via },
-    });
+    return this.request<{ ticket: { id: string; number: number } | null }>(
+      '/api/internal/v1/support/close',
+      {
+        method: 'POST',
+        userId: telegramId,
+        body: { via },
+      },
+    );
+  }
+
+  /** The customer rates their closed ticket (1–5); only the first rating counts. */
+  rateSupport(telegramId: number, ticketId: string, rating: number) {
+    return this.request<{ accepted: boolean; number: number | null }>(
+      '/api/internal/v1/support/rate',
+      { method: 'POST', userId: telegramId, body: { ticketId, rating } },
+    );
   }
 
   /** A message in the operators' chat; the API answers, notes or runs the command. */

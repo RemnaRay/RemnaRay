@@ -2574,11 +2574,6 @@
       "post": {
         "operationId": "closeSupportConversation",
         "summary": "«Завершить» / «Закрыть обращение»: the customer closes their ticket (F36)",
-        "responses": {
-          "200": {
-            "description": "{ ticket: { number } | null } — null when there was no open ticket"
-          }
-        },
         "requestBody": {
           "required": false,
           "content": {
@@ -2594,6 +2589,11 @@
                 }
               }
             }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ ticket: { id, number } | null } — null when there was no open ticket"
           }
         }
       }
@@ -3795,6 +3795,71 @@
           },
           "404": {
             "description": "NOT_FOUND"
+          }
+        }
+      }
+    },
+    "/api/internal/v1/support/rate": {
+      "post": {
+        "operationId": "rateSupportTicket",
+        "summary": "The customer rates their closed ticket 1–5; only the first rating counts (F36)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["ticketId", "rating"],
+                "properties": {
+                  "ticketId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "rating": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ accepted, number } — accepted is false for an open, rated or someone else's ticket"
+          }
+        }
+      }
+    },
+    "/api/admin/v1/support/stats": {
+      "get": {
+        "operationId": "getSupportStats",
+        "summary": "Support over a period (default: the last 30 days): tickets, first answer, resolution, ratings, per operator (F36; support.read)",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ from, to, opened, closed, openNow, firstResponseSeconds: { average, median }, resolutionSeconds, rating: { average, count }, operators: [...] }"
+          },
+          "400": {
+            "description": "VALIDATION_ERROR"
           }
         }
       }

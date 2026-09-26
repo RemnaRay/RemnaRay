@@ -147,6 +147,8 @@ const catalog: Record<string, string> = {
   'bot.support.op.templateUnknown': 'No template {code}',
   'bot.support.ticket.taken': 'An operator took #{number}',
   'bot.support.ticket.closed': 'Request #{number} closed',
+  'bot.support.rate.ask': 'Rate us',
+  'bot.support.op.rated': '{stars} #{number}: {rating}',
   'bot.screen.support.reply': 'Support: {text}',
   'bot.screen.support.undelivered': 'Undelivered: {reason}',
   'bot.btn.supportEnd': 'End',
@@ -237,6 +239,21 @@ function harness(
     },
   };
   const memory = memoryTickets();
+  db.supportTicket = Object.assign(db.supportTicket, {
+    updateMany: vi.fn(
+      ({ where, data }: { where: Record<string, unknown>; data: Partial<Ticket> }) => {
+        const matching = memory.tickets.filter(
+          (ticket) =>
+            ticket.id === where['id'] &&
+            ticket.userId === where['userId'] &&
+            ticket.status === where['status'] &&
+            ticket.rating === where['rating'],
+        );
+        for (const ticket of matching) Object.assign(ticket, data);
+        return Promise.resolve({ count: matching.length });
+      },
+    ),
+  });
   const service = new SupportService(
     { db, redis } as never,
     { get: (key: string) => Promise.resolve(settings[key]) } as never,
@@ -467,7 +484,7 @@ describe('SupportService tickets (FR-124, F36)', () => {
     calls.length = 0;
     await expect(press('close', id)).resolves.toEqual({ text: 'Closed #1' });
     expect(calls.map((call) => [call.method, call.body['chat_id'], call.body['text']])).toEqual([
-      ['sendMessage', 42, 'Request #1 closed'],
+      ['sendMessage', 42, 'Request #1 closed\n\nRate us'],
       ['sendMessage', -100500, 'Closed #1 by Olga'],
       ['editMessageText', -100500, expect.any(String)],
       ['editForumTopic', -100500, undefined],
@@ -516,7 +533,10 @@ describe('SupportService tickets (FR-124, F36)', () => {
     const { service, memory, calls } = harness({ forum: true });
     await service.forward('42', 5);
     calls.length = 0;
-    await expect(service.customerClose('42', 'shop')).resolves.toEqual({ number: 1 });
+    await expect(service.customerClose('42', 'shop')).resolves.toEqual({
+      id: memory.tickets[0]?.id,
+      number: 1,
+    });
     expect(memory.tickets[0]).toMatchObject({ status: 'closed', closedBy: 'customer' });
     expect(calls[0]?.body).toMatchObject({ chat_id: -100500, text: 'Customer closed #1' });
     await expect(service.customerClose('42', 'shop')).resolves.toBeNull();
@@ -567,6 +587,51 @@ describe('SupportService tickets (FR-124, F36)', () => {
     await expect(service.forward('42', 5, { via: 'support' })).rejects.toMatchObject({
       response: { error: { code: 'SUPPORT_MOVED', details: { username: null } } },
     });
+  });
+});
+
+describe('ratings (F36)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('asks the customer to rate a closed ticket and takes the first rating only', async () => {
+    const { service, calls, memory, press } = harness({ forum: true });
+    await service.forward('42', 5);
+    const id = memory.tickets[0]?.id ?? '';
+
+    // An open ticket cannot be rated.
+    await expect(service.rate('42', id, 5)).resolves.toEqual({ accepted: false, number: 1 });
+
+    calls.length = 0;
+    await press('close', id);
+    expect(calls[0]?.body['reply_markup']).toEqual({
+      inline_keyboard: [
+        [1, 2, 3, 4, 5].map((n) => ({
+          text: `${String(n)}★`,
+          callback_data: `rate:${id}:${String(n)}`,
+        })),
+      ],
+    });
+
+    calls.length = 0;
+    await expect(service.rate('42', id, 4)).resolves.toEqual({ accepted: true, number: 1 });
+    expect(memory.tickets[0]).toMatchObject({ rating: 4 });
+    expect(calls[0]?.body).toMatchObject({ chat_id: -100500, text: '★★★★☆ #1: 4' });
+    expect(methods(calls)).toContain('editMessageText');
+
+    await expect(service.rate('42', id, 1)).resolves.toEqual({ accepted: false, number: 1 });
+    expect(memory.tickets[0]).toMatchObject({ rating: 4 });
+  });
+
+  it('never lets someone rate another customer’s ticket', async () => {
+    const { service, memory, press } = harness();
+    await service.forward('42', 5);
+    const id = memory.tickets[0]?.id ?? '';
+    await press('close', id);
+    await expect(service.rate('43', id, 1)).resolves.toEqual({ accepted: false, number: null });
+    expect(memory.tickets[0]?.rating).toBeNull();
   });
 });
 

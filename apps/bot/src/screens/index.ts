@@ -21,6 +21,7 @@ import {
 } from './subscription.js';
 import { confirmPlanChange, payPlanChange, showPlanChange } from './plan-change.js';
 import { backButton, formatDate, formatMinor, show } from './common.js';
+import { RATING_DATA, rateTicket, ratingKeyboard } from '../support-rating.js';
 
 export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
   bot.command('start', (ctx) => {
@@ -105,6 +106,7 @@ export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
   );
   bot.callbackQuery('support', (ctx) => showSupport(ctx, api));
   bot.callbackQuery('support:end', (ctx) => endSupport(ctx, api));
+  bot.callbackQuery(RATING_DATA, rateTicket(api));
   bot.callbackQuery('notif:toggle', (ctx) => toggleNotifications(ctx, api));
   bot.callbackQuery('email:ask', (ctx) =>
     show(ctx, ctx.t('bot.screen.email.ask'), backButton(ctx)),
@@ -356,11 +358,14 @@ export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void>
 export async function endSupport(ctx: RrContext, api: ApiClient): Promise<void> {
   if (!ctx.from) return;
   const { ticket } = await api.closeSupport(ctx.from.id);
+  if (!ticket) {
+    await show(ctx, ctx.t('bot.screen.support.ended'), backButton(ctx));
+    return;
+  }
+  // F36: the customer may rate the ticket they closed.
   await show(
     ctx,
-    ticket
-      ? ctx.t('bot.screen.support.endedTicket', { number: ticket.number })
-      : ctx.t('bot.screen.support.ended'),
-    backButton(ctx),
+    `${ctx.t('bot.screen.support.endedTicket', { number: ticket.number })}\n\n${ctx.t('bot.support.rate.ask')}`,
+    ratingKeyboard(ticket.id).row().text(ctx.t('bot.btn.back'), 'home'),
   );
 }
