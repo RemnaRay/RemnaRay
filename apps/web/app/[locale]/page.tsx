@@ -12,7 +12,7 @@ import { getPublicConfig } from '../../lib/public-config';
 import { getTheme } from '../../lib/theme';
 import { routing, type Locale } from '../../i18n/routing';
 import { Link } from '../../i18n/navigation';
-import LoginWidget from './login-widget';
+import LoginDialog from './login-dialog';
 import SiteFooter from './site-footer';
 
 type PageProps = { params: Promise<{ locale: string }> };
@@ -66,6 +66,14 @@ export default async function LandingPage({ params }: PageProps) {
   const steps = t.raw('steps') as string[];
   const faq = t.raw('faq') as Faq[];
   const botLink = config.brand.botUsername ? `https://t.me/${config.brand.botUsername}` : null;
+  const loginLabels = {
+    trigger: t('hero.secondary'),
+    title: t('login.title'),
+    description: t('login.description'),
+    button: t('login.button'),
+    error: t('loginError'),
+    unavailable: t('login.unavailable'),
+  };
 
   return (
     <>
@@ -95,9 +103,13 @@ export default async function LandingPage({ params }: PageProps) {
                     <Link href="/account">{t('account')}</Link>
                   </Button>
                 ) : (
-                  <Button asChild size="lg" variant="secondary">
-                    <a href="#login">{t('hero.secondary')}</a>
-                  </Button>
+                  <LoginDialog
+                    labels={loginLabels}
+                    locale={locale}
+                    openOnLoginQuery
+                    size="lg"
+                    variant="secondary"
+                  />
                 )}
               </div>
             </div>
@@ -236,13 +248,7 @@ export default async function LandingPage({ params }: PageProps) {
                   <Link href="/account">{t('account')}</Link>
                 </Button>
               ) : (
-                <LoginWidget
-                  botUsername={config.brand.botUsername}
-                  errorLabel={t('loginError')}
-                  label={t('hero.secondary')}
-                  locale={locale}
-                  unavailableLabel={t('ctaText')}
-                />
+                <LoginDialog labels={loginLabels} locale={locale} />
               )}
             </div>
           </div>

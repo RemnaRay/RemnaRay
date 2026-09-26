@@ -39,7 +39,6 @@ export default function LoginWidget({
   errorLabel,
   locale,
 }: {
-  botUsername: string;
   unavailableLabel: string;
   label: string;
   errorLabel: string;

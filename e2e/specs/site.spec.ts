@@ -13,8 +13,13 @@ test.describe('public site', () => {
     await expect(
       page.getByRole('link', { name: /t\.me|Открыть в Telegram/u }).first(),
     ).toBeVisible();
-    // «Войти» points at #login, where the Telegram OIDC button is (F29).
-    await expect(page.locator('#login').getByRole('button')).toBeVisible();
+    // «Войти» opens the sign-in dialog with the Telegram OIDC button (F29, F33).
+    await page.getByRole('button', { name: 'Войти', exact: true }).first().click();
+    await expect(
+      page
+        .getByRole('dialog', { name: 'Вход в личный кабинет' })
+        .getByRole('button', { name: 'Войти через Telegram' }),
+    ).toBeEnabled();
     await expect(
       page.locator('script[src="https://oauth.telegram.org/js/telegram-login.js?6"]'),
     ).toHaveCount(1);

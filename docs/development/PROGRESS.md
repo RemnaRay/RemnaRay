@@ -481,9 +481,15 @@ refused: <code> (<reason>)`; the answer is unchanged. Evidence: verifier
   column on transactions, the refund dialog opens at the amount left.
   Evidence: label unit tests, console render test red on the old page →
   green, web 58.
-- **F33 (P2, owner request) — the landing's «Войти» scrolls to the block at
+- **F33 Done (P2, owner request) — the landing's «Войти» scrolls to the block at
   the bottom of the page.** Repair: «Войти» opens a modal with the Telegram
-  sign-in.
+  sign-in. Done: `[locale]/login-dialog.tsx` — «Войти» in the hero and in the
+  closing block opens «Вход в личный кабинет» with «Войти через Telegram»
+  (the nonce is asked for on opening); `/?login=1`, where the account sends a
+  visitor without a session, opens it by itself, which section 13.2 asks for
+  and was missing; closing drops `login=1`. Evidence: dialog unit tests, E2E
+  site and account specs 22 passed (sign-in through the dialog, the
+  redirect opens it).
 - **F35 (P1, owner decision) — support: a customer cannot answer an
   operator.** «Поддержка» waits for exactly one message, so every further
   message needs the button again. Owner decisions: an **optional separate

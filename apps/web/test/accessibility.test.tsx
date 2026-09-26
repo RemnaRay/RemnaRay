@@ -78,13 +78,7 @@ describe('accessibility invariants', () => {
     try {
       await act(async () => {
         root.render(
-          <LoginWidget
-            botUsername="manta_bot"
-            errorLabel="Ошибка входа"
-            label="Войти"
-            locale="ru"
-            unavailableLabel="—"
-          />,
+          <LoginWidget errorLabel="Ошибка входа" label="Войти" locale="ru" unavailableLabel="—" />,
         );
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
@@ -131,13 +125,7 @@ describe('accessibility invariants', () => {
       ) as unknown as typeof fetch;
       await act(async () => {
         root.render(
-          <LoginWidget
-            botUsername="manta_bot"
-            errorLabel="Ошибка входа"
-            label="Войти"
-            locale="ru"
-            unavailableLabel="—"
-          />,
+          <LoginWidget errorLabel="Ошибка входа" label="Войти" locale="ru" unavailableLabel="—" />,
         );
         await Promise.resolve();
       });

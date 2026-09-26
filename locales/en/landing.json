@@ -6,6 +6,10 @@
   "landing.hero.secondary": "Sign in",
   "landing.account": "Account",
   "landing.loginError": "Telegram sign-in failed. Please try again.",
+  "landing.login.title": "Sign in to your account",
+  "landing.login.description": "Press the button and confirm in the Telegram window. You can also open your account from the bot with «Open account».",
+  "landing.login.button": "Sign in with Telegram",
+  "landing.login.unavailable": "Signing in on the site is not set up yet. Open your account from the bot with «Open account».",
   "landing.hero.imageAlt": "Manta gliding through blue water",
   "landing.featuresTitle": "Everything customers need",
   "landing.features": [

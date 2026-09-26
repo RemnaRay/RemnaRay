@@ -35,6 +35,7 @@ test.describe('customer account', () => {
   test('redirects an anonymous visitor to the landing with the login modal', async ({ page }) => {
     await page.goto('/ru/account');
     await expect(page).toHaveURL(/\/ru\?login=1$/u);
+    await expect(page.getByRole('dialog', { name: 'Вход в личный кабинет' })).toBeVisible();
   });
 
   test('signs in with Telegram OIDC on the landing into the localized account (F29)', async ({
@@ -43,6 +44,7 @@ test.describe('customer account', () => {
     const state = stackState();
     test.skip(!state.oidcPrivateKey, 'the external stand does not publish local OIDC keys');
     await page.goto('/ru');
+    await page.getByRole('button', { name: 'Войти', exact: true }).first().click();
     await page.waitForFunction(
       () =>
         typeof (globalThis as unknown as { onRemnaRayTelegramOidc?: unknown })

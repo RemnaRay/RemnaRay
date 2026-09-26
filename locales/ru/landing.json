@@ -6,6 +6,10 @@
   "landing.hero.secondary": "Войти",
   "landing.account": "Личный кабинет",
   "landing.loginError": "Не удалось войти через Telegram. Попробуйте ещё раз.",
+  "landing.login.title": "Вход в личный кабинет",
+  "landing.login.description": "Нажмите кнопку и подтвердите вход в окне Telegram. Кабинет можно открыть и из бота кнопкой «Открыть кабинет».",
+  "landing.login.button": "Войти через Telegram",
+  "landing.login.unavailable": "Вход через сайт пока не настроен. Откройте кабинет из бота кнопкой «Открыть кабинет».",
   "landing.hero.imageAlt": "Скат, скользящий в синей воде",
   "landing.featuresTitle": "Всё, что нужно клиенту",
   "landing.features": [
