@@ -8,6 +8,11 @@ import { SettingsService } from '../settings/settings.service';
 /** How long a plain forwarded message can still be answered by reply. */
 const MESSAGE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const FORUM_TTL_SECONDS = 600;
+/**
+ * How long a conversation stays open without a message either way: until
+ * then everything the customer writes to the bot goes to the operators.
+ */
+export const CONVERSATION_TTL_SECONDS = 24 * 60 * 60;
 
 class TelegramCallError extends Error {
   constructor(
@@ -27,8 +32,10 @@ export type SupportTarget = { telegramId: string; language: string };
  * (`brand.support_forward_chat_id`), and an operator's answer goes back to
  * the customer. When that chat is a forum supergroup (the owner's choice),
  * every customer gets a topic of their own and anything written in it is the
- * answer; otherwise the answer is a reply to the forwarded message. The links
- * between Telegram messages and customers live in Valkey.
+ * answer; otherwise the answer is a reply to the forwarded message. Messages
+ * are copied (`copyMessage`), so photos, files and voice messages go through
+ * as they are (owner decision F35). The links between Telegram messages and
+ * customers, and whether a customer's conversation is open, live in Valkey.
  */
 @Injectable()
 export class SupportService {
@@ -40,34 +47,78 @@ export class SupportService {
     @Optional() private readonly notify?: NotifyService,
   ) {}
 
-  async forward(telegramId: string, text: string): Promise<void> {
+  /**
+   * «Поддержка» opens the customer's conversation: until «Завершить», or a
+   * day without messages, what they write to the bot goes to the operators.
+   */
+  async open(telegramId: string): Promise<void> {
+    await this.destination();
+    await this.infra.redis.set(openKey(telegramId), 'new', 'EX', CONVERSATION_TTL_SECONDS);
+  }
+
+  async close(telegramId: string): Promise<void> {
+    await this.infra.redis.del(openKey(telegramId));
+  }
+
+  /**
+   * Copies the customer's message `messageId` (in their chat with the bot)
+   * to the operators. With `requireOpen`, a message outside an open
+   * conversation is refused with `SUPPORT_CLOSED`. `acknowledge` is true for
+   * the first message after «Поддержка», which the bot confirms.
+   */
+  async forward(
+    telegramId: string,
+    messageId: number,
+    options: { requireOpen?: boolean } = {},
+  ): Promise<{ acknowledge: boolean }> {
+    const state = await this.infra.redis.get(openKey(telegramId));
+    if (options.requireOpen && state === null)
+      throw new ApiError('SUPPORT_CLOSED', HttpStatus.CONFLICT);
     const { chatId, token } = await this.destination();
     const user = await this.infra.db.user.findUnique({
       where: { telegramId: BigInt(telegramId) },
-      select: { firstName: true, username: true },
+      select: { firstName: true, username: true, language: true },
     });
-    const header = `#support ${telegramId}${user?.username ? ` @${user.username}` : ''}`;
-    const body = `${header}\n${text}`;
+    const header = [
+      `#support ${telegramId}${user?.username ? ` @${user.username}` : ''}`,
+      [user?.firstName, user?.language].filter(Boolean).join(' · '),
+    ]
+      .filter(Boolean)
+      .join('\n');
     try {
-      if (await this.isForum(chatId, token)) {
-        const name = `${user?.firstName ?? user?.username ?? 'user'} · ${telegramId}`.slice(0, 128);
-        const sent = await this.sendToTopic(chatId, token, telegramId, name, body);
-        if (sent) return;
+      const inTopic =
+        (await this.isForum(chatId, token)) &&
+        (await this.copyToTopic(chatId, token, telegramId, messageId, {
+          name: `${user?.firstName ?? user?.username ?? 'user'} · ${telegramId}`.slice(0, 128),
+          header,
+        }));
+      if (!inTopic) {
+        // A plain group: the header names the customer, the copy replies to
+        // it, and an operator's reply to either reaches the customer.
+        const card = await this.call<{ message_id: number }>(token, 'sendMessage', {
+          chat_id: chatId,
+          text: header,
+        });
+        const copy = await this.call<{ message_id: number }>(token, 'copyMessage', {
+          chat_id: chatId,
+          from_chat_id: Number(telegramId),
+          message_id: messageId,
+          reply_parameters: { message_id: card.message_id, allow_sending_without_reply: true },
+        });
+        for (const id of [card.message_id, copy.message_id])
+          await this.infra.redis.set(
+            `rr:support:msg:${String(chatId)}:${String(id)}`,
+            telegramId,
+            'EX',
+            MESSAGE_TTL_SECONDS,
+          );
       }
-      const message = await this.call<{ message_id: number }>(token, 'sendMessage', {
-        chat_id: chatId,
-        text: body,
-      });
-      await this.infra.redis.set(
-        `rr:support:msg:${String(chatId)}:${String(message.message_id)}`,
-        telegramId,
-        'EX',
-        MESSAGE_TTL_SECONDS,
-      );
     } catch (error) {
       this.logger.warn(`support forward failed: ${String(error)}`);
       throw new ApiError('SUPPORT_UNAVAILABLE', HttpStatus.BAD_GATEWAY);
     }
+    await this.infra.redis.set(openKey(telegramId), 'active', 'EX', CONVERSATION_TTL_SECONDS);
+    return { acknowledge: state === 'new' };
   }
 
   /** The customer an operator's message in the operators' chat answers, if any. */
@@ -87,6 +138,9 @@ export class SupportService {
         ? null
         : await this.infra.redis.get(`rr:support:msg:${chat}:${String(input.replyToMessageId)}`));
     if (!telegramId) return null;
+    // An operator answered: the customer's reply goes back without pressing
+    // «Поддержка» again.
+    await this.infra.redis.set(openKey(telegramId), 'active', 'EX', CONVERSATION_TTL_SECONDS);
     const user = await this.infra.db.user.findUnique({
       where: { telegramId: BigInt(telegramId) },
       select: { language: true },
@@ -115,28 +169,29 @@ export class SupportService {
   }
 
   /**
-   * Sends into the customer's topic, creating it on the first message and
-   * again when an operator deleted it. False when the bot may not manage
-   * topics: the message then goes to the chat itself and the administrators
-   * are told which right is missing.
+   * Copies into the customer's topic, creating it on the first message (with
+   * a card that names the customer) and again when an operator deleted it.
+   * False when the bot may not manage topics: the message then goes to the
+   * chat itself and the administrators are told which right is missing.
    */
-  private async sendToTopic(
+  private async copyToTopic(
     chatId: number,
     token: string,
     telegramId: string,
-    name: string,
-    text: string,
+    messageId: number,
+    topic: { name: string; header: string },
   ): Promise<boolean> {
     const key = `rr:support:topic:${String(chatId)}:${telegramId}`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let threadId = Number(await this.infra.redis.get(key)) || undefined;
       if (threadId === undefined) {
         try {
-          const topic = await this.call<{ message_thread_id: number }>(token, 'createForumTopic', {
-            chat_id: chatId,
-            name,
-          });
-          threadId = topic.message_thread_id;
+          const created = await this.call<{ message_thread_id: number }>(
+            token,
+            'createForumTopic',
+            { chat_id: chatId, name: topic.name },
+          );
+          threadId = created.message_thread_id;
         } catch (error) {
           if (!(error instanceof TelegramCallError)) throw error;
           this.logger.warn(`support topic not created: ${error.description}`);
@@ -150,12 +205,18 @@ export class SupportService {
           `rr:support:thread:${String(chatId)}:${String(threadId)}`,
           telegramId,
         );
-      }
-      try {
         await this.call(token, 'sendMessage', {
           chat_id: chatId,
           message_thread_id: threadId,
-          text,
+          text: topic.header,
+        });
+      }
+      try {
+        await this.call(token, 'copyMessage', {
+          chat_id: chatId,
+          message_thread_id: threadId,
+          from_chat_id: Number(telegramId),
+          message_id: messageId,
         });
         return true;
       } catch (error) {
@@ -196,4 +257,8 @@ export class SupportService {
       );
     return payload.result;
   }
+}
+
+function openKey(telegramId: string): string {
+  return `rr:support:open:${telegramId}`;
 }

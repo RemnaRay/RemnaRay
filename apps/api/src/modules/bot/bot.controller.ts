@@ -178,22 +178,35 @@ export class BotInternalController {
     };
   }
 
-  /** Section 9.5 `POST /api/internal/v1/support/forward` (FR-124). */
+  /**
+   * Section 9.5 `POST /api/internal/v1/support/forward` (FR-124): the
+   * customer's message `messageId` in their chat with the bot is copied to
+   * the operators. `requireOpen` refuses one outside an open conversation.
+   */
   @Post('support/forward')
-  @HttpCode(204)
+  @HttpCode(200)
   async supportForward(
     @Headers('x-acting-user') actingUser: string | undefined,
     @Body() body: unknown,
   ) {
-    if (!actingUser || !/^\d+$/.test(actingUser)) throw new ForbiddenException('FORBIDDEN');
-    if (
-      !isRecord(body) ||
-      typeof body.text !== 'string' ||
-      body.text.length < 1 ||
-      body.text.length > 4000
-    )
-      throw new BadRequestException('INVALID_BODY');
-    await this.support.forward(actingUser, body.text);
+    const input = supportForwardSchema.parse(body);
+    return this.support.forward(telegramIdOf(actingUser), input.messageId, {
+      requireOpen: input.requireOpen,
+    });
+  }
+
+  /** «Поддержка»: the customer's messages go to the operators until closed. */
+  @Post('support/open')
+  @HttpCode(204)
+  async supportOpen(@Headers('x-acting-user') actingUser: string | undefined) {
+    await this.support.open(telegramIdOf(actingUser));
+  }
+
+  /** «Завершить»: the customer's messages stay with the bot again. */
+  @Post('support/close')
+  @HttpCode(204)
+  async supportClose(@Headers('x-acting-user') actingUser: string | undefined) {
+    await this.support.close(telegramIdOf(actingUser));
   }
 
   /** FR-124: the customer an operator's message in the operators' chat answers. */
@@ -203,6 +216,16 @@ export class BotInternalController {
     const input = supportRouteSchema.parse(body);
     return { target: await this.support.route(input) };
   }
+}
+
+const supportForwardSchema = z.object({
+  messageId: z.number().int().positive(),
+  requireOpen: z.boolean().default(false),
+});
+
+function telegramIdOf(actingUser: string | undefined): string {
+  if (!actingUser || !/^\d+$/.test(actingUser)) throw new ForbiddenException('FORBIDDEN');
+  return actingUser;
 }
 
 const supportRouteSchema = z.object({

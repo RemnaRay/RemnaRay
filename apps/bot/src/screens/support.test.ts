@@ -1,36 +1,65 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { showSupport } from './index.js';
+import { ApiClientError } from '../api-client.js';
+import { endSupport, showSupport } from './index.js';
 import type { RrContext } from '../types.js';
 
 function screen(supportForwardChatId: number | null, supportContact = '@manta_help') {
   const params: Record<string, unknown>[] = [];
-  const enter = vi.fn();
+  const shown: Array<{ text: string; buttons: string[] }> = [];
   const ctx = {
     from: { id: 123 },
     session: {},
-    conversation: { enter },
     t: (key: string, values: Record<string, unknown> = {}) => {
       params.push({ key, ...values });
       return key;
     },
-    reply: () => ({ message_id: 1 }),
+    reply: (
+      text: string,
+      options: { reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } },
+    ) => {
+      shown.push({
+        text,
+        buttons: (options.reply_markup?.inline_keyboard ?? [])
+          .flat()
+          .map((button) => button.callback_data ?? ''),
+      });
+      return { message_id: 1 };
+    },
   } as unknown as RrContext;
-  const api = { getConfig: () => ({ supportForwardChatId, supportContact }) } as never;
-  return { ctx, api, params, enter };
+  const api = {
+    getConfig: () => ({ supportForwardChatId, supportContact }),
+    openSupport: vi.fn().mockResolvedValue(undefined),
+    closeSupport: vi.fn().mockResolvedValue(undefined),
+  };
+  return { ctx, api, params, shown };
 }
 
 describe('bot support screen (FR-124)', () => {
   it('shows the support contact when no operators chat is configured', async () => {
-    const { ctx, api, params, enter } = screen(null);
-    await showSupport(ctx, api);
-    expect(enter).not.toHaveBeenCalled();
+    const { ctx, api, params } = screen(null);
+    await showSupport(ctx, api as never);
+    expect(api.openSupport).not.toHaveBeenCalled();
     expect(params).toContainEqual({ key: 'bot.screen.support.details', contact: '@manta_help' });
   });
 
-  it('opens the message dialog when the operators chat is configured', async () => {
-    const { ctx, api, enter } = screen(-100500);
-    await showSupport(ctx, api);
-    expect(enter).toHaveBeenCalledWith('supportMessage');
+  it('opens a conversation with the operators until «Завершить» (F35)', async () => {
+    const { ctx, api, shown } = screen(-100500);
+    await showSupport(ctx, api as never);
+    expect(api.openSupport).toHaveBeenCalledWith(123);
+    expect(shown[0]?.text).toContain('bot.screen.support.open');
+    expect(shown[0]?.text).toContain('bot.screen.support.details');
+    expect(shown[0]?.buttons).toEqual(['support:end', 'home']);
+
+    await endSupport(ctx, api as never);
+    expect(api.closeSupport).toHaveBeenCalledWith(123);
+    expect(shown[1]?.text).toBe('bot.screen.support.ended');
+  });
+
+  it('falls back to the contact when the operators cannot be reached', async () => {
+    const { ctx, api, shown } = screen(-100500);
+    api.openSupport.mockRejectedValue(new ApiClientError(409, 'SUPPORT_UNAVAILABLE'));
+    await showSupport(ctx, api as never);
+    expect(shown[0]?.text).toBe('bot.screen.support.details');
   });
 });

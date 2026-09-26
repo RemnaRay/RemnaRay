@@ -104,6 +104,7 @@ export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
     setLanguage(ctx, api, capture(ctx.match, 1) as 'ru' | 'en'),
   );
   bot.callbackQuery('support', (ctx) => showSupport(ctx, api));
+  bot.callbackQuery('support:end', (ctx) => endSupport(ctx, api));
   bot.callbackQuery('notif:toggle', (ctx) => toggleNotifications(ctx, api));
   bot.callbackQuery('email:ask', (ctx) =>
     show(ctx, ctx.t('bot.screen.email.ask'), backButton(ctx)),
@@ -304,14 +305,31 @@ async function adminBroadcastStatus(ctx: RrContext, api: ApiClient): Promise<voi
 }
 
 /**
- * FR-124: the support contact, and a message to the operators when their chat
- * is configured (section 12: the `supportMessage` dialog exists only then).
+ * FR-124: the support contact, and, when the operators' chat is configured,
+ * a conversation with the operators: everything the customer writes goes to
+ * them until «Завершить» (owner decision F35; section 12's one-message
+ * `supportMessage` dialog made a customer press «Поддержка» for every reply).
  */
 export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void> {
   const config = await api.getConfig();
-  if (config.supportForwardChatId !== null) {
-    await ctx.conversation.enter('supportMessage');
-    return;
+  const contact = config.supportContact
+    ? `\n\n${ctx.t('bot.screen.support.details', { contact: config.supportContact })}`
+    : '';
+  if (config.supportForwardChatId !== null && ctx.from) {
+    try {
+      await api.openSupport(ctx.from.id);
+      await show(
+        ctx,
+        `${ctx.t('bot.screen.support.open')}${contact}`,
+        new InlineKeyboard()
+          .text(ctx.t('bot.btn.supportEnd'), 'support:end')
+          .row()
+          .text(ctx.t('bot.btn.back'), 'home'),
+      );
+      return;
+    } catch (error) {
+      if (!(error instanceof ApiClientError)) throw error;
+    }
   }
   await show(
     ctx,
@@ -320,4 +338,11 @@ export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void>
       : ctx.t('bot.screen.support.none'),
     backButton(ctx),
   );
+}
+
+/** «Завершить»: the customer's messages stay with the bot again. */
+export async function endSupport(ctx: RrContext, api: ApiClient): Promise<void> {
+  if (!ctx.from) return;
+  await api.closeSupport(ctx.from.id);
+  await show(ctx, ctx.t('bot.screen.support.ended'), backButton(ctx));
 }

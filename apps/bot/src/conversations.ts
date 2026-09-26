@@ -24,7 +24,7 @@ export function installConversations(bot: Bot<RrContext>, redis: Redis, api: Api
     if (ctx.message?.text?.startsWith('/')) await ctx.conversation.exitAll();
     await next();
   });
-  for (const id of ['promoEnter', 'topupCustom', 'emailAsk', 'supportMessage'] as const) {
+  for (const id of ['promoEnter', 'topupCustom', 'emailAsk'] as const) {
     bot.use(
       createConversation<RrContext, Context>(async (conversation, ctx) => {
         if (!ctx.from) return;
@@ -37,7 +37,6 @@ export function installConversations(bot: Bot<RrContext>, redis: Redis, api: Api
           promoEnter: 'bot.screen.promo.ask',
           topupCustom: 'bot.screen.topup.ask',
           emailAsk: 'bot.screen.email.ask',
-          supportMessage: 'bot.screen.support.ask',
         };
         await ctx.reply(
           t(prompts[id]),
@@ -76,11 +75,9 @@ export function installConversations(bot: Bot<RrContext>, redis: Redis, api: Api
               ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(text) && text.length <= 254
               : id === 'promoEnter'
                 ? /^[A-Za-z0-9_-]{3,64}$/u.test(text)
-                : id === 'topupCustom'
-                  ? amount !== undefined &&
-                    BigInt(amount) >= BigInt(config.minMinor) &&
-                    BigInt(amount) <= BigInt(config.maxMinor)
-                  : text.length > 0 && text.length <= 4000);
+                : amount !== undefined &&
+                  BigInt(amount) >= BigInt(config.minMinor) &&
+                  BigInt(amount) <= BigInt(config.maxMinor));
           if (!valid) {
             if (attempt < 2) await reply.reply(t('bot.error.invalid_input'));
             continue;
@@ -91,18 +88,6 @@ export function installConversations(bot: Bot<RrContext>, redis: Redis, api: Api
           } else if (id === 'promoEnter') {
             await conversation.external(() => api.redeemPromo(telegramId, text));
             await reply.reply(t('bot.screen.promo.accepted'));
-          } else if (id === 'supportMessage') {
-            // FR-124: a message that did not reach the operators is not
-            // reported as sent.
-            const delivered = await conversation.external(() =>
-              api.forwardSupport(telegramId, reply.message?.message_id ?? 0, text).then(
-                () => true,
-                () => false,
-              ),
-            );
-            await reply.reply(
-              t(delivered ? 'bot.screen.support.sent' : 'bot.error.support_unavailable'),
-            );
           } else {
             const providers = topupProviders(
               await conversation.external(() => api.getPaymentMethods(telegramId)),

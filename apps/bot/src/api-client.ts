@@ -240,11 +240,27 @@ export class ApiClient {
     );
   }
 
-  forwardSupport(telegramId: number, messageId: number, message: string) {
-    return this.request<unknown>('/api/internal/v1/support/forward', {
+  /** FR-124: copies the customer's message `messageId` to the operators. */
+  forwardSupport(telegramId: number, messageId: number, options: { requireOpen?: boolean } = {}) {
+    return this.request<{ acknowledge: boolean }>('/api/internal/v1/support/forward', {
       method: 'POST',
       userId: telegramId,
-      body: { telegramId, messageId, text: message },
+      body: { messageId, requireOpen: options.requireOpen ?? false },
+    });
+  }
+
+  /** «Поддержка»: the customer's messages go to the operators until closed. */
+  openSupport(telegramId: number) {
+    return this.request<unknown>('/api/internal/v1/support/open', {
+      method: 'POST',
+      userId: telegramId,
+    });
+  }
+
+  closeSupport(telegramId: number) {
+    return this.request<unknown>('/api/internal/v1/support/close', {
+      method: 'POST',
+      userId: telegramId,
     });
   }
 

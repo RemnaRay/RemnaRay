@@ -13,6 +13,7 @@ import { registerScreens } from './screens/index.js';
 import { isPaymentUpdate, registerStars } from './screens/stars.js';
 import { installConversations } from './conversations.js';
 import { supportRelay } from './support.js';
+import { supportInbox } from './support-inbox.js';
 import type { BotConfig, BotSession, RrContext } from './types.js';
 
 export type BotRuntime = {
@@ -173,6 +174,8 @@ export function createBot(options: {
   installConversations(bot, redis, api);
   bot.catch(botErrorHandler(api));
   registerScreens(bot, api);
+  // Last: only what no command, button or dialog took reaches the operators.
+  bot.on('message', supportInbox(api));
   return { bot, api, redis, i18n };
 }
 

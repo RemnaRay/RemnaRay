@@ -91,16 +91,21 @@ describe('ApiClient', () => {
     });
   });
 
-  it('sends support text through the internal boundary', async () => {
+  it('hands the operators the customer’s message by its id, to be copied (F35)', async () => {
     let body = '';
+    let actingUser: string | null = null;
     const api = new ApiClient({
       fetchImpl: (_input, init) => {
         body = typeof init?.body === 'string' ? init.body : '';
-        return Promise.resolve(new Response(null, { status: 204 }));
+        actingUser = new Headers(init?.headers).get('x-acting-user');
+        return Promise.resolve(Response.json({ acknowledge: true }));
       },
     });
-    await api.forwardSupport(42, 7, 'hello');
-    expect(body).toContain('hello');
+    await expect(api.forwardSupport(42, 7, { requireOpen: true })).resolves.toEqual({
+      acknowledge: true,
+    });
+    expect(JSON.parse(body)).toEqual({ messageId: 7, requireOpen: true });
+    expect(actingUser).toBe('42');
   });
 
   it('reads the code of a section 9.3 error envelope', async () => {

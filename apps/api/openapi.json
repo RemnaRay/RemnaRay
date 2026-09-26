@@ -1889,16 +1889,51 @@
     "/api/internal/v1/support/forward": {
       "post": {
         "operationId": "forwardSupportMessage",
-        "summary": "Forward a support message to the configured chat",
+        "summary": "Copy the customer's message to the operators' chat (FR-124)",
         "responses": {
-          "204": { "description": "Forwarded" },
-          "409": { "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured" },
+          "200": {
+            "description": "{ acknowledge: boolean } — true for the first message after «Поддержка»"
+          },
+          "409": {
+            "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured; SUPPORT_CLOSED: requireOpen and no open conversation"
+          },
           "502": { "description": "SUPPORT_UNAVAILABLE: Telegram refused the message" }
         },
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["messageId"],
+                "properties": {
+                  "messageId": {
+                    "type": "integer",
+                    "description": "The message in the customer's chat with the bot"
+                  },
+                  "requireOpen": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
         }
+      }
+    },
+    "/api/internal/v1/support/open": {
+      "post": {
+        "operationId": "openSupportConversation",
+        "summary": "«Поддержка»: the customer's messages go to the operators until closed (FR-124)",
+        "responses": {
+          "204": { "description": "Opened" },
+          "409": { "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured" }
+        }
+      }
+    },
+    "/api/internal/v1/support/close": {
+      "post": {
+        "operationId": "closeSupportConversation",
+        "summary": "«Завершить»: the customer's messages stay with the bot again (FR-124)",
+        "responses": { "204": { "description": "Closed" } }
       }
     },
     "/api/internal/v1/support/route": {

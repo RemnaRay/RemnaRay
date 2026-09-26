@@ -1,14 +1,17 @@
 import { formatMessage, SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
-import { GrammyError, type MiddlewareFn } from 'grammy';
+import { GrammyError, InlineKeyboard, type MiddlewareFn } from 'grammy';
 
 import type { ApiClient } from './api-client.js';
 import type { BotI18n } from './i18n.js';
+import { isSupportMessage } from './support-inbox.js';
 import type { RrContext } from './types.js';
 
 /**
  * FR-124, the operators' side: a message in the operators' chat that answers
  * a customer — written in the customer's forum topic, or a reply to their
- * forwarded message — is sent to that customer in their language. It runs
+ * forwarded message — is sent to that customer: text under «Ответ поддержки»
+ * in their language, a photo, file or voice message copied as it is (F35),
+ * with «Завершить» for the conversation the answer keeps open. It runs
  * before sessions and dialogs, so an operator is never treated as a customer
  * there. Anything else in that chat is ignored.
  */
@@ -23,8 +26,9 @@ export function supportRelay(
     if (config.supportForwardChatId === null || chat.id !== config.supportForwardChatId)
       return next();
     const message = ctx.message;
-    const text = message?.text?.trim();
-    if (!message || !text || message.from.is_bot) return;
+    if (!isSupportMessage(message) || message.from.is_bot) return;
+    const text = message.text?.trim();
+    if (message.text !== undefined && !text) return;
     const { target } = await api.routeSupport({
       chatId: chat.id,
       ...(message.is_topic_message && message.message_thread_id !== undefined
@@ -39,14 +43,23 @@ export function supportRelay(
       ? (target.language as Locale)
       : config.defaultLocale;
     const catalog = await i18n.catalog(language);
+    const keyboard = new InlineKeyboard().text(
+      formatMessage(language, catalog, 'bot.btn.supportEnd'),
+      'support:end',
+    );
     try {
-      // `formatMessage` escapes the values for HTML, so the message is sent
-      // as HTML: an operator's "<" or "'" reaches the customer as typed.
-      await ctx.api.sendMessage(
-        Number(target.telegramId),
-        formatMessage(language, catalog, 'bot.screen.support.reply', { text }),
-        { parse_mode: 'HTML' },
-      );
+      if (text)
+        // `formatMessage` escapes the values for HTML, so the message is sent
+        // as HTML: an operator's "<" or "'" reaches the customer as typed.
+        await ctx.api.sendMessage(
+          Number(target.telegramId),
+          formatMessage(language, catalog, 'bot.screen.support.reply', { text }),
+          { parse_mode: 'HTML', reply_markup: keyboard },
+        );
+      else
+        await ctx.api.copyMessage(Number(target.telegramId), chat.id, message.message_id, {
+          reply_markup: keyboard,
+        });
     } catch (error) {
       if (!(error instanceof GrammyError)) throw error;
       const operators = await i18n.catalog(config.defaultLocale);

@@ -512,6 +512,20 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
   the support bot. Without it, support stays in the shop bot, but the
   conversation stays open (no second press). Text, photos, files and voice
   messages are copied both ways. Beyond FR-124.
+  **F35a Done — support in the shop bot.** «Поддержка» opens a conversation
+  (`POST /api/internal/v1/support/open`, Valkey `rr:support:open:<id>`, 24 h
+  idle): every message nothing else takes (`support-inbox.ts`, the bot's
+  last middleware) goes to the operators until «Завершить»
+  (`support/close`); an operator's answer reopens it
+  (`SupportService.route`), so the customer answers by writing. Messages are
+  copied (`copyMessage`, Bot API 10.3 read 2026-09-26): a forum topic opens
+  with a card (id, username, name, language), a plain group gets a card and
+  the copy replying to it, both answerable. Operators' text answers keep
+  «Ответ поддержки», media is copied, both with «Завершить». Deliberate
+  deviation from section 12: the one-message `supportMessage` dialog (10 min)
+  is replaced by this conversation (owner decision). Evidence: API support
+  tests (copy, cards, open/close/answer), bot relay, inbox and screen tests;
+  API 343, bot 68.
 
 ### Next
 
