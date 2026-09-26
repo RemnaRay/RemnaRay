@@ -472,11 +472,15 @@ refused: <code> (<reason>)`; the answer is unchanged. Evidence: verifier
   `docs/admin.md` records the deviation. Evidence: `m4.admin` integration
   with a balance purchase and a refund in the fixture — old SQL 129 700,
   expected 109 800 → green.
-- **F32 (P2) — console transactions:** «Вернуть на баланс» is offered on a
+- **F32 Done (P2) — console transactions:** «Вернуть на баланс» is offered on a
   `topup` row, which the API refuses (refunds are purchases only since
   `0d11ff7`); types show raw codes and a balance purchase is not named as
   such. Repair: the button on purchases only; localized type and «с
-  баланса».
+  баланса». Done: `admin/payments/labels.ts` (type, status and «С баланса»
+  labels; `refundableMinor` — purchases only, the amount left), a provider
+  column on transactions, the refund dialog opens at the amount left.
+  Evidence: label unit tests, console render test red on the old page →
+  green, web 58.
 - **F33 (P2, owner request) — the landing's «Войти» scrolls to the block at
   the bottom of the page.** Repair: «Войти» opens a modal with the Telegram
   sign-in.

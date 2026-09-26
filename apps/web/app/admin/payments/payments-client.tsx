@@ -32,6 +32,7 @@ import { money } from '../../../lib/format';
 import { invalidate, useResource } from '../../../lib/resource';
 import { AdminShell } from '../admin-shell';
 import { AdminSection, useAdminErrorMessage } from '../admin-states';
+import { invoiceStatusLabel, providerLabel, refundableMinor, transactionTypeLabel } from './labels';
 
 type Invoices = z.infer<typeof adminInvoiceListSchema>;
 type Transactions = z.infer<typeof adminTransactionListSchema>;
@@ -119,14 +120,14 @@ export default function PaymentsClient() {
                         {
                           key: 'provider',
                           header: t('payments.provider'),
-                          cell: (row) => row.provider,
+                          cell: (row) => providerLabel(t, row.provider),
                         },
                         {
                           key: 'status',
                           header: t('payments.status'),
                           cell: (row) => (
                             <Badge variant={row.status === 'paid' ? 'success' : 'secondary'}>
-                              {row.status}
+                              {invoiceStatusLabel(t, row.status)}
                             </Badge>
                           ),
                         },
@@ -187,7 +188,16 @@ export default function PaymentsClient() {
                   {(data) => (
                     <DataTable
                       columns={[
-                        { key: 'type', header: t('payments.type'), cell: (row) => row.type },
+                        {
+                          key: 'type',
+                          header: t('payments.type'),
+                          cell: (row) => transactionTypeLabel(t, row.type),
+                        },
+                        {
+                          key: 'provider',
+                          header: t('payments.provider'),
+                          cell: (row) => providerLabel(t, row.provider),
+                        },
                         {
                           key: 'amount',
                           header: t('payments.amount'),
@@ -210,13 +220,13 @@ export default function PaymentsClient() {
                           key: 'actions',
                           header: '',
                           cell: (row) =>
-                            canRefund && (row.type === 'purchase' || row.type === 'topup') ? (
+                            canRefund && refundableMinor(row) > 0 ? (
                               <Button
                                 size="sm"
                                 variant="danger"
                                 onClick={() => {
                                   setRefundTarget(row.id);
-                                  setRefundAmount(BigInt(row.amount.amountMinor));
+                                  setRefundAmount(BigInt(refundableMinor(row)));
                                 }}
                               >
                                 {t('payments.refund')}
