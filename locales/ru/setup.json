@@ -61,7 +61,7 @@
   "setup.bot.supportBotHint": "Отдельный бот, в который покупатели пишут в поддержку; ответы операторов приходят от него. Пусто — поддержка работает в основном боте.",
   "setup.bot.supportBotCheck": "Проверить бот поддержки",
   "setup.bot.supportBotUsername": "Бот поддержки: @{username}",
-  "setup.bot.setdomain": "Не забудьте выполнить /setdomain у @BotFather и указать https://{domain} — без этого не работает вход через виджет Telegram.",
+  "setup.bot.siteLogin": "Вход на сайт через Telegram: в мини-приложении @BotFather откройте бота → Login Widget, нажмите «Switch to OpenID Connect Login», добавьте Redirect URIs https://{domain}/ru и https://{domain}/en и Trusted Origin https://{domain}. Client Secret не нужен.",
   "setup.brand.title": "Бренд",
   "setup.brand.description": "Название, слоган, языки и тема оформления.",
   "setup.brand.name": "Название магазина",

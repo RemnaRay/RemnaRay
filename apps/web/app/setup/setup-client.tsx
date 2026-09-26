@@ -665,7 +665,7 @@ function BotStep({ pending, state, run, refresh, setStep }: StepProps) {
             : supportCheck.error}
         </p>
       ) : null}
-      <p className="text-xs text-muted-foreground">{t('bot.setdomain', { domain })}</p>
+      <p className="text-xs text-muted-foreground">{t('bot.siteLogin', { domain })}</p>
 
       {check ? (
         <div className="flex flex-col gap-2 rounded-md border border-border p-3 text-sm">

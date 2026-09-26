@@ -61,7 +61,7 @@
   "setup.bot.supportBotHint": "A separate bot customers write to for support; the operators’ answers come from it. Empty keeps support in the shop bot.",
   "setup.bot.supportBotCheck": "Check the support bot",
   "setup.bot.supportBotUsername": "Support bot: @{username}",
-  "setup.bot.setdomain": "Remember to run /setdomain with @BotFather and set https://{domain}; the Telegram login widget does not work without it.",
+  "setup.bot.siteLogin": "Telegram sign-in on the site: in the @BotFather mini app open the bot → Login Widget, press «Switch to OpenID Connect Login», add the Redirect URIs https://{domain}/ru and https://{domain}/en and the Trusted Origin https://{domain}. The Client Secret is not needed.",
   "setup.brand.title": "Brand",
   "setup.brand.description": "Name, slogan, languages and theme.",
   "setup.brand.name": "Shop name",
