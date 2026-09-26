@@ -422,4 +422,54 @@ describe('SetupService payment providers (section 17.4 step 7)', () => {
       expect.objectContaining({ starsPerRub: 0.75, botToken: '123:bot' }),
     );
   });
+
+  it('takes an optional support bot and the operators’ chat in step 4 (F35)', async () => {
+    const test = build();
+    const bots: Record<string, { id: number; username: string }> = {
+      '123:shop-token': { id: 123, username: 'manta_bot' },
+      '777:help-token': { id: 777, username: 'manta_help_bot' },
+    };
+    vi.stubGlobal('fetch', (url: string) => {
+      const token = decodeURIComponent(url.split('/bot')[1]?.split('/')[0] ?? '');
+      const bot = bots[token];
+      return Promise.resolve(
+        Response.json(bot ? { ok: true, result: bot } : { ok: false, error_code: 401 }),
+      );
+    });
+    const { sessionId } = await test.service.token({ token: 'wizard-token' }, '10.0.0.10');
+    const step = { token: '123:shop-token', supportContact: '@manta_help' };
+    try {
+      expect(
+        await failure(
+          test.service.submit('4', { ...step, supportBotToken: '999:nope-token' }, sessionId),
+        ),
+      ).toEqual({ status: 400, code: 'SUPPORT_BOT_INVALID' });
+      expect(
+        await failure(
+          test.service.submit('4', { ...step, supportBotToken: '123:shop-token' }, sessionId),
+        ),
+      ).toEqual({ status: 400, code: 'SUPPORT_BOT_SAME' });
+
+      await expect(
+        test.service.submit(
+          '4',
+          { ...step, supportBotToken: '777:help-token', supportChatId: -100500 },
+          sessionId,
+        ),
+      ).resolves.toMatchObject({ saved: true, supportBot: 'manta_help_bot' });
+      expect(test.config.values.get('bot.support_token')).toBe('777:help-token');
+      expect(test.config.values.get('bot.support_username')).toBe('manta_help_bot');
+      expect(test.config.values.get('bot.support_webhook_secret_path')).toMatch(/^[\w-]{32}$/u);
+      expect(test.config.values.get('brand.support_forward_chat_id')).toBe(-100500);
+
+      // Without the optional fields, support stays in the shop bot.
+      const plain = build();
+      const second = await plain.service.token({ token: 'wizard-token' }, '10.0.0.11');
+      await plain.service.submit('4', step, second.sessionId);
+      expect(plain.config.values.has('bot.support_token')).toBe(false);
+      expect(plain.config.values.has('brand.support_forward_chat_id')).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

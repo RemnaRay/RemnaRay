@@ -260,6 +260,59 @@
         }
       }
     },
+    "/api/admin/v1/bot/support": {
+      "get": {
+        "operationId": "getSupportSettings",
+        "summary": "Support: contact, operators' chat, the optional support bot (F35)",
+        "responses": {
+          "200": {
+            "description": "{ contact, chatId, supportBot: { username } | null }"
+          },
+          "403": {
+            "description": "FORBIDDEN"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateSupportSettings",
+        "summary": "Save support; a token is checked with getMe, an empty one turns the support bot off",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "SUPPORT_BOT_INVALID or SUPPORT_BOT_SAME"
+          },
+          "403": {
+            "description": "FORBIDDEN"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "contact": {
+                    "type": "string"
+                  },
+                  "chatId": {
+                    "type": ["integer", "null"]
+                  },
+                  "token": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/v1/bot/sync-commands": {
       "post": {
         "operationId": "syncBotCommands",
@@ -2449,7 +2502,7 @@
             "description": "{ acknowledge: boolean } — true for the first message after «Поддержка»"
           },
           "409": {
-            "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured; SUPPORT_CLOSED: requireOpen and no open conversation"
+            "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured; SUPPORT_CLOSED: requireOpen and no open conversation; SUPPORT_MOVED: support runs in the other bot"
           },
           "502": {
             "description": "SUPPORT_UNAVAILABLE: Telegram refused the message"
@@ -2470,6 +2523,12 @@
                   "requireOpen": {
                     "type": "boolean",
                     "default": false
+                  },
+                  "via": {
+                    "type": "string",
+                    "enum": ["shop", "support"],
+                    "default": "shop",
+                    "description": "The bot the customer wrote in (F35)"
                   }
                 }
               }

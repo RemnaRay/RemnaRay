@@ -241,11 +241,19 @@ export class ApiClient {
   }
 
   /** FR-124: copies the customer's message `messageId` to the operators. */
-  forwardSupport(telegramId: number, messageId: number, options: { requireOpen?: boolean } = {}) {
+  forwardSupport(
+    telegramId: number,
+    messageId: number,
+    options: { requireOpen?: boolean; via?: 'shop' | 'support' } = {},
+  ) {
     return this.request<{ acknowledge: boolean }>('/api/internal/v1/support/forward', {
       method: 'POST',
       userId: telegramId,
-      body: { messageId, requireOpen: options.requireOpen ?? false },
+      body: {
+        messageId,
+        requireOpen: options.requireOpen ?? false,
+        ...(options.via ? { via: options.via } : {}),
+      },
     });
   }
 

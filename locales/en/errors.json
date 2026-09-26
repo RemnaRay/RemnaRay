@@ -14,6 +14,8 @@
   "errors.trial_not_eligible": "The trial is not available for this account.",
   "errors.plan_unavailable": "The plan is unavailable.",
   "errors.provider_unavailable": "The payment method is temporarily unavailable.",
+  "errors.support_bot_invalid": "Telegram did not recognise the support bot token. Check it in @BotFather.",
+  "errors.support_bot_same": "This is the shop bot’s own token. Support needs a bot of its own.",
   "errors.invoice_expired": "The invoice expired. Create a new one.",
   "errors.invoice_not_pending": "The invoice is no longer pending.",
   "errors.insufficient_funds": "The balance is not sufficient.",

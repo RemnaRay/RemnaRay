@@ -150,4 +150,29 @@ describe('support relay (FR-124)', () => {
     }
     expect(routeSupport).not.toHaveBeenCalled();
   });
+
+  it('leaves the operators’ chat to the support bot when one is configured (F35)', async () => {
+    const routeSupport = vi.fn();
+    const middleware = supportRelay(
+      {
+        getConfig: () =>
+          Promise.resolve({
+            supportForwardChatId: -100500,
+            defaultLocale: 'ru',
+            supportBot: { username: 'manta_help_bot' },
+          }),
+        routeSupport,
+      } as never,
+      { catalog: () => Promise.resolve({}) },
+    );
+    const { ctx, sendMessage, copyMessage } = update({ text: 'Hi', message_thread_id: 71 });
+    const next = vi.fn();
+
+    await middleware(ctx, next);
+
+    expect(routeSupport).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
 });

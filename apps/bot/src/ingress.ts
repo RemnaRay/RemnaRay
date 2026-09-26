@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { BotError, type Bot } from 'grammy';
+import { BotError, type Bot, type Context } from 'grammy';
 import { run, type RunnerHandle } from '@grammyjs/runner';
 import type { Update } from 'grammy/types';
 import type Redis from 'ioredis';
@@ -9,7 +9,31 @@ import { ALLOWED_UPDATES, type BotConfig, type RrContext } from './types.js';
 import { botUpdatesTotal } from '@remnaray/metrics';
 
 export const TELEGRAM_UPDATES_STREAM = 'tg:updates';
-const GROUP = 'bot';
+/** The support bot's updates (F35), beside the shop bot's. */
+export const SUPPORT_UPDATES_STREAM = 'tg:support-updates';
+
+/** Where one bot's updates are kept: the shop bot's by default. */
+export type IngressChannel = {
+  stream: string;
+  group: string;
+  /** Prefix of the key that makes a redelivered update a duplicate. */
+  received: string;
+  allowedUpdates: readonly string[];
+};
+
+export const SHOP_CHANNEL: IngressChannel = {
+  stream: TELEGRAM_UPDATES_STREAM,
+  group: 'bot',
+  received: 'tg:received:',
+  allowedUpdates: ALLOWED_UPDATES,
+};
+
+export const SUPPORT_CHANNEL: IngressChannel = {
+  stream: SUPPORT_UPDATES_STREAM,
+  group: 'support-bot',
+  received: 'tg:support-received:',
+  allowedUpdates: ['message', 'callback_query', 'my_chat_member'],
+};
 
 // Both transports persist before acknowledging delivery. Telegram may redeliver
 // an update during a mode transition, so append and dedup must be atomic.
@@ -19,7 +43,7 @@ redis.call('XADD', KEYS[1], 'MAXLEN', '~', 10000, '*', 'payload', ARGV[1])
 redis.call('SET', KEYS[2], '1', 'EX', 604800)
 return 1`;
 
-export class BotIngress {
+export class BotIngress<C extends Context = RrContext> {
   private runner: RunnerHandle | undefined;
   private streamLoop: Promise<void> | undefined;
   private stopping = false;
@@ -28,9 +52,10 @@ export class BotIngress {
   private transition = Promise.resolve();
 
   constructor(
-    private readonly bot: Bot<RrContext>,
+    private readonly bot: Bot<C>,
     private readonly redis: Redis,
     private readonly consumer = `bot-${randomUUID()}`,
+    private readonly channel: IngressChannel = SHOP_CHANNEL,
   ) {
     this.reader = redis.duplicate();
   }
@@ -45,7 +70,13 @@ export class BotIngress {
     await this.bot.init();
     if (!this.streamLoop) {
       try {
-        await this.redis.xgroup('CREATE', TELEGRAM_UPDATES_STREAM, GROUP, '0-0', 'MKSTREAM');
+        await this.redis.xgroup(
+          'CREATE',
+          this.channel.stream,
+          this.channel.group,
+          '0-0',
+          'MKSTREAM',
+        );
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes('BUSYGROUP')) throw error;
       }
@@ -56,7 +87,7 @@ export class BotIngress {
     if (config.mode === 'webhook') {
       await this.bot.api.setWebhook(config.webhookUrl, {
         secret_token: config.secretToken,
-        allowed_updates: ALLOWED_UPDATES,
+        allowed_updates: [...this.channel.allowedUpdates] as never,
         drop_pending_updates: false,
         max_connections: 40,
       });
@@ -68,7 +99,7 @@ export class BotIngress {
           api: {
             getUpdates: async (args, signal) => {
               const updates = await this.bot.api.getUpdates(
-                { ...args, allowed_updates: ALLOWED_UPDATES },
+                { ...args, allowed_updates: [...this.channel.allowedUpdates] as never },
                 signal,
               );
               for (const update of updates) await this.append(update);
@@ -89,8 +120,8 @@ export class BotIngress {
     await this.redis.eval(
       APPEND,
       2,
-      TELEGRAM_UPDATES_STREAM,
-      `tg:received:${String(update.update_id)}`,
+      this.channel.stream,
+      `${this.channel.received}${String(update.update_id)}`,
       JSON.stringify(update),
     );
   }
@@ -107,8 +138,8 @@ export class BotIngress {
     while (!this.stopping) {
       try {
         const claimed = (await this.redis.xautoclaim(
-          TELEGRAM_UPDATES_STREAM,
-          GROUP,
+          this.channel.stream,
+          this.channel.group,
           this.consumer,
           60_000,
           this.claimCursor,
@@ -119,14 +150,14 @@ export class BotIngress {
         for (const [id, fields] of claimed[1]) await this.processMessage(id, fields);
         const batches = (await this.reader.xreadgroup(
           'GROUP',
-          GROUP,
+          this.channel.group,
           this.consumer,
           'COUNT',
           10,
           'BLOCK',
           5000,
           'STREAMS',
-          TELEGRAM_UPDATES_STREAM,
+          this.channel.stream,
           '>',
         )) as Array<[string, Array<[string, string[]]>]> | null;
         for (const [, messages] of batches ?? []) {
@@ -160,14 +191,14 @@ export class BotIngress {
       // Anything else (the bot is not initialised) stays in the PEL for
       // `XAUTOCLAIM`.
       if (!(error instanceof BotError)) throw error;
-      await this.report(error as BotError<RrContext>);
+      await this.report(error as BotError<C>);
     }
     // A handled update, failed or not, is done: redelivering it would run the
     // handler's side effects and the error reply again.
-    await this.redis.xack(TELEGRAM_UPDATES_STREAM, GROUP, id);
+    await this.redis.xack(this.channel.stream, this.channel.group, id);
   }
 
-  private async report(error: BotError<RrContext>): Promise<void> {
+  private async report(error: BotError<C>): Promise<void> {
     try {
       await this.bot.errorHandler(error);
     } catch (failure) {

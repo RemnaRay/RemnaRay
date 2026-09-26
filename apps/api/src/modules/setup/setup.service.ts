@@ -12,6 +12,7 @@ import {
   hashAdminPassword,
   totpFromBase32,
 } from '../admin/admin.crypto';
+import { SupportBotRefused, configureSupportBot } from '../bot/support-bot';
 import { NotifyService } from '../notify/notify.service';
 import { PaymentProviderRegistry } from '../payments/payments.registry';
 import { PlansService } from '../plans/plans.service';
@@ -388,17 +389,34 @@ export class SetupService {
         webhook_secret_token: secretToken,
         admin_language: input.adminLanguage,
       },
-      brand: { support_contact: input.supportContact },
+      brand: {
+        support_contact: input.supportContact,
+        ...(input.supportChatId === null ? {} : { support_forward_chat_id: input.supportChatId }),
+      },
     });
+    let supportBot: string | null = null;
+    if (input.supportBotToken !== '') {
+      try {
+        supportBot = (await configureSupportBot(this.settings, input.supportBotToken)).username;
+      } catch (error) {
+        if (!(error instanceof SupportBotRefused)) throw error;
+        throw new SetupFailure(
+          error.reason === 'invalid_token' ? 'SUPPORT_BOT_INVALID' : 'SUPPORT_BOT_SAME',
+          400,
+        );
+      }
+    }
     await this.advance('4', {
       bot: {
         username: me.username,
         mode: input.mode,
         tokenSet: true,
         supportContact: input.supportContact,
+        supportBot,
+        supportChatId: input.supportChatId,
       },
     });
-    return { saved: true, username: me.username };
+    return { saved: true, username: me.username, supportBot };
   }
 
   private async stepBrand(input: ReturnType<typeof setupBrandSchema.parse>) {

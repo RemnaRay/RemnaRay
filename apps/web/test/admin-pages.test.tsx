@@ -15,6 +15,8 @@ const UsersClient = (await import('../app/admin/users/users-client')).default;
 const PlansClient = (await import('../app/admin/plans/plans-client')).default;
 const SettingsClient = (await import('../app/admin/settings/settings-client')).default;
 const PaymentsClient = (await import('../app/admin/payments/payments-client')).default;
+const { SupportTab } = await import('../app/admin/settings/support-tab');
+const SupportTabForTest = () => <SupportTab fail={() => undefined} notify={() => undefined} />;
 const AdminShell = (await import('../app/admin/admin-shell')).AdminShell;
 const AdminShellForTest = ({ locale }: { locale: 'ru' }) => (
   <AdminShell>{() => <span data-locale={locale}>admin shell</span>}</AdminShell>
@@ -100,6 +102,30 @@ describe('admin pages', () => {
 
     expect(markup).toContain('Не удалось загрузить данные');
     expect(replace).not.toHaveBeenCalledWith('/admin/login');
+  });
+
+  it('shows the support bot by its username, never a token field filled in (F35)', async () => {
+    const set = await render(SupportTabForTest, {
+      '/api/admin/v1/bot/support': {
+        body: {
+          contact: '@manta_help',
+          chatId: -100500,
+          supportBot: { username: 'manta_help_bot' },
+        },
+      },
+    });
+    expect(set).toContain('Задан: @manta_help_bot');
+    expect(set).toContain('value="-100500"');
+    expect(set).toContain('Отключить бот поддержки');
+    expect(set).not.toMatch(/id="support-bot-token"[^>]*value="[^"]+"/u);
+
+    const unset = await render(SupportTabForTest, {
+      '/api/admin/v1/bot/support': {
+        body: { contact: '', chatId: null, supportBot: null },
+      },
+    });
+    expect(unset).toContain('Не задан — поддержка в основном боте');
+    expect(unset).not.toContain('Отключить бот поддержки');
   });
 
   it('names a balance payment and invoice statuses in words (F32)', async () => {

@@ -53,7 +53,7 @@ test.describe('setup wizard', () => {
 
     // Step 7: the bot, verified with getMe.
     await expect(page.getByRole('heading', { name: 'Бот' })).toBeVisible();
-    await page.getByLabel('Токен бота').fill(state.botToken);
+    await page.getByLabel('Токен бота', { exact: true }).fill(state.botToken);
     await page.getByLabel('Контакт поддержки').fill('@manta_support');
     await page.getByRole('button', { name: 'Проверить' }).click();
     await expect(page.getByText('Бот: @manta_setup_bot')).toBeVisible();

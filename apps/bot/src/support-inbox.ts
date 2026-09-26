@@ -41,8 +41,22 @@ export function supportInbox(api: Pick<ApiClient, 'forwardSupport'>): Middleware
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'SUPPORT_CLOSED') return next();
       if (!(error instanceof ApiClientError)) throw error;
+      // Support moved to its own bot (F35) while this conversation was open.
+      const username = movedTo(error);
+      if (username) {
+        await ctx.reply(ctx.t('bot.screen.support.bot', { username }));
+        return;
+      }
       // FR-124: a message that did not reach the operators is not reported as sent.
       await ctx.reply(ctx.t('bot.error.support_unavailable'));
     }
   };
+}
+
+/** The support bot's username a `SUPPORT_MOVED` refusal names, if any. */
+export function movedTo(error: ApiClientError): string | null {
+  if (error.code !== 'SUPPORT_MOVED') return null;
+  const details = (error.details as { error?: { details?: { username?: unknown } } } | undefined)
+    ?.error?.details;
+  return typeof details?.username === 'string' && details.username ? details.username : null;
 }

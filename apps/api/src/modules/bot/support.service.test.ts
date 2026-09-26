@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SupportService } from './support.service';
 
-type Call = { method: string; body: Record<string, unknown> };
+type Call = { method: string; token: string; body: Record<string, unknown> };
 
 function harness(
   options: {
     chatId?: number | null;
     forum?: boolean;
     createTopic?: { ok: boolean; description?: string };
+    supportToken?: string;
   } = {},
 ) {
   const store = new Map<string, string>();
@@ -26,6 +27,8 @@ function harness(
   const settings: Record<string, unknown> = {
     'brand.support_forward_chat_id': options.chatId === undefined ? -100500 : options.chatId,
     'bot.token': '123:token',
+    'bot.support_token': options.supportToken ?? '',
+    'bot.support_username': options.supportToken ? 'manta_help_bot' : '',
   };
   const calls: Call[] = [];
   let messageId = 10;
@@ -33,8 +36,9 @@ function harness(
   vi.stubEnv('RR_TELEGRAM_API_URL', 'http://telegram.test');
   vi.stubGlobal('fetch', (url: string, init: { body: string }) => {
     const method = url.split('/').pop() ?? '';
+    const token = decodeURIComponent(url.split('/bot')[1]?.split('/')[0] ?? '');
     const body = JSON.parse(init.body) as Record<string, unknown>;
-    calls.push({ method, body });
+    calls.push({ method, token, body });
     const answer =
       method === 'getChat'
         ? { ok: true, result: { id: body['chat_id'], is_forum: options.forum === true } }
@@ -181,6 +185,33 @@ describe('SupportService (FR-124)', () => {
     await expect(service.route({ chatId: -100500, replyToMessageId: 11 })).resolves.not.toBeNull();
     await expect(service.forward('42', 8, { requireOpen: true })).resolves.toEqual({
       acknowledge: false,
+    });
+  });
+
+  it('runs through the support bot when one is configured, and nowhere else (F35)', async () => {
+    const { service, calls } = harness({ supportToken: '777:support' });
+
+    // The shop bot can neither open a conversation nor copy a message now.
+    for (const attempt of [service.open('42'), service.forward('42', 5)])
+      await expect(attempt).rejects.toMatchObject({
+        response: { error: { code: 'SUPPORT_MOVED', details: { username: 'manta_help_bot' } } },
+      });
+    expect(calls).toEqual([]);
+
+    // In the support bot every message goes, and the first one is confirmed.
+    await expect(service.forward('42', 5, { via: 'support' })).resolves.toEqual({
+      acknowledge: true,
+    });
+    await expect(service.forward('42', 6, { via: 'support' })).resolves.toEqual({
+      acknowledge: false,
+    });
+    expect(new Set(calls.map((call) => call.token))).toEqual(new Set(['777:support']));
+  });
+
+  it('refuses the support bot’s messages once it is turned off', async () => {
+    const { service } = harness();
+    await expect(service.forward('42', 5, { via: 'support' })).rejects.toMatchObject({
+      response: { error: { code: 'SUPPORT_MOVED', details: { username: null } } },
     });
   });
 });

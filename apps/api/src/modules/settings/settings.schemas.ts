@@ -215,6 +215,30 @@ export const settingRegistry: SettingDefinition[] = [
       defaultValue: 'ru',
       description: 'Language of bot admin notifications.',
     },
+    // Owner decision F35 (2026-09-26): an optional bot of its own for support.
+    support_token: {
+      schema: z.string(),
+      defaultValue: '',
+      secret: true,
+      description: 'Optional support bot token; empty keeps support in the shop bot.',
+    },
+    support_username: {
+      schema: z.string(),
+      defaultValue: '',
+      description: 'Cached username of the support bot.',
+    },
+    support_webhook_secret_path: {
+      schema: z.string(),
+      defaultValue: '',
+      secret: true,
+      description: 'Secret path segment for the support bot webhook.',
+    },
+    support_webhook_secret_token: {
+      schema: z.string(),
+      defaultValue: '',
+      secret: true,
+      description: 'Support bot webhook secret token.',
+    },
   }),
   ...definitions('trial', {
     enabled: {

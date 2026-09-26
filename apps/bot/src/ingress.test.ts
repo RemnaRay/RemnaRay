@@ -1,7 +1,7 @@
 import { Bot, BotError } from 'grammy';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BotIngress } from './ingress.js';
+import { BotIngress, SUPPORT_CHANNEL } from './ingress.js';
 import type { RrContext } from './types.js';
 
 const botInfo = {
@@ -82,5 +82,58 @@ describe('BotIngress failed updates (FR-127)', () => {
     });
     expect(JSON.stringify(log.mock.calls)).not.toContain('Профиль');
     expect(redis.xack).toHaveBeenCalledWith('tg:updates', 'bot', '1-0');
+  });
+});
+
+describe('BotIngress for the support bot (F35)', () => {
+  it('keeps its updates in a stream of its own and asks Telegram for its own updates', async () => {
+    const bot = new Bot<RrContext>('777:token', { botInfo: botInfo as never });
+    const telegram: Array<{ method: string; payload: unknown }> = [];
+    bot.api.config.use((_prev, method, payload) => {
+      telegram.push({ method, payload });
+      return Promise.resolve({ ok: true, result: true } as never);
+    });
+    const redis = {
+      duplicate: () => ({ disconnect: vi.fn(), xreadgroup: () => new Promise(() => undefined) }),
+      xgroup: vi.fn().mockResolvedValue('OK'),
+      xautoclaim: () => new Promise(() => undefined),
+      xack: vi.fn().mockResolvedValue(1),
+      eval: vi.fn().mockResolvedValue(1),
+    };
+    const ingress = new BotIngress(bot, redis as never, 'support-test', SUPPORT_CHANNEL);
+
+    await ingress.start({
+      mode: 'webhook',
+      webhookUrl: 'https://shop.example.test/tg/webhook/support-path',
+      secretToken: 'support-header',
+    });
+    await ingress.append({ update_id: 9 });
+    await (
+      ingress as unknown as { processMessage(id: string, fields: string[]): Promise<void> }
+    ).processMessage('1-0', ['payload', JSON.stringify({ update_id: 9 })]);
+
+    expect(redis.xgroup).toHaveBeenCalledWith(
+      'CREATE',
+      'tg:support-updates',
+      'support-bot',
+      '0-0',
+      'MKSTREAM',
+    );
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      2,
+      'tg:support-updates',
+      'tg:support-received:9',
+      JSON.stringify({ update_id: 9 }),
+    );
+    expect(redis.xack).toHaveBeenCalledWith('tg:support-updates', 'support-bot', '1-0');
+    expect(telegram).toContainEqual({
+      method: 'setWebhook',
+      payload: expect.objectContaining({
+        url: 'https://shop.example.test/tg/webhook/support-path',
+        secret_token: 'support-header',
+        allowed_updates: ['message', 'callback_query', 'my_chat_member'],
+      }) as object,
+    });
   });
 });

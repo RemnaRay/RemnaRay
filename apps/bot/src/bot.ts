@@ -23,7 +23,13 @@ export type BotRuntime = {
   i18n: BotI18n;
 };
 
-const THROTTLED_METHODS = new Set(['sendMessage', 'editMessageText', 'sendPhoto', 'sendInvoice']);
+const THROTTLED_METHODS = new Set([
+  'sendMessage',
+  'editMessageText',
+  'sendPhoto',
+  'sendInvoice',
+  'copyMessage',
+]);
 
 export function outgoingThrottle(): Transformer {
   let chain = Promise.resolve();

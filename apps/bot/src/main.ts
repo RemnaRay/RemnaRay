@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import Redis from 'ioredis';
 import { metricsContentType, metricsText } from '@remnaray/metrics';
 import { ApiClient } from './api-client.js';
 import { createBot, registerCommands, type BotRuntime } from './bot.js';
-import { BotIngress } from './ingress.js';
+import { BotIngress, SUPPORT_CHANNEL } from './ingress.js';
+import { createSupportBot, type SupportContext, type SupportRuntime } from './support-bot.js';
+import type { BotConfig } from './types.js';
 
 const redisUrl = process.env.VALKEY_URL ?? 'redis://valkey:6379/0';
 const api = new ApiClient();
@@ -11,6 +14,11 @@ const subscriber = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest
 let runtime: BotRuntime | undefined;
 let ingress: BotIngress | undefined;
 let activeToken: string | undefined;
+/** The optional support bot (F35), run beside the shop bot. */
+let support:
+  | { token: string; runtime: SupportRuntime; ingress: BotIngress<SupportContext>; redis: Redis }
+  | undefined;
+let supportReady = true;
 let stopping = false;
 let configuring = Promise.resolve();
 let ready = false;
@@ -57,6 +65,7 @@ function configure(): Promise<void> {
       await ingress.start(config);
       activeToken = config.token;
       ready = true;
+      await configureSupport(config, runtime);
     })
     .catch(() => {
       ready = false;
@@ -64,6 +73,49 @@ function configure(): Promise<void> {
     });
   return configuring;
 }
+/**
+ * Starts, replaces or stops the support bot to match the settings. A bot that
+ * is replaced or turned off loses its webhook, so Telegram stops sending its
+ * updates here; a failure leaves the shop bot running and is retried.
+ */
+async function configureSupport(config: BotConfig, shop: BotRuntime): Promise<void> {
+  try {
+    const wanted = config.supportBot;
+    if (support && support.token !== wanted?.token) {
+      const old = support;
+      support = undefined;
+      await old.ingress.stop();
+      await old.runtime.bot.api.deleteWebhook({ drop_pending_updates: false }).catch(() => {
+        console.error('Support bot webhook not removed');
+      });
+      old.redis.disconnect();
+    }
+    if (!wanted) {
+      supportReady = true;
+      return;
+    }
+    if (!support) {
+      const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
+      const runtime = createSupportBot({ token: wanted.token, api, i18n: shop.i18n, redis });
+      support = {
+        token: wanted.token,
+        runtime,
+        redis,
+        ingress: new BotIngress(runtime.bot, redis, `support-${randomUUID()}`, SUPPORT_CHANNEL),
+      };
+    }
+    await support.ingress.start({
+      mode: config.mode,
+      webhookUrl: wanted.webhookUrl,
+      secretToken: wanted.secretToken,
+    });
+    supportReady = true;
+  } catch {
+    supportReady = false;
+    console.error('Support bot configuration unavailable; retrying');
+  }
+}
+
 subscriber.on('error', () => {
   ready = false;
 });
@@ -82,7 +134,7 @@ void subscriber
 void configure();
 // Reconcile after missed Pub/Sub messages or an initial API outage.
 const timer = setInterval(() => {
-  if (!ready) void configure();
+  if (!ready || !supportReady) void configure();
 }, 2000);
 
 async function shutdown() {
@@ -90,6 +142,8 @@ async function shutdown() {
   clearInterval(timer);
   await configuring;
   await ingress?.stop();
+  await support?.ingress.stop();
+  support?.redis.disconnect();
   runtime?.redis.disconnect();
   subscriber.disconnect();
   server.close();

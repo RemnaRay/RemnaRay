@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpStatus,
   Param,
   Post,
   Put,
@@ -18,6 +19,8 @@ import { Infrastructure } from '../../infra/infra.module';
 import { Permissions, Roles } from '../admin/admin.rbac';
 import { Audit, Audited } from '../admin/audit.interceptor';
 import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guards';
+import { SupportBotRefused, configureSupportBot } from '../bot/support-bot';
+import { ApiError } from '../me/me.errors';
 import { ThemeService } from '../public/theme.service';
 import { RemnawaveService } from '../remnawave/remnawave.service';
 import { SettingsService } from '../settings/settings.service';
@@ -53,6 +56,23 @@ const botSchema = z.object({
   username: z.string().min(1).optional(),
   reason: z.string().min(3).max(500).optional(),
 });
+
+const supportSchema = z.object({
+  contact: z.string().max(200).optional(),
+  chatId: z.number().int().nullable().optional(),
+  token: z.string().max(200).optional(),
+  reason: z.string().min(3).max(500).optional(),
+});
+
+/** What the console shows of support; the token itself never leaves the API. */
+async function supportView(settings: SettingsService) {
+  const username = String(await settings.get('bot.support_username'));
+  return {
+    contact: String(await settings.get('brand.support_contact')),
+    chatId: (await settings.get('brand.support_forward_chat_id')) as number | null,
+    supportBot: username ? { username } : null,
+  };
+}
 
 function withoutReason(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'reason'));
@@ -166,6 +186,50 @@ export class AdminBotController {
     // Section 17.6: `bot.*` changes ask the bot to rebuild its transport.
     await this.infra.redis.publish('rr:bot.reconfigure', JSON.stringify({ at: Date.now() }));
     return new Audited(before, await this.settings.getGroup('bot'));
+  }
+
+  /** The console's «Поддержка» (FR-124, owner decision F35). */
+  @Get('support')
+  async support() {
+    return supportView(this.settings);
+  }
+
+  /**
+   * Saves the support contact, the operators' chat and the optional support
+   * bot. A token is checked with `getMe` and must not be the shop bot's; an
+   * empty token turns the support bot off, and an absent one keeps it.
+   */
+  @Put('support')
+  @Audit('bot.support', 'settings')
+  async updateSupport(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = supportSchema.parse(body);
+    const actor = { id: request.admin?.id ?? '' };
+    const before = await supportView(this.settings);
+    await this.settings.set(
+      {
+        brand: {
+          ...(input.contact === undefined ? {} : { support_contact: input.contact }),
+          ...(input.chatId === undefined ? {} : { support_forward_chat_id: input.chatId }),
+        },
+      },
+      actor,
+    );
+    if (input.token !== undefined) {
+      try {
+        await configureSupportBot(this.settings, input.token, actor);
+      } catch (error) {
+        if (!(error instanceof SupportBotRefused)) throw error;
+        throw new ApiError(
+          error.reason === 'invalid_token' ? 'SUPPORT_BOT_INVALID' : 'SUPPORT_BOT_SAME',
+          HttpStatus.BAD_REQUEST,
+          undefined,
+          { fields: [{ path: ['token'], code: error.reason }] },
+        );
+      }
+    }
+    // Section 17.6: `bot.*` changes ask the bot to rebuild its transport.
+    await this.infra.redis.publish('rr:bot.reconfigure', JSON.stringify({ at: Date.now() }));
+    return new Audited(before, await supportView(this.settings));
   }
 
   @Post('test')

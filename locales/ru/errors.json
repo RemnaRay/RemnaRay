@@ -14,6 +14,8 @@
   "errors.trial_not_eligible": "Триал недоступен для этого аккаунта.",
   "errors.plan_unavailable": "Тариф недоступен.",
   "errors.provider_unavailable": "Способ оплаты временно недоступен.",
+  "errors.support_bot_invalid": "Telegram не узнал токен бота поддержки. Проверьте его в @BotFather.",
+  "errors.support_bot_same": "Это токен основного бота магазина. Для поддержки нужен отдельный бот.",
   "errors.invoice_expired": "Счёт истёк. Создайте новый.",
   "errors.invoice_not_pending": "Счёт уже обработан.",
   "errors.insufficient_funds": "На балансе недостаточно средств.",

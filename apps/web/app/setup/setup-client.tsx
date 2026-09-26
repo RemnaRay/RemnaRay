@@ -89,7 +89,7 @@ function field(draft: Record<string, unknown> | undefined, group: string, name: 
   const section = draft?.[group];
   if (!section || typeof section !== 'object') return '';
   const value = (section as Record<string, unknown>)[name];
-  return typeof value === 'string' ? value : '';
+  return typeof value === 'string' ? value : typeof value === 'number' ? String(value) : '';
 }
 
 /** Section 17.4: the eight-step wizard, served on the neutral `_admin` theme. */
@@ -603,6 +603,11 @@ function BotStep({ pending, state, run, refresh, setStep }: StepProps) {
   const [mode, setMode] = useState(field(state.draft, 'bot', 'mode') || 'webhook');
   const [support, setSupport] = useState(field(state.draft, 'bot', 'supportContact'));
   const [check, setCheck] = useState<z.infer<typeof botCheckSchema> | null>(null);
+  // Owner decision F35: an optional support bot and the operators' chat.
+  const [supportBotToken, setSupportBotToken] = useState('');
+  const [supportCheck, setSupportCheck] = useState<z.infer<typeof botCheckSchema> | null>(null);
+  const [supportChatId, setSupportChatId] = useState(field(state.draft, 'bot', 'supportChatId'));
+  const chatIdValid = supportChatId.trim() === '' || /^-?\d+$/u.test(supportChatId.trim());
   const domain = field(state.draft, 'domain', 'main') || (state.defaults?.domain ?? '');
 
   return (
@@ -635,6 +640,31 @@ function BotStep({ pending, state, run, refresh, setStep }: StepProps) {
         value={support}
         onChange={setSupport}
       />
+      <TextField
+        id="setup-bot-support-chat"
+        label={t('bot.supportChat')}
+        hint={t('bot.supportChatHint')}
+        value={supportChatId}
+        onChange={setSupportChatId}
+      />
+      <TextField
+        id="setup-bot-support-token"
+        label={t('bot.supportBot')}
+        hint={t('bot.supportBotHint')}
+        type="password"
+        value={supportBotToken}
+        onChange={(value) => {
+          setSupportBotToken(value);
+          setSupportCheck(null);
+        }}
+      />
+      {supportCheck ? (
+        <p className={supportCheck.ok ? 'text-sm' : 'text-sm text-danger'}>
+          {supportCheck.ok
+            ? t('bot.supportBotUsername', { username: supportCheck.username ?? '' })
+            : supportCheck.error}
+        </p>
+      ) : null}
       <p className="text-xs text-muted-foreground">{t('bot.setdomain', { domain })}</p>
 
       {check ? (
@@ -673,14 +703,36 @@ function BotStep({ pending, state, run, refresh, setStep }: StepProps) {
         >
           {pending ? t('checking') : t('check')}
         </Button>
+        {supportBotToken ? (
+          <Button
+            disabled={pending}
+            variant="secondary"
+            onClick={() =>
+              void run(async () => {
+                const result = await browserApi().send(
+                  'POST',
+                  'api/setup/v1/check/bot',
+                  botCheckSchema,
+                  { token: supportBotToken },
+                );
+                setSupportCheck(result);
+                return result;
+              })
+            }
+          >
+            {t('bot.supportBotCheck')}
+          </Button>
+        ) : null}
         <Button
-          disabled={pending || check?.ok !== true || support.length === 0}
+          disabled={pending || check?.ok !== true || support.length === 0 || !chatIdValid}
           onClick={() =>
             void run(async () => {
               await browserApi().send('POST', 'api/setup/v1/steps/4', savedSchema, {
                 token,
                 mode,
                 supportContact: support,
+                supportBotToken,
+                supportChatId: supportChatId.trim() === '' ? null : Number(supportChatId.trim()),
               });
               return refresh();
             })

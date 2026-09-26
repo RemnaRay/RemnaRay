@@ -69,6 +69,9 @@ export const setupBotSchema = setupBotCheckSchema.extend({
   mode: z.enum(['webhook', 'polling']).default('webhook'),
   supportContact: z.string().min(1).max(200),
   adminLanguage: locale.default('ru'),
+  // Owner decision F35: an optional support bot and the operators' chat.
+  supportBotToken: z.string().max(200).default(''),
+  supportChatId: z.number().int().nullable().default(null),
 });
 
 /** Step 5. */

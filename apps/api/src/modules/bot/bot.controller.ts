@@ -26,6 +26,8 @@ if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 redis.call('XADD', KEYS[1], 'MAXLEN', '~', 10000, '*', 'payload', ARGV[1])
 redis.call('SET', KEYS[2], '1', 'EX', 604800)
 return 1`;
+/** Where the support bot's updates wait for the bot process (F35). */
+export const SUPPORT_UPDATES_STREAM = 'tg:support-updates';
 const publicCommandNames = [
   'start',
   'menu',
@@ -60,12 +62,26 @@ export class TelegramWebhookController {
     @Headers() headers: Record<string, string | string[] | undefined>,
     @Body() body: unknown,
   ) {
-    const configuredPath = String(await this.settings.get('bot.webhook_secret_path'));
-    const configuredToken = String(await this.settings.get('bot.webhook_secret_token'));
     const header = headers['x-telegram-bot-api-secret-token'];
     const token = Array.isArray(header) ? header[0] : header;
-    if (!equalToken(secretPath, configuredPath) || !equalToken(token, configuredToken))
-      throw new ForbiddenException('FORBIDDEN');
+    // The shop bot and, when configured, the support bot (F35) each have a
+    // secret path and token of their own, and a stream of their own.
+    const bots = [
+      { prefix: 'bot.', stream: 'tg:updates', received: 'tg:received:' },
+      { prefix: 'bot.support_', stream: SUPPORT_UPDATES_STREAM, received: 'tg:support-received:' },
+    ];
+    let target: (typeof bots)[number] | undefined;
+    for (const bot of bots) {
+      const configuredPath = String(await this.settings.get(`${bot.prefix}webhook_secret_path`));
+      const configuredToken = String(await this.settings.get(`${bot.prefix}webhook_secret_token`));
+      if (
+        configuredPath !== '' &&
+        equalToken(secretPath, configuredPath) &&
+        equalToken(token, configuredToken)
+      )
+        target = bot;
+    }
+    if (!target) throw new ForbiddenException('FORBIDDEN');
     if (
       !isRecord(body) ||
       typeof body.update_id !== 'number' ||
@@ -75,8 +91,8 @@ export class TelegramWebhookController {
     await this.infra.redis.eval(
       appendUpdate,
       2,
-      'tg:updates',
-      `tg:received:${String(body.update_id)}`,
+      target.stream,
+      `${target.received}${String(body.update_id)}`,
       JSON.stringify(body),
     );
     return { ok: true };
@@ -163,6 +179,7 @@ export class BotInternalController {
       adminCommands,
       supportForwardChatId,
       supportContact,
+      supportBot: await this.supportBot(domain),
       brandName: String(await this.settings.get('brand.name')),
       timezone: String(await this.settings.get('locale.timezone')),
       clients: (
@@ -175,6 +192,19 @@ export class BotInternalController {
       admins: admins.flatMap((admin) =>
         admin.telegramId === null ? [] : [admin.telegramId.toString()],
       ),
+    };
+  }
+
+  /** The support bot (F35), in the shop bot's delivery mode; null when there is none. */
+  private async supportBot(domain: string) {
+    const token = await this.settings.get('bot.support_token');
+    if (typeof token !== 'string' || !token) return null;
+    const secretPath = String(await this.settings.get('bot.support_webhook_secret_path'));
+    return {
+      token,
+      username: String(await this.settings.get('bot.support_username')),
+      webhookUrl: `https://${domain}/tg/webhook/${secretPath}`,
+      secretToken: String(await this.settings.get('bot.support_webhook_secret_token')),
     };
   }
 
@@ -192,6 +222,7 @@ export class BotInternalController {
     const input = supportForwardSchema.parse(body);
     return this.support.forward(telegramIdOf(actingUser), input.messageId, {
       requireOpen: input.requireOpen,
+      via: input.via,
     });
   }
 
@@ -221,6 +252,7 @@ export class BotInternalController {
 const supportForwardSchema = z.object({
   messageId: z.number().int().positive(),
   requireOpen: z.boolean().default(false),
+  via: z.enum(['shop', 'support']).default('shop'),
 });
 
 function telegramIdOf(actingUser: string | undefined): string {

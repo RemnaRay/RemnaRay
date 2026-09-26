@@ -14,10 +14,33 @@ customer's photo or file as it was sent, and the customer sees the operator's.
 Text answers arrive under «Ответ поддержки» in the customer's language, with
 «Завершить» beneath.
 
+## A support bot of its own (optional)
+
+Support can run in a separate Telegram bot (owner decision F35): create one
+with @BotFather and give its token in the setup wizard's «Бот» step or later in
+«Настройки» → «Поддержка» (the console checks it with `getMe` and refuses the
+shop bot's own token; «Отключить бот поддержки» turns it off). Then:
+
+- «Поддержка» in the shop bot shows a link to the support bot instead of
+  opening a conversation;
+- a customer writes to the support bot, and every message — text, photos,
+  files, voice — goes to their topic in the operators' chat; `/start` greets
+  them in their Telegram language;
+- the operators' answers come back from the support bot, copied as they are;
+- the **support bot** must be the administrator of the operators' chat with
+  «Управление темами»; the shop bot can stay in the chat, it stays silent there.
+
+The bot process runs it beside the shop bot in the same delivery mode
+(`bot.mode`): with a webhook it has its own secret path under `/tg/webhook/` and
+its own secret token (`bot.support_webhook_secret_*`), and its updates wait in
+the Valkey stream `tg:support-updates`. Replacing or removing its token removes
+the old bot's webhook.
+
 ## The operators' chat
 
-Create a Telegram group for the operators, add the shop's bot and set the
-group's id (`-100…`) in «Настройки» → «brand» → `support_forward_chat_id`.
+Create a Telegram group for the operators, add the shop's bot (or the support
+bot) and set the group's id (`-100…`) in the wizard's «Бот» step or in
+«Настройки» → «Поддержка».
 
 - **A forum supergroup** (topics enabled) gives every customer a topic of their
   own, named after them with their Telegram id, opened by a card with their id,

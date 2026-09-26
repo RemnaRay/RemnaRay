@@ -315,6 +315,18 @@ export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void>
   const contact = config.supportContact
     ? `\n\n${ctx.t('bot.screen.support.details', { contact: config.supportContact })}`
     : '';
+  // F35: support runs in a bot of its own; the customer writes there.
+  if (config.supportBot) {
+    await show(
+      ctx,
+      `${ctx.t('bot.screen.support.bot', { username: config.supportBot.username })}${contact}`,
+      new InlineKeyboard()
+        .url(ctx.t('bot.btn.supportBot'), `https://t.me/${config.supportBot.username}`)
+        .row()
+        .text(ctx.t('bot.btn.back'), 'home'),
+    );
+    return;
+  }
   if (config.supportForwardChatId !== null && ctx.from) {
     try {
       await api.openSupport(ctx.from.id);

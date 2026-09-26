@@ -1,30 +1,34 @@
 import { formatMessage, SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
-import { GrammyError, InlineKeyboard, type MiddlewareFn } from 'grammy';
+import { GrammyError, InlineKeyboard, type Context, type MiddlewareFn } from 'grammy';
 
 import type { ApiClient } from './api-client.js';
 import type { BotI18n } from './i18n.js';
 import { isSupportMessage } from './support-inbox.js';
-import type { RrContext } from './types.js';
 
 /**
  * FR-124, the operators' side: a message in the operators' chat that answers
  * a customer — written in the customer's forum topic, or a reply to their
  * forwarded message — is sent to that customer: text under «Ответ поддержки»
  * in their language, a photo, file or voice message copied as it is (F35),
- * with «Завершить» for the conversation the answer keeps open. It runs
- * before sessions and dialogs, so an operator is never treated as a customer
- * there. Anything else in that chat is ignored.
+ * with «Завершить» for the conversation the answer keeps open. In the
+ * support bot (`bot: 'support'`, F35) every answer is copied as it is: that
+ * chat is the conversation. When a support bot is configured the shop bot
+ * leaves the operators' chat to it. It runs before sessions and dialogs, so
+ * an operator is never treated as a customer there. Anything else in that
+ * chat is ignored.
  */
-export function supportRelay(
+export function supportRelay<C extends Context>(
   api: Pick<ApiClient, 'getConfig' | 'routeSupport'>,
   i18n: Pick<BotI18n, 'catalog'>,
-): MiddlewareFn<RrContext> {
+  options: { bot: 'shop' | 'support' } = { bot: 'shop' },
+): MiddlewareFn<C> {
   return async (ctx, next) => {
     const chat = ctx.chat;
     if (!chat || chat.type === 'private') return next();
     const config = await api.getConfig();
     if (config.supportForwardChatId === null || chat.id !== config.supportForwardChatId)
       return next();
+    if (options.bot === 'shop' && config.supportBot) return;
     const message = ctx.message;
     if (!isSupportMessage(message) || message.from.is_bot) return;
     const text = message.text?.trim();
@@ -48,7 +52,9 @@ export function supportRelay(
       'support:end',
     );
     try {
-      if (text)
+      if (options.bot === 'support')
+        await ctx.api.copyMessage(Number(target.telegramId), chat.id, message.message_id);
+      else if (text)
         // `formatMessage` escapes the values for HTML, so the message is sent
         // as HTML: an operator's "<" or "'" reaches the customer as typed.
         await ctx.api.sendMessage(

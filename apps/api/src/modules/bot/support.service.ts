@@ -26,6 +26,8 @@ class TelegramCallError extends Error {
 }
 
 export type SupportTarget = { telegramId: string; language: string };
+/** The bot a customer writes to support in: the shop's, or the support bot (F35). */
+export type SupportVia = 'shop' | 'support';
 
 /**
  * FR-124: a customer's message goes to the operators' chat
@@ -52,7 +54,7 @@ export class SupportService {
    * day without messages, what they write to the bot goes to the operators.
    */
   async open(telegramId: string): Promise<void> {
-    await this.destination();
+    await this.destination('shop');
     await this.infra.redis.set(openKey(telegramId), 'new', 'EX', CONVERSATION_TTL_SECONDS);
   }
 
@@ -64,17 +66,20 @@ export class SupportService {
    * Copies the customer's message `messageId` (in their chat with the bot)
    * to the operators. With `requireOpen`, a message outside an open
    * conversation is refused with `SUPPORT_CLOSED`. `acknowledge` is true for
-   * the first message after «Поддержка», which the bot confirms.
+   * the first message after «Поддержка» — in the support bot, the first of a
+   * conversation — which the bot confirms. `via` is the bot the customer wrote
+   * in: the copy is made by that bot, so it must be the one support runs in.
    */
   async forward(
     telegramId: string,
     messageId: number,
-    options: { requireOpen?: boolean } = {},
+    options: { requireOpen?: boolean; via?: SupportVia } = {},
   ): Promise<{ acknowledge: boolean }> {
+    const via = options.via ?? 'shop';
     const state = await this.infra.redis.get(openKey(telegramId));
     if (options.requireOpen && state === null)
       throw new ApiError('SUPPORT_CLOSED', HttpStatus.CONFLICT);
-    const { chatId, token } = await this.destination();
+    const { chatId, token } = await this.destination(via);
     const user = await this.infra.db.user.findUnique({
       where: { telegramId: BigInt(telegramId) },
       select: { firstName: true, username: true, language: true },
@@ -118,7 +123,7 @@ export class SupportService {
       throw new ApiError('SUPPORT_UNAVAILABLE', HttpStatus.BAD_GATEWAY);
     }
     await this.infra.redis.set(openKey(telegramId), 'active', 'EX', CONVERSATION_TTL_SECONDS);
-    return { acknowledge: state === 'new' };
+    return { acknowledge: state === 'new' || (via === 'support' && state === null) };
   }
 
   /** The customer an operator's message in the operators' chat answers, if any. */
@@ -148,11 +153,25 @@ export class SupportService {
     return { telegramId, language: user?.language ?? 'ru' };
   }
 
-  private async destination(): Promise<{ chatId: number; token: string }> {
-    const [chatId, token] = await Promise.all([
+  /**
+   * The operators' chat and the bot that writes there: the support bot when
+   * one is configured (F35), otherwise the shop bot. A message from the other
+   * bot is `SUPPORT_MOVED`: that bot cannot copy it, and the answers would
+   * come from a bot the customer is not talking to.
+   */
+  private async destination(via: SupportVia): Promise<{ chatId: number; token: string }> {
+    const [chatId, shopToken, supportToken, supportUsername] = await Promise.all([
       this.settings.get('brand.support_forward_chat_id'),
       this.settings.get('bot.token'),
+      this.settings.get('bot.support_token'),
+      this.settings.get('bot.support_username'),
     ]);
+    const supportBot = typeof supportToken === 'string' && supportToken !== '';
+    if (supportBot !== (via === 'support'))
+      throw new ApiError('SUPPORT_MOVED', HttpStatus.CONFLICT, undefined, {
+        username: supportBot ? String(supportUsername) : null,
+      });
+    const token = supportBot ? supportToken : shopToken;
     if (typeof chatId !== 'number' || typeof token !== 'string' || !token)
       throw new ApiError('SUPPORT_UNAVAILABLE', HttpStatus.CONFLICT);
     return { chatId, token };

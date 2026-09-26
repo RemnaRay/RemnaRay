@@ -33,6 +33,48 @@ describe('bot ingress boundary', () => {
     expect(calls[0]).toContain(JSON.stringify({ update_id: 7, message: { text: '/start' } }));
   });
 
+  it('writes the support bot’s updates to its own stream, and refuses an unknown path (F35)', async () => {
+    const calls: unknown[][] = [];
+    const settings: Record<string, string> = {
+      'bot.webhook_secret_path': 'shop-path',
+      'bot.webhook_secret_token': 'shop-header',
+      'bot.support_webhook_secret_path': 'support-path',
+      'bot.support_webhook_secret_token': 'support-header',
+    };
+    const controller = new TelegramWebhookController(
+      {
+        redis: {
+          eval: (...args: unknown[]) => {
+            calls.push(args);
+            return Promise.resolve('1-0');
+          },
+        },
+      } as never,
+      { get: (key: string) => Promise.resolve(settings[key] ?? '') } as never,
+    );
+    await controller.receive(
+      'support-path',
+      { 'x-telegram-bot-api-secret-token': 'support-header' },
+      { update_id: 8, message: { text: 'help' } },
+    );
+    expect(calls[0]).toContain('tg:support-updates');
+    expect(calls[0]).toContain('tg:support-received:8');
+    // One bot's path with the other's secret header is nobody's.
+    await expect(
+      controller.receive(
+        'support-path',
+        { 'x-telegram-bot-api-secret-token': 'shop-header' },
+        { update_id: 9 },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    settings['bot.support_webhook_secret_path'] = '';
+    settings['bot.support_webhook_secret_token'] = '';
+    await expect(
+      controller.receive('', { 'x-telegram-bot-api-secret-token': '' }, { update_id: 10 }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(calls).toHaveLength(1);
+  });
+
   it('serves locale messages and a mode-aware bot configuration', async () => {
     const settings: Record<string, unknown> = {
       'bot.mode': 'webhook',
@@ -72,8 +114,25 @@ describe('bot ingress boundary', () => {
       trial: { days: 7, trafficGb: 25 },
       clients: [{ name: 'Happ', platforms: ['ios'] }],
       timezone: 'Asia/Yekaterinburg',
+      supportBot: null,
     });
     expect(config.commands.en?.[0]).toEqual({ command: 'start', description: 'Start the bot' });
+
+    // F35: the support bot comes with its own webhook, in the same mode.
+    Object.assign(settings, {
+      'bot.support_token': '777:support',
+      'bot.support_username': 'manta_help_bot',
+      'bot.support_webhook_secret_path': 'support-path',
+      'bot.support_webhook_secret_token': 'support-header',
+    });
+    await expect(controller.config()).resolves.toMatchObject({
+      supportBot: {
+        token: '777:support',
+        username: 'manta_help_bot',
+        webhookUrl: 'https://shop.example.test/tg/webhook/support-path',
+        secretToken: 'support-header',
+      },
+    });
   });
 
   it('authorizes bot admin extension and writes an audit record', async () => {

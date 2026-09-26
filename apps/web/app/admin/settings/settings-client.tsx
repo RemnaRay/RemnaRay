@@ -29,6 +29,7 @@ import { adminApi, errorCode } from '../../../lib/admin-client';
 import { invalidate, useResource } from '../../../lib/resource';
 import { AdminShell } from '../admin-shell';
 import { AdminSection, useAdminErrorMessage } from '../admin-states';
+import { SupportTab } from './support-tab';
 import { ProvidersTab, providersSchema } from './providers-tab';
 import { TimeZoneOptions } from '../../_components/time-zones';
 
@@ -166,6 +167,7 @@ export default function SettingsAdminClient() {
             <TabsList>
               <TabsTrigger value="store">{t('settings.tab.store')}</TabsTrigger>
               <TabsTrigger value="providers">{t('settings.tab.providers')}</TabsTrigger>
+              <TabsTrigger value="support">{t('settings.tab.support')}</TabsTrigger>
               <TabsTrigger value="theme">{t('settings.tab.theme')}</TabsTrigger>
               <TabsTrigger value="locales">{t('settings.tab.locales')}</TabsTrigger>
               <TabsTrigger value="legal">{t('settings.tab.legal')}</TabsTrigger>
@@ -235,6 +237,15 @@ export default function SettingsAdminClient() {
                   />
                 )}
               </AdminSection>
+            </TabsContent>
+
+            <TabsContent value="support">
+              <SupportTab
+                fail={fail}
+                notify={(title) => {
+                  toast({ title });
+                }}
+              />
             </TabsContent>
 
             <TabsContent value="theme">

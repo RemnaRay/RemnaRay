@@ -526,6 +526,23 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
   is replaced by this conversation (owner decision). Evidence: API support
   tests (copy, cards, open/close/answer), bot relay, inbox and screen tests;
   API 343, bot 68.
+  **F35b Done — the optional support bot.** Settings `bot.support_token`
+  (secret), `support_username`, `support_webhook_secret_path|token`;
+  `configureSupportBot` checks the token with `getMe` and refuses the shop
+  bot's (`SUPPORT_BOT_INVALID`/`SUPPORT_BOT_SAME`). The wizard's «Бот» step
+  takes the support bot token and the operators' chat id (both optional; a
+  «Проверить бот поддержки» button); the console has «Настройки» →
+  «Поддержка» (`GET/PUT /api/admin/v1/bot/support`, token never shown). The
+  bot process runs it beside the shop bot (`support-bot.ts`,
+  `main.ts#configureSupport`) in `bot.mode`: its own webhook secret path and
+  token under `/tg/webhook/`, stream `tg:support-updates`, group
+  `support-bot`; a replaced or removed bot loses its webhook. With it, the
+  shop bot's «Поддержка» links to it and its relay is silent; the support
+  bot copies every customer message to the topic (`via: 'support'`) and the
+  operators' answers back as they are; `SUPPORT_MOVED` covers a message sent
+  through the other bot. Evidence: API webhook/config/support/setup/console
+  tests, bot support-bot (`handleUpdate`), ingress channel, relay, screen
+  and inbox tests, web console tab test.
 
 ### Next
 

@@ -4,9 +4,13 @@ import { ApiClientError } from '../api-client.js';
 import { endSupport, showSupport } from './index.js';
 import type { RrContext } from '../types.js';
 
-function screen(supportForwardChatId: number | null, supportContact = '@manta_help') {
+function screen(
+  supportForwardChatId: number | null,
+  supportContact = '@manta_help',
+  supportBot: { username: string } | null = null,
+) {
   const params: Record<string, unknown>[] = [];
-  const shown: Array<{ text: string; buttons: string[] }> = [];
+  const shown: Array<{ text: string; buttons: string[]; urls: string[] }> = [];
   const ctx = {
     from: { id: 123 },
     session: {},
@@ -16,19 +20,21 @@ function screen(supportForwardChatId: number | null, supportContact = '@manta_he
     },
     reply: (
       text: string,
-      options: { reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } },
+      options: {
+        reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string; url?: string }>> };
+      },
     ) => {
+      const buttons = (options.reply_markup?.inline_keyboard ?? []).flat();
       shown.push({
         text,
-        buttons: (options.reply_markup?.inline_keyboard ?? [])
-          .flat()
-          .map((button) => button.callback_data ?? ''),
+        buttons: buttons.map((button) => button.callback_data ?? ''),
+        urls: buttons.flatMap((button) => (button.url ? [button.url] : [])),
       });
       return { message_id: 1 };
     },
   } as unknown as RrContext;
   const api = {
-    getConfig: () => ({ supportForwardChatId, supportContact }),
+    getConfig: () => ({ supportForwardChatId, supportContact, supportBot }),
     openSupport: vi.fn().mockResolvedValue(undefined),
     closeSupport: vi.fn().mockResolvedValue(undefined),
   };
@@ -61,5 +67,15 @@ describe('bot support screen (FR-124)', () => {
     api.openSupport.mockRejectedValue(new ApiClientError(409, 'SUPPORT_UNAVAILABLE'));
     await showSupport(ctx, api as never);
     expect(shown[0]?.text).toBe('bot.screen.support.details');
+  });
+
+  it('sends the customer to the support bot when one is configured (F35)', async () => {
+    const { ctx, api, shown, params } = screen(-100500, '@manta_help', {
+      username: 'manta_help_bot',
+    });
+    await showSupport(ctx, api as never);
+    expect(api.openSupport).not.toHaveBeenCalled();
+    expect(params).toContainEqual({ key: 'bot.screen.support.bot', username: 'manta_help_bot' });
+    expect(shown[0]?.urls).toEqual(['https://t.me/manta_help_bot']);
   });
 });

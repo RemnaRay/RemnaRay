@@ -50,6 +50,11 @@ export type BotConfig = {
   adminCommands: Record<Locale, Array<{ command: string; description: string }>>;
   supportForwardChatId: number | null;
   supportContact: string;
+  /**
+   * The optional support bot (owner decision F35): customers write to it,
+   * and it answers for the operators, in the shop bot's delivery mode.
+   */
+  supportBot: { token: string; username: string; webhookUrl: string; secretToken: string } | null;
   admins: string[];
 };
 

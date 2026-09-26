@@ -70,4 +70,20 @@ describe('support inbox (FR-124, F35)', () => {
     await inbox(ctx, vi.fn());
     expect(reply).toHaveBeenCalledWith('bot.error.support_unavailable');
   });
+
+  it('points to the support bot when support moved there during a conversation (F35)', async () => {
+    const t = vi.fn((key: string) => key);
+    const inbox = supportInbox({
+      forwardSupport: vi.fn().mockRejectedValue(
+        new ApiClientError(409, 'SUPPORT_MOVED', {
+          error: { code: 'SUPPORT_MOVED', details: { username: 'manta_help_bot' } },
+        }),
+      ),
+    });
+    const { ctx, reply } = message({ text: 'Hello' });
+    (ctx as unknown as { t: typeof t }).t = t;
+    await inbox(ctx, vi.fn());
+    expect(t).toHaveBeenCalledWith('bot.screen.support.bot', { username: 'manta_help_bot' });
+    expect(reply).toHaveBeenCalledWith('bot.screen.support.bot');
+  });
 });
