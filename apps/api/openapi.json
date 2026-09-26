@@ -2761,6 +2761,13 @@
           "400": { "description": "VALIDATION_ERROR" }
         }
       }
+    },
+    "/api/internal/v1/support/sweep": {
+      "post": {
+        "operationId": "sweepSupportTickets",
+        "summary": "The worker's minute sweep: remind of untaken tickets, close idle ones (F36)",
+        "responses": { "200": { "description": "{ reminded, closed }" } }
+      }
     }
   },
   "webhooks": {}

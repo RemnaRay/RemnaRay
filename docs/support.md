@@ -39,6 +39,16 @@ buttons work only in that chat. The first answer takes a ticket nobody took.
 In the topic, `/close`, `/silent` and `/card` do the same as the buttons. An
 operator writing to a customer without an open ticket opens one.
 
+**Reminders and auto-close.** The worker sweeps the tickets every minute
+(`maintenance.support-sweep`). A ticket nobody took for
+`support.remind_after_minutes` (15 by default) is announced once in the
+operators' chat — `⏰ Тикет #N ждёт ответа … мин` with a link to its topic. A
+ticket whose last word was the operators' and that the customer has not
+answered for `support.autoclose_hours` (48 by default) closes by itself: the
+customer is told and asked for a rating, the topic gets `💤 Тикет #N закрыт
+автоматически`. Either setting at 0 turns its part off; both are in
+«Настройки» (group `support`).
+
 **Rating.** A closed ticket's notice asks the customer to rate the help
 (★1–★5); only the first rating of their own closed ticket counts. The rating
 appears in the topic (`★★★★☆ Оценка тикета #N: 4`) and on the card. A silent

@@ -89,6 +89,13 @@ export class SupportInternalController {
     return this.support.rate(telegramIdOf(actingUser), input.ticketId, input.rating);
   }
 
+  /** The worker's minute sweep: reminders of untaken tickets and the auto-close (F36). */
+  @Post('sweep')
+  @HttpCode(200)
+  async sweep() {
+    return this.support.sweep();
+  }
+
   /** A message in the operators' chat: an answer, a note or a command. */
   @Post('operator')
   @HttpCode(200)

@@ -16,6 +16,14 @@ describe('section 7.3 cron jobs', () => {
     });
   });
 
+  it('sweeps support tickets every minute (F36)', () => {
+    expect(cronJobs(new Date('2026-09-25T07:05:10Z'))).toContainEqual({
+      queue: 'maintenance',
+      name: 'maintenance.support-sweep',
+      jobId: 'maintenance:support-sweep:202609250705',
+    });
+  });
+
   it('reconciles the panel once per quarter hour under jobId reconcile:<yyyymmddHHMM>', () => {
     const reconcile = (at: string) =>
       cronJobs(new Date(at)).find((job) => job.name === 'panel.reconcile-all');

@@ -24,6 +24,12 @@ export function cronJobs(at: Date): CronJob[] {
       name: 'maintenance.subscriptions-expire',
       jobId: `maintenance:subscriptions-expire:${minuteStamp(at)}`,
     },
+    // Owner decision F36: reminders of untaken tickets and the auto-close.
+    {
+      queue: 'maintenance',
+      name: 'maintenance.support-sweep',
+      jobId: `maintenance:support-sweep:${minuteStamp(at)}`,
+    },
     // Section 10.5, cron `*/15 * * * *`.
     { queue: 'panel', name: 'panel.reconcile-all', jobId: `reconcile:${minuteStamp(slot)}` },
   ];

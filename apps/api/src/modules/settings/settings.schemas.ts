@@ -50,6 +50,7 @@ export type SettingsGroup =
   | 'clients'
   | 'webhooks'
   | 'operator'
+  | 'support'
   | 'admin'
   | 'legal';
 
@@ -475,6 +476,20 @@ export const settingRegistry: SettingDefinition[] = [
       schema: minorAmount,
       defaultValue: '100000',
       description: 'Operator refund limit.',
+    },
+  }),
+  // Owner decision F36: the operators are reminded of a ticket nobody took,
+  // and a ticket the customer left unanswered closes by itself; 0 turns off.
+  ...definitions('support', {
+    remind_after_minutes: {
+      schema: z.number().int().min(0).max(10_080),
+      defaultValue: 15,
+      description: 'Remind the operators of a ticket nobody took after this many minutes.',
+    },
+    autoclose_hours: {
+      schema: z.number().int().min(0).max(8_760),
+      defaultValue: 48,
+      description: 'Close a ticket after this many hours without the customer answering.',
     },
   }),
   ...definitions('admin', {

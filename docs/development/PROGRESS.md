@@ -599,9 +599,20 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      (SQL over `support_tickets`): opened, closed, open now, first answer
      average/median, resolution, rating, per assignee. Evidence: service
      rating tests (open ticket, once, someone else's), bot rating tests,
-     `m4.support` stats on PostgreSQL. 4. Topic status,
-     reminders, auto-close. 5. Actions from the card. 6. Self-help FAQ.
-  4. Console section.
+     `m4.support` stats on PostgreSQL.
+  4. **Done — topic status, reminders, auto-close.** The topic status
+     (🟢/🟡/⚪ via `editForumTopic`) came with stage 1. Settings group
+     `support` (`remind_after_minutes` 15, `autoclose_hours` 48; 0 = off;
+     editable in «Настройки»). Worker cron `maintenance.support-sweep` every
+     minute → `POST /api/internal/v1/support/sweep`: one reminder per untaken
+     ticket in the operators' chat with a `t.me/c/…` link (conditional
+     `reminded_at`), and the auto-close of a ticket where the operators spoke
+     last and the customer stayed silent (`closed_by=auto`, the customer
+     asked for a rating). Evidence: service sweep tests, worker cron and
+     routing tests, `m4.support` sweep SQL on PostgreSQL.
+  5. Actions from the card.
+  6. Self-help FAQ.
+  7. Console section.
 
 ### Next
 

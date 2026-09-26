@@ -26,6 +26,8 @@ test(
       const { loadCardData } = await import('../apps/api/dist/modules/support/card-data.js');
       const { SupportAdminService } =
         await import('../apps/api/dist/modules/support/support-admin.service.js');
+      const { SupportService } =
+        await import('../apps/api/dist/modules/support/support.service.js');
       const prisma = createPrismaClient(databaseUrl);
       const tickets = new TicketsRepository({ db: prisma });
 
@@ -161,6 +163,51 @@ test(
           ['Pavel', 0, 1, 1800],
         ],
       );
+
+      // The minute sweep's SQL (F36): a ticket the customer left after the
+      // operators' answer closes; one where the customer spoke last does not.
+      const idle = await prisma.supportTicket.findFirstOrThrow({ where: { userId: other.id } });
+      await prisma.supportTicket.update({
+        where: { id: idle.id },
+        data: { chatId: -100500n, lastCustomerAt: at(60 * 60), lastOperatorAt: at(60 * 49) },
+      });
+      const settingsValues = {
+        'brand.support_forward_chat_id': -100500,
+        'brand.name': 'Manta',
+        'bot.token': '123:token',
+        'bot.support_token': '',
+        'bot.support_username': '',
+        'locale.default': 'ru',
+        'locale.timezone': 'UTC',
+        'domain.main': 'shop.example.test',
+        'support.remind_after_minutes': 15,
+        'support.autoclose_hours': 48,
+      };
+      const telegram = [];
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async (url, init) => {
+        telegram.push({ method: String(url).split('/').pop(), body: JSON.parse(init.body) });
+        return globalThis.Response.json({ ok: true, result: { message_id: 1 } });
+      };
+      try {
+        const service = new SupportService(
+          {
+            db: prisma,
+            redis: { get: async () => null, set: async () => 'OK', del: async () => 1 },
+          },
+          { get: async (key) => settingsValues[key] },
+          tickets,
+          { messages: async () => ({}) },
+        );
+        assert.deepEqual(await service.sweep(), { reminded: 0, closed: 1 });
+        const after = await prisma.supportTicket.findUniqueOrThrow({ where: { id: idle.id } });
+        assert.equal(after.status, 'closed');
+        assert.equal(after.closedBy, 'auto');
+        assert.ok(telegram.some((call) => call.body.chat_id === 43));
+        assert.deepEqual(await service.sweep(), { reminded: 0, closed: 0 });
+      } finally {
+        globalThis.fetch = realFetch;
+      }
 
       await prisma.$disconnect();
     } finally {

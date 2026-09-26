@@ -1,4 +1,5 @@
 import { HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
+import { Prisma } from '@remnaray/db';
 import { formatMessage, SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
 
 import { Infrastructure } from '../../infra/infra.module';
@@ -252,6 +253,104 @@ export class SupportService {
       await this.refreshCard(ticket);
     });
     return { accepted: true, number: Number(ticket.number) };
+  }
+
+  /**
+   * The worker's minute sweep (F36). A ticket nobody took for
+   * `support.remind_after_minutes` is announced once in the operators' chat;
+   * a ticket whose last word was the operators' and that the customer left
+   * for `support.autoclose_hours` is closed, and the customer is asked to rate
+   * it. Either setting at 0 turns its part off.
+   */
+  async sweep(now = new Date()): Promise<{ reminded: number; closed: number }> {
+    const destination = await this.activeDestination();
+    if (!destination) return { reminded: 0, closed: 0 };
+    const remindAfter = Number(await this.settings.get('support.remind_after_minutes'));
+    const autocloseHours = Number(await this.settings.get('support.autoclose_hours'));
+    let reminded = 0;
+    let closed = 0;
+    if (remindAfter > 0) {
+      const waiting = await this.infra.db.supportTicket.findMany({
+        where: {
+          status: 'open',
+          takenAt: null,
+          remindedAt: null,
+          chatId: BigInt(destination.chatId),
+          createdAt: { lt: new Date(now.getTime() - remindAfter * 60_000) },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 20,
+      });
+      for (const ticket of waiting) if (await this.remind(ticket, destination, now)) reminded += 1;
+    }
+    if (autocloseHours > 0) {
+      const idle = await this.infra.db.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT id FROM support_tickets
+        WHERE status <> 'closed' AND last_operator_at IS NOT NULL
+          AND (last_customer_at IS NULL OR last_customer_at < last_operator_at)
+          AND last_operator_at < ${new Date(now.getTime() - autocloseHours * 3_600_000)}
+        ORDER BY last_operator_at LIMIT 50`);
+      for (const { id } of idle) if (await this.autoClose(id, destination)) closed += 1;
+    }
+    return { reminded, closed };
+  }
+
+  /** Once per ticket: `⏰ Тикет #N ждёт…` in the operators' chat, with a link to it. */
+  private async remind(ticket: Ticket, destination: Destination, now: Date): Promise<boolean> {
+    const { count } = await this.infra.db.supportTicket.updateMany({
+      where: { id: ticket.id, remindedAt: null, takenAt: null },
+      data: { remindedAt: now },
+    });
+    if (count === 0) return false;
+    const customer = await this.infra.db.user.findUnique({ where: { id: ticket.userId } });
+    const t = await this.operatorTranslate();
+    await this.bestEffort(async () => {
+      await telegramCall(destination.token, 'sendMessage', {
+        chat_id: destination.chatId,
+        text: t('bot.support.op.reminder', {
+          number: Number(ticket.number),
+          minutes: Math.max(1, Math.round((now.getTime() - ticket.createdAt.getTime()) / 60_000)),
+          name: customer?.firstName ?? customer?.username ?? customer?.telegramId.toString() ?? '',
+        }),
+        parse_mode: 'HTML',
+        ...(messageLink(destination.chatId, ticket)
+          ? {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    {
+                      text: t('bot.support.btn.open'),
+                      url: messageLink(destination.chatId, ticket),
+                    },
+                  ],
+                ],
+              },
+            }
+          : {}),
+      });
+    });
+    return true;
+  }
+
+  private async autoClose(id: string, destination: Destination): Promise<boolean> {
+    const closed = await this.tickets.closeIfLive(id, 'auto', false);
+    if (!closed) return false;
+    const customer = await this.infra.db.user.findUnique({ where: { id: closed.userId } });
+    await this.bestEffort(async () => {
+      const t = await this.operatorTranslate();
+      if (customer)
+        await this.tellCustomer(closed, customer, 'bot.support.ticket.autoClosed', destination, {
+          rating: true,
+        });
+      await this.postSystem(
+        closed,
+        destination,
+        t('bot.support.op.autoClosed', { number: Number(closed.number) }),
+      );
+      await this.refreshCard(closed);
+      if (customer) await this.renameTopic(closed, customer, destination);
+    });
+    return true;
   }
 
   private async command(
@@ -899,10 +998,15 @@ export class SupportService {
 
   /** The bot that runs support now, for a ticket in `chatId`; null when that chat is gone. */
   private async destinationForChat(chatId: number): Promise<Destination | null> {
+    const destination = await this.activeDestination();
+    return destination && destination.chatId === chatId ? destination : null;
+  }
+
+  /** The operators' chat and the bot support runs in now; null when support is off. */
+  private async activeDestination(): Promise<Destination | null> {
     const supportToken = await this.settings.get('bot.support_token');
     const via: SupportVia = typeof supportToken === 'string' && supportToken ? 'support' : 'shop';
-    const destination = await this.destination(via).catch(() => null);
-    return destination && destination.chatId === chatId ? destination : null;
+    return this.destination(via).catch(() => null);
   }
 
   private async isForum(destination: Destination): Promise<boolean> {
@@ -916,6 +1020,18 @@ export class SupportService {
     await this.infra.redis.set(key, forum ? '1' : '0', 'EX', FORUM_TTL_SECONDS);
     return forum;
   }
+}
+
+/**
+ * `https://t.me/c/<chat>/<message>`: a link to the ticket in a supergroup
+ * (its topic, or its card in a plain group), for the members who can see it.
+ */
+function messageLink(chatId: number, ticket: Pick<Ticket, 'threadId' | 'cardMessageId'>) {
+  const internal = String(chatId).replace(/^-100/u, '');
+  const target = ticket.threadId ?? ticket.cardMessageId;
+  return String(chatId).startsWith('-100') && target !== null
+    ? `https://t.me/c/${internal}/${String(target)}`
+    : '';
 }
 
 /** ★1…★5 under a closed ticket's notice: `rate:<ticket id>:<n>`. */

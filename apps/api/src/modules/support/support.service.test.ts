@@ -148,6 +148,10 @@ const catalog: Record<string, string> = {
   'bot.support.ticket.taken': 'An operator took #{number}',
   'bot.support.ticket.closed': 'Request #{number} closed',
   'bot.support.rate.ask': 'Rate us',
+  'bot.support.op.reminder': 'Waiting #{number} {minutes} min {name}',
+  'bot.support.op.autoClosed': 'Auto-closed #{number}',
+  'bot.support.btn.open': 'Open',
+  'bot.support.ticket.autoClosed': 'Request #{number} auto-closed',
   'bot.support.op.rated': '{stars} #{number}: {rating}',
   'bot.screen.support.reply': 'Support: {text}',
   'bot.screen.support.undelivered': 'Undelivered: {reason}',
@@ -163,6 +167,8 @@ function harness(
     failCopy?: { description: string; times?: number };
     failSend?: string;
     templates?: Array<{ code: string; title: string; body: Record<string, string> }>;
+    remindAfter?: number;
+    autocloseHours?: number;
   } = {},
 ) {
   const store = new Map<string, string>();
@@ -186,6 +192,8 @@ function harness(
     'locale.default': 'en',
     'locale.timezone': 'UTC',
     'domain.main': 'shop.example.test',
+    'support.remind_after_minutes': options.remindAfter ?? 15,
+    'support.autoclose_hours': options.autocloseHours ?? 48,
   };
   const calls: Call[] = [];
   let messageId = 10;
@@ -239,15 +247,43 @@ function harness(
     },
   };
   const memory = memoryTickets();
+  Object.assign(db, {
+    // The sweep's SQL for idle tickets, over the in-memory tickets.
+    $queryRaw: vi.fn(() => {
+      const cutoff = Date.now() - Number(settings['support.autoclose_hours']) * 3_600_000;
+      return Promise.resolve(
+        memory.tickets
+          .filter(
+            (ticket) =>
+              ticket.status !== 'closed' &&
+              ticket.lastOperatorAt !== null &&
+              (ticket.lastCustomerAt === null || ticket.lastCustomerAt < ticket.lastOperatorAt) &&
+              ticket.lastOperatorAt.getTime() < cutoff,
+          )
+          .map((ticket) => ({ id: ticket.id })),
+      );
+    }),
+  });
   db.supportTicket = Object.assign(db.supportTicket, {
+    findMany: vi.fn(({ where }: { where: { createdAt: { lt: Date } } }) =>
+      Promise.resolve(
+        memory.tickets.filter(
+          (ticket) =>
+            ticket.status === 'open' &&
+            ticket.takenAt === null &&
+            ticket.remindedAt === null &&
+            ticket.createdAt < where.createdAt.lt,
+        ),
+      ),
+    ),
     updateMany: vi.fn(
       ({ where, data }: { where: Record<string, unknown>; data: Partial<Ticket> }) => {
         const matching = memory.tickets.filter(
           (ticket) =>
             ticket.id === where['id'] &&
-            ticket.userId === where['userId'] &&
-            ticket.status === where['status'] &&
-            ticket.rating === where['rating'],
+            Object.entries(where).every(
+              ([key, value]) => key === 'id' || ticket[key as keyof Ticket] === value,
+            ),
         );
         for (const ticket of matching) Object.assign(ticket, data);
         return Promise.resolve({ count: matching.length });
@@ -587,6 +623,80 @@ describe('SupportService tickets (FR-124, F36)', () => {
     await expect(service.forward('42', 5, { via: 'support' })).rejects.toMatchObject({
       response: { error: { code: 'SUPPORT_MOVED', details: { username: null } } },
     });
+  });
+});
+
+describe('the minute sweep (F36)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+
+  it('reminds the operators of a ticket nobody took, once, with a link to its topic', async () => {
+    const { service, calls, memory } = harness({ forum: true });
+    await service.forward('42', 5);
+    await memory.repo.update(memory.tickets[0]?.id ?? '', { createdAt: minutesAgo(20) });
+    calls.length = 0;
+
+    await expect(service.sweep()).resolves.toEqual({ reminded: 1, closed: 0 });
+    expect(calls).toEqual([
+      {
+        method: 'sendMessage',
+        token: '123:token',
+        body: expect.objectContaining({
+          chat_id: -100500,
+          text: 'Waiting #1 20 min Anna',
+          reply_markup: { inline_keyboard: [[{ text: 'Open', url: 'https://t.me/c/500/71' }]] },
+        }) as object,
+      },
+    ]);
+    expect(calls[0]?.body).not.toHaveProperty('message_thread_id');
+    await expect(service.sweep()).resolves.toEqual({ reminded: 0, closed: 0 });
+  });
+
+  it('does not remind of a fresh or taken ticket, nor when reminders are off', async () => {
+    const fresh = harness({ forum: true });
+    await fresh.service.forward('42', 5);
+    await expect(fresh.service.sweep()).resolves.toEqual({ reminded: 0, closed: 0 });
+
+    const off = harness({ forum: true, remindAfter: 0 });
+    await off.service.forward('42', 5);
+    await off.memory.repo.update(off.memory.tickets[0]?.id ?? '', { createdAt: minutesAgo(600) });
+    await expect(off.service.sweep()).resolves.toEqual({ reminded: 0, closed: 0 });
+  });
+
+  it('closes a ticket the customer left after the operators’ answer, and asks for a rating', async () => {
+    const { service, calls, memory, operator } = harness({ forum: true });
+    await service.forward('42', 5);
+    await operator({ threadId: 71 });
+    const id = memory.tickets[0]?.id ?? '';
+
+    // The customer spoke last: nothing to close.
+    await memory.repo.update(id, {
+      lastOperatorAt: minutesAgo(60 * 50),
+      lastCustomerAt: minutesAgo(10),
+    });
+    await expect(service.sweep()).resolves.toEqual({ reminded: 0, closed: 0 });
+
+    await memory.repo.update(id, {
+      lastOperatorAt: minutesAgo(60 * 50),
+      lastCustomerAt: minutesAgo(60 * 51),
+    });
+    calls.length = 0;
+    await expect(service.sweep()).resolves.toEqual({ reminded: 0, closed: 1 });
+    expect(memory.tickets[0]).toMatchObject({ status: 'closed', closedBy: 'auto' });
+    expect(calls[0]?.body).toMatchObject({
+      chat_id: 42,
+      text: 'Request #1 auto-closed\n\nRate us',
+    });
+    expect(calls[1]?.body).toMatchObject({ chat_id: -100500, text: 'Auto-closed #1' });
+  });
+
+  it('does nothing while support has no operators’ chat', async () => {
+    const { service } = harness({ chatId: null });
+    await expect(service.sweep()).resolves.toEqual({ reminded: 0, closed: 0 });
   });
 });
 

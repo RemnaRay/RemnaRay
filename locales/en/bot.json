@@ -215,7 +215,7 @@
   "bot.support.op.unknownCommand": "Unknown command. Available: /t, /close, /silent, /card; a note is a message starting with //.",
   "bot.support.ticket.created": "🎫 Request #{number} created. An operator will answer here — you can add more.",
   "bot.support.ticket.taken": "👷 An operator has joined request #{number}.",
-  "bot.support.ticket.closed": "✅ Request #{number} is closed. If anything is left, just write again.",
+  "bot.support.ticket.closed": "✅ Request #{number} is closed. If anything is left, write to support again.",
   "bot.support.ticket.closedByCustomer": "✅ Request #{number} is closed. To write again, just send a message.",
   "bot.support.ticket.none": "You have no open requests.",
   "bot.screen.support.endedTicket": "✅ Request #{number} is closed. To write again, press «Support».",
@@ -227,5 +227,9 @@
   "bot.support.rate.ask": "Please rate how we helped:",
   "bot.support.rate.thanks": "Thank you for the rating!",
   "bot.support.rate.already": "Your rating is already counted.",
-  "bot.support.op.rated": "{stars} Ticket #{number} rated {rating}"
+  "bot.support.op.rated": "{stars} Ticket #{number} rated {rating}",
+  "bot.support.op.reminder": "⏰ Ticket #{number} has waited {minutes} min · {name}",
+  "bot.support.op.autoClosed": "💤 Ticket #{number} closed automatically: the customer did not answer",
+  "bot.support.btn.open": "Open the ticket",
+  "bot.support.ticket.autoClosed": "✅ Request #{number} is closed as you have not answered for a while. If anything is left, write to support again."
 }

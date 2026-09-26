@@ -422,7 +422,8 @@ export function panelCall(job: Pick<Job<Record<string, unknown>>, 'name' | 'data
   }
 }
 
-function maintenanceCall(job: Job<Record<string, unknown>>): InternalCall {
+export function maintenanceCall(job: Pick<Job<Record<string, unknown>>, 'name'>): InternalCall {
+  if (job.name === 'maintenance.support-sweep') return { path: '/api/internal/v1/support/sweep' };
   if (job.name === 'maintenance.referral-release')
     return { path: '/api/internal/v1/rewards/release-held' };
   return { path: '/api/internal/v1/subscriptions/expire' };

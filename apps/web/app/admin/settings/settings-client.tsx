@@ -90,6 +90,8 @@ const EDITABLE_GROUPS = [
   // Section 9.8 recipients, a JSON array; secret, so it is written whole.
   'webhooks',
   'operator',
+  // F36: reminders of untaken tickets and the auto-close.
+  'support',
   'admin',
 ];
 

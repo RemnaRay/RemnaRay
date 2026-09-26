@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CONCURRENCY, panelCall } from './worker.service';
+import { CONCURRENCY, maintenanceCall, panelCall } from './worker.service';
 
 describe('panel jobs', () => {
   const data = { userId: '0199a0b0-0000-7000-8000-000000000001' };
@@ -34,6 +34,17 @@ describe('worker concurrency (section 7.3)', () => {
       broadcast: 1,
       maintenance: 1,
       webhooks: 5,
+    });
+  });
+});
+
+describe('maintenance jobs', () => {
+  it('sends the support sweep to its own endpoint (F36)', () => {
+    expect(maintenanceCall({ name: 'maintenance.support-sweep' })).toEqual({
+      path: '/api/internal/v1/support/sweep',
+    });
+    expect(maintenanceCall({ name: 'maintenance.subscriptions-expire' })).toEqual({
+      path: '/api/internal/v1/subscriptions/expire',
     });
   });
 });

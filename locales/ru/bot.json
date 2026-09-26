@@ -215,7 +215,7 @@
   "bot.support.op.unknownCommand": "Неизвестная команда. Доступны: /t, /close, /silent, /card; заметка — сообщение с //.",
   "bot.support.ticket.created": "🎫 Обращение #{number} создано. Оператор ответит здесь — можно дописать ещё.",
   "bot.support.ticket.taken": "👷 Оператор подключился к обращению #{number}.",
-  "bot.support.ticket.closed": "✅ Обращение #{number} закрыто. Если вопрос остался — просто напишите снова.",
+  "bot.support.ticket.closed": "✅ Обращение #{number} закрыто. Если вопрос остался — напишите в поддержку снова.",
   "bot.support.ticket.closedByCustomer": "✅ Обращение #{number} закрыто. Чтобы написать снова, просто отправьте сообщение.",
   "bot.support.ticket.none": "Открытых обращений нет.",
   "bot.screen.support.endedTicket": "✅ Обращение #{number} закрыто. Чтобы написать снова, нажмите «Поддержка».",
@@ -227,5 +227,9 @@
   "bot.support.rate.ask": "Оцените, пожалуйста, как мы помогли:",
   "bot.support.rate.thanks": "Спасибо за оценку!",
   "bot.support.rate.already": "Оценка уже учтена.",
-  "bot.support.op.rated": "{stars} Оценка тикета #{number}: {rating}"
+  "bot.support.op.rated": "{stars} Оценка тикета #{number}: {rating}",
+  "bot.support.op.reminder": "⏰ Тикет #{number} ждёт ответа {minutes} мин · {name}",
+  "bot.support.op.autoClosed": "💤 Тикет #{number} закрыт автоматически: пользователь не ответил",
+  "bot.support.btn.open": "Открыть тикет",
+  "bot.support.ticket.autoClosed": "✅ Обращение #{number} закрыто: вы давно не отвечали. Если вопрос остался — напишите в поддержку снова."
 }
