@@ -939,6 +939,18 @@ describe('card actions from the operators’ chat (F36)', () => {
     });
   });
 
+  it('tells the operator when the link could not reach the customer', async () => {
+    const { service, memory, press } = harness({
+      forum: true,
+      failSend: 'Forbidden: bot was blocked by the user',
+    });
+    await service.forward('42', 5);
+    await expect(press('link', memory.tickets[0]?.id ?? '')).resolves.toEqual({
+      text: 'Undelivered: Forbidden: bot was blocked by the user',
+      alert: true,
+    });
+  });
+
   it('shows a refusal as an alert', async () => {
     const { service, memory, press, actions } = harness();
     await service.forward('42', 5);

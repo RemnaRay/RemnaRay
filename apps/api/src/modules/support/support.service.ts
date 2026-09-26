@@ -495,11 +495,20 @@ export class SupportService {
     const customer = await this.infra.db.user.findUnique({ where: { id: ticket.userId } });
     if (outcome.kind === 'link' && customer) {
       const customerT = await this.customerTranslate(customer.language);
-      await telegramCall(destination.token, 'sendMessage', {
-        chat_id: Number(customer.telegramId),
-        text: customerT('bot.support.ticket.link', { url: outcome.url }),
-        parse_mode: 'HTML',
-      });
+      try {
+        await telegramCall(destination.token, 'sendMessage', {
+          chat_id: Number(customer.telegramId),
+          text: customerT('bot.support.ticket.link', { url: outcome.url }),
+          parse_mode: 'HTML',
+        });
+      } catch (error) {
+        // The customer blocked the bot: the operator is told why.
+        if (!(error instanceof TelegramCallError)) throw error;
+        return {
+          text: t('bot.screen.support.undelivered', { reason: error.description }),
+          alert: true,
+        };
+      }
     }
     const line = await this.actionLine(outcome, operator.name);
     await this.bestEffort(async () => {
