@@ -1188,6 +1188,8 @@ const CARD_ACTIONS: Partial<Record<string, SupportAction>> = {
  */
 export function parseAction(name: 'extend' | 'credit', args: string): SupportAction | null {
   const [first = '', ...rest] = args.split(/\s+/u);
+  // `1 000` is not a thousand and a reason: a number split by spaces is refused.
+  if (/^\d/u.test(rest[0] ?? '')) return null;
   const reason = rest.join(' ').trim() || undefined;
   if (name === 'extend') {
     if (!/^\d{1,4}$/u.test(first)) return null;

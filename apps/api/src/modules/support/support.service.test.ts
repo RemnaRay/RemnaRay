@@ -1039,6 +1039,9 @@ describe('parseAction', () => {
     expect(parseAction('credit', '1.999')).toBeNull();
     expect(parseAction('credit', '-5')).toBeNull();
     expect(parseAction('credit', '0')).toBeNull();
+    // «1 000» would credit 1 ₽ with «000 …» as the reason.
+    expect(parseAction('credit', '1 000 compensation')).toBeNull();
+    expect(parseAction('extend', '7 30')).toBeNull();
   });
 });
 
