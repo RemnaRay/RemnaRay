@@ -39,6 +39,13 @@ buttons work only in that chat. The first answer takes a ticket nobody took.
 In the topic, `/close`, `/silent` and `/card` do the same as the buttons. An
 operator writing to a customer without an open ticket opens one.
 
+**Notes and templates.** A message starting with `//` is an internal note:
+it is kept with the ticket and never sent to the customer. `/t` lists the
+answer templates, `/t <code>` sends one to the customer in their language
+(the other language when theirs is empty); the owner edits them in the
+console (`support.write`, «Поддержка» → «Шаблоны»; `GET|POST
+/api/admin/v1/support/templates`, `PUT|DELETE …/templates/:id`).
+
 In a forum the topic's name shows the ticket's status — 🟢 new, 🟡 in work,
 ⚪ closed (`editForumTopic`, the same «Управление темами» right).
 

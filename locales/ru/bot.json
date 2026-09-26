@@ -212,11 +212,16 @@
   "bot.support.op.closedSilentlyBy": "🤫 Тикет #{number} закрыт тихо · {name}",
   "bot.support.op.customerClosed": "✅ Пользователь закрыл тикет #{number}",
   "bot.support.op.noLiveTicket": "У пользователя нет открытого тикета.",
-  "bot.support.op.unknownCommand": "Неизвестная команда. Доступны: /close, /silent, /card.",
+  "bot.support.op.unknownCommand": "Неизвестная команда. Доступны: /t, /close, /silent, /card; заметка — сообщение с //.",
   "bot.support.ticket.created": "🎫 Обращение #{number} создано. Оператор ответит здесь — можно дописать ещё.",
   "bot.support.ticket.taken": "👷 Оператор подключился к обращению #{number}.",
   "bot.support.ticket.closed": "✅ Обращение #{number} закрыто. Если вопрос остался — просто напишите снова.",
   "bot.support.ticket.closedByCustomer": "✅ Обращение #{number} закрыто. Чтобы написать снова, просто отправьте сообщение.",
   "bot.support.ticket.none": "Открытых обращений нет.",
-  "bot.screen.support.endedTicket": "✅ Обращение #{number} закрыто. Чтобы написать снова, нажмите «Поддержка»."
+  "bot.screen.support.endedTicket": "✅ Обращение #{number} закрыто. Чтобы написать снова, нажмите «Поддержка».",
+  "bot.support.op.noTicket": "У пользователя ещё не было обращений.",
+  "bot.support.op.templates": "Шаблоны (/t код):",
+  "bot.support.op.templateLine": "<code>{code}</code> — {title}",
+  "bot.support.op.templatesNone": "Шаблонов пока нет — их добавляют в консоли: «Поддержка» → «Шаблоны».",
+  "bot.support.op.templateUnknown": "Шаблона «{code}» нет. /t — список шаблонов."
 }

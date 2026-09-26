@@ -583,9 +583,18 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      card tests (4), bot relay/inbox/support-bot/screen tests, integration
      `m4.support` on PostgreSQL 18 (five concurrent messages → one ticket;
      numbering; conditional close; topics; the card's received money).
-  2. Notes and templates. 3. Rating and statistics. 4. Topic status,
+  2. **Done — notes and templates.** `//text` is a `note` message (never
+     sent); `/t` lists `support_templates`, `/t <code>` answers in the
+     customer's language (fallback: the shop's, then any) and counts as the
+     answer (takes the ticket). Console API `api/admin/v1/support/templates`
+     (`support.read` to list, `support.write` to edit, audited); RBAC gains
+     `support.read` (admin, operator) and `support.write` (admin). Evidence:
+     service tests (note, list, ru/en fallback, support-bot plain text, no
+     ticket), console service tests (CRUD, duplicate code, bad input), RBAC
+     test.
+  3. Rating and statistics. 4. Topic status,
      reminders, auto-close. 5. Actions from the card. 6. Self-help FAQ.
-  3. Console section.
+  4. Console section.
 
 ### Next
 

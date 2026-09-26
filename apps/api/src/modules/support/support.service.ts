@@ -148,6 +148,11 @@ export class SupportService {
     const customer = await this.infra.db.user.findUnique({ where: { id: userId } });
     if (!customer) return { handled: false };
     const text = input.message.text?.trim();
+    // An internal note: kept with the ticket, never sent to the customer.
+    if (text?.startsWith('//')) {
+      await this.note(customer, input, destination, text.slice(2).trim());
+      return { handled: true };
+    }
     const command = text ? parseCommand(text) : null;
     if (command) {
       await this.command(command, customer, input, destination);
@@ -222,6 +227,10 @@ export class SupportService {
         await this.reply(input, destination, t('bot.support.op.noLiveTicket'));
       return;
     }
+    if (command.name === 't') {
+      await this.template(command.args, customer, input, destination);
+      return;
+    }
     if (command.name === 'card') {
       const latest =
         ticket ??
@@ -236,17 +245,93 @@ export class SupportService {
     await this.reply(input, destination, t('bot.support.op.unknownCommand'));
   }
 
-  /** An operator's answer: copied to the customer, kept, and the ticket taken. */
+  /** `//text`: a note on the customer's ticket (the live one, or the last). */
+  private async note(
+    customer: Customer,
+    input: OperatorMessageInput,
+    destination: Destination,
+    text: string,
+  ): Promise<void> {
+    const ticket =
+      (await this.tickets.live(customer.id)) ??
+      (await this.infra.db.supportTicket.findFirst({
+        where: { userId: customer.id },
+        orderBy: { createdAt: 'desc' },
+      }));
+    if (!ticket) {
+      const t = await this.operatorTranslate();
+      await this.reply(input, destination, t('bot.support.op.noTicket'));
+      return;
+    }
+    await this.tickets.addMessage({
+      ticketId: ticket.id,
+      direction: 'note',
+      kind: input.message.kind,
+      text: text || null,
+      fileId: input.message.fileId,
+      fileUniqueId: input.message.fileUniqueId,
+      authorTelegramId: input.from.id,
+      authorName: input.from.name,
+      operatorChatId: input.chatId,
+      operatorMessageId: input.messageId,
+    });
+  }
+
+  /** `/t` lists the templates; `/t <code>` answers with one in the customer's language. */
+  private async template(
+    code: string,
+    customer: Customer,
+    input: OperatorMessageInput,
+    destination: Destination,
+  ): Promise<void> {
+    const t = await this.operatorTranslate();
+    if (!code) {
+      const templates = await this.infra.db.supportTemplate.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+        select: { code: true, title: true },
+      });
+      await this.reply(
+        input,
+        destination,
+        templates.length === 0
+          ? t('bot.support.op.templatesNone')
+          : [
+              t('bot.support.op.templates'),
+              ...templates.map((template) =>
+                t('bot.support.op.templateLine', { code: template.code, title: template.title }),
+              ),
+            ].join('\n'),
+      );
+      return;
+    }
+    const template = await this.infra.db.supportTemplate.findUnique({
+      where: { code: code.toLowerCase() },
+    });
+    const body = template
+      ? pick(template.body, customer.language, await this.operatorLocale())
+      : null;
+    if (!body) {
+      await this.reply(input, destination, t('bot.support.op.templateUnknown', { code }));
+      return;
+    }
+    await this.answer(customer, input, destination, body);
+  }
+
+  /**
+   * An operator's answer — their message, or a template's `text` — sent to
+   * the customer, kept, and the ticket taken.
+   */
   private async answer(
     customer: Customer,
     input: OperatorMessageInput,
     destination: Destination,
+    text?: string,
   ): Promise<void> {
     const opened = await this.tickets.openOrLive(customer.id, input.via, 'operator');
     let ticket = opened.ticket;
     if (ticket.cardMessageId === null) ticket = await this.announce(ticket, customer, destination);
     try {
-      await this.deliver(customer, input, destination);
+      await this.deliver(customer, input, destination, text);
     } catch (error) {
       if (!(error instanceof TelegramCallError)) throw error;
       const t = await this.operatorTranslate();
@@ -260,10 +345,10 @@ export class SupportService {
     await this.tickets.addMessage({
       ticketId: ticket.id,
       direction: 'operator',
-      kind: input.message.kind,
-      text: input.message.text,
-      fileId: input.message.fileId,
-      fileUniqueId: input.message.fileUniqueId,
+      kind: text === undefined ? input.message.kind : 'text',
+      text: text ?? input.message.text,
+      fileId: text === undefined ? input.message.fileId : null,
+      fileUniqueId: text === undefined ? input.message.fileUniqueId : null,
       authorTelegramId: input.from.id,
       authorName: input.from.name,
       operatorChatId: input.chatId,
@@ -299,15 +384,21 @@ export class SupportService {
   }
 
   /**
-   * Sends an operator's message to the customer. The support bot copies it as
-   * it is; the shop bot puts text under «Ответ поддержки» with «Завершить».
+   * Sends an operator's message (or a `template`'s text) to the customer. The
+   * support bot copies it as it is; the shop bot puts text under «Ответ
+   * поддержки» with «Завершить».
    */
   private async deliver(
     customer: Customer,
     input: OperatorMessageInput,
     destination: Destination,
+    template?: string,
   ): Promise<void> {
     const chatId = Number(customer.telegramId);
+    if (input.via === 'support' && template !== undefined) {
+      await telegramCall(destination.token, 'sendMessage', { chat_id: chatId, text: template });
+      return;
+    }
     if (input.via === 'support') {
       await telegramCall(destination.token, 'copyMessage', {
         chat_id: chatId,
@@ -320,8 +411,8 @@ export class SupportService {
     const keyboard = {
       inline_keyboard: [[{ text: t('bot.btn.supportEnd'), callback_data: 'support:end' }]],
     };
-    const text = input.message.text?.trim();
-    if (input.message.kind === 'text' && text)
+    const text = template ?? input.message.text?.trim();
+    if ((template !== undefined || input.message.kind === 'text') && text)
       await telegramCall(destination.token, 'sendMessage', {
         chat_id: chatId,
         text: t('bot.screen.support.reply', { text }),
@@ -776,6 +867,17 @@ export class SupportService {
     await this.infra.redis.set(key, forum ? '1' : '0', 'EX', FORUM_TTL_SECONDS);
     return forum;
   }
+}
+
+/** A template's text in the customer's language, else the shop's, else any. */
+function pick(body: unknown, language: string, fallback: string): string | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const texts = body as Record<string, unknown>;
+  for (const key of [language, fallback, 'ru', 'en']) {
+    const text = texts[key];
+    if (typeof text === 'string' && text.trim()) return text;
+  }
+  return null;
 }
 
 function openKey(telegramId: string): string {

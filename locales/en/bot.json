@@ -212,11 +212,16 @@
   "bot.support.op.closedSilentlyBy": "🤫 Ticket #{number} closed silently · {name}",
   "bot.support.op.customerClosed": "✅ The customer closed ticket #{number}",
   "bot.support.op.noLiveTicket": "The customer has no open ticket.",
-  "bot.support.op.unknownCommand": "Unknown command. Available: /close, /silent, /card.",
+  "bot.support.op.unknownCommand": "Unknown command. Available: /t, /close, /silent, /card; a note is a message starting with //.",
   "bot.support.ticket.created": "🎫 Request #{number} created. An operator will answer here — you can add more.",
   "bot.support.ticket.taken": "👷 An operator has joined request #{number}.",
   "bot.support.ticket.closed": "✅ Request #{number} is closed. If anything is left, just write again.",
   "bot.support.ticket.closedByCustomer": "✅ Request #{number} is closed. To write again, just send a message.",
   "bot.support.ticket.none": "You have no open requests.",
-  "bot.screen.support.endedTicket": "✅ Request #{number} is closed. To write again, press «Support»."
+  "bot.screen.support.endedTicket": "✅ Request #{number} is closed. To write again, press «Support».",
+  "bot.support.op.noTicket": "The customer has had no requests yet.",
+  "bot.support.op.templates": "Templates (/t code):",
+  "bot.support.op.templateLine": "<code>{code}</code> — {title}",
+  "bot.support.op.templatesNone": "No templates yet — add them in the console: «Support» → «Templates».",
+  "bot.support.op.templateUnknown": "There is no template «{code}». /t lists them."
 }

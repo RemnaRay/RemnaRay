@@ -46,6 +46,12 @@ describe('admin RBAC matrix', () => {
     expect(limitKeyFor('operator', 'users.read')).toBeUndefined();
   });
 
+  it('shows operators the support tickets, but leaves templates and FAQ to admins (F36)', () => {
+    expect(can('operator', 'support.read')).toBe(true);
+    expect(can('operator', 'support.write')).toBe(false);
+    expect(can('admin', 'support.write')).toBe(true);
+  });
+
   it('gives admins the complete permission set', () => {
     expect(can('admin', 'admins.write')).toBe(true);
     expect(can('admin', 'settings.write')).toBe(true);

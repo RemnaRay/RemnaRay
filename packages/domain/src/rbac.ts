@@ -25,6 +25,8 @@ export const permissions = [
   'referrals.write',
   'broadcasts.read',
   'broadcasts.write',
+  'support.read',
+  'support.write',
   'settings.read',
   'settings.write',
   'providers.write',
@@ -63,6 +65,8 @@ const operatorPermissions: readonly Permission[] = [
   'referrals.read',
   'broadcasts.read',
   'broadcasts.write',
+  // Owner decision F36: operators see the tickets; templates and FAQ are the owner's.
+  'support.read',
   'legal.read',
   'audit.read.self',
   'system.read',

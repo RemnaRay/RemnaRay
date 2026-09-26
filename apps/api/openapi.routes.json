@@ -3672,6 +3672,132 @@
           }
         }
       }
+    },
+    "/api/admin/v1/support/templates": {
+      "get": {
+        "operationId": "listSupportTemplates",
+        "summary": "Answer templates for /t in the operators' chat (F36; support.read)",
+        "responses": {
+          "200": {
+            "description": "{ items: [{ id, code, title, body: { ru, en }, sortOrder }] }"
+          },
+          "403": {
+            "description": "FORBIDDEN"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSupportTemplate",
+        "summary": "Add a template (support.write, audited)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["code", "title", "body"],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_-]{1,32}$"
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "body": {
+                    "type": "object",
+                    "properties": {
+                      "ru": {
+                        "type": "string"
+                      },
+                      "en": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "sortOrder": {
+                    "type": "integer",
+                    "default": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The template"
+          },
+          "409": {
+            "description": "CONFLICT: the code is taken"
+          },
+          "403": {
+            "description": "FORBIDDEN"
+          }
+        }
+      }
+    },
+    "/api/admin/v1/support/templates/{id}": {
+      "put": {
+        "operationId": "updateSupportTemplate",
+        "summary": "Edit a template (support.write, audited)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The template"
+          },
+          "404": {
+            "description": "NOT_FOUND"
+          },
+          "409": {
+            "description": "CONFLICT"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSupportTemplate",
+        "summary": "Delete a template (support.write, audited)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ deleted: true }"
+          },
+          "404": {
+            "description": "NOT_FOUND"
+          }
+        }
+      }
     }
   }
 }

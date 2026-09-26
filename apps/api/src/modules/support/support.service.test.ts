@@ -140,6 +140,11 @@ const catalog: Record<string, string> = {
   'bot.support.op.customerClosed': 'Customer closed #{number}',
   'bot.support.op.noLiveTicket': 'No live ticket',
   'bot.support.op.unknownCommand': 'Unknown command',
+  'bot.support.op.noTicket': 'No ticket yet',
+  'bot.support.op.templates': 'Templates:',
+  'bot.support.op.templateLine': '{code} — {title}',
+  'bot.support.op.templatesNone': 'No templates',
+  'bot.support.op.templateUnknown': 'No template {code}',
   'bot.support.ticket.taken': 'An operator took #{number}',
   'bot.support.ticket.closed': 'Request #{number} closed',
   'bot.screen.support.reply': 'Support: {text}',
@@ -155,6 +160,7 @@ function harness(
     supportToken?: string;
     failCopy?: { description: string; times?: number };
     failSend?: string;
+    templates?: Array<{ code: string; title: string; body: Record<string, string> }>;
   } = {},
 ) {
   const store = new Map<string, string>();
@@ -223,6 +229,12 @@ function harness(
       ),
     },
     supportTicket: { findFirst: vi.fn().mockResolvedValue(null) },
+    supportTemplate: {
+      findMany: vi.fn().mockResolvedValue(options.templates ?? []),
+      findUnique: vi.fn(({ where }: { where: { code: string } }) =>
+        Promise.resolve((options.templates ?? []).find((item) => item.code === where.code) ?? null),
+      ),
+    },
   };
   const memory = memoryTickets();
   const service = new SupportService(
@@ -555,6 +567,93 @@ describe('SupportService tickets (FR-124, F36)', () => {
     await expect(service.forward('42', 5, { via: 'support' })).rejects.toMatchObject({
       response: { error: { code: 'SUPPORT_MOVED', details: { username: null } } },
     });
+  });
+});
+
+describe('notes and templates (F36)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const templates = [
+    { code: 'link', title: 'How to connect', body: { ru: 'Откройте ссылку', en: 'Open the link' } },
+    { code: 'ru-only', title: 'Russian', body: { ru: 'Только по-русски', en: '' } },
+  ];
+
+  it('keeps a //note with the ticket and sends the customer nothing', async () => {
+    const { service, operator, calls, memory } = harness({ forum: true });
+    await service.forward('42', 5);
+    calls.length = 0;
+    await expect(
+      operator({ threadId: 71, message: { kind: 'text', text: '// paid twice, check' } }),
+    ).resolves.toEqual({ handled: true });
+    expect(calls).toEqual([]);
+    expect(memory.messages.at(-1)).toMatchObject({
+      direction: 'note',
+      text: 'paid twice, check',
+      authorName: 'Olga',
+    });
+    // Nor does a note take the ticket.
+    expect(memory.tickets[0]?.takenAt).toBeNull();
+  });
+
+  it('lists the templates and answers with one in the customer’s language', async () => {
+    const { service, operator, calls, memory } = harness({ forum: true, templates });
+    await service.forward('42', 5);
+    calls.length = 0;
+
+    await operator({ threadId: 71, message: { kind: 'text', text: '/t' } });
+    expect(calls[0]?.body).toMatchObject({
+      chat_id: -100500,
+      message_thread_id: 71,
+      text: 'Templates:\nlink — How to connect\nru-only — Russian',
+    });
+
+    calls.length = 0;
+    await operator({ threadId: 71, message: { kind: 'text', text: '/t LINK' } });
+    expect(calls[0]).toMatchObject({
+      method: 'sendMessage',
+      body: { chat_id: 42, text: 'Support: Open the link' },
+    });
+    expect(memory.messages.at(-1)).toMatchObject({
+      direction: 'operator',
+      kind: 'text',
+      text: 'Open the link',
+    });
+    expect(memory.tickets[0]).toMatchObject({ status: 'in_progress', assigneeName: 'Olga' });
+
+    // A language the template lacks falls back to the other one.
+    calls.length = 0;
+    await operator({ threadId: 71, message: { kind: 'text', text: '/t ru-only' } });
+    expect(calls[0]?.body).toMatchObject({ chat_id: 42, text: 'Support: Только по-русски' });
+
+    calls.length = 0;
+    await operator({ threadId: 71, message: { kind: 'text', text: '/t nope' } });
+    expect(calls[0]?.body).toMatchObject({ chat_id: -100500, text: 'No template nope' });
+  });
+
+  it('sends a template as plain text from the support bot', async () => {
+    const { service, operator, calls } = harness({
+      forum: true,
+      templates,
+      supportToken: '777:support',
+    });
+    await service.forward('42', 5, { via: 'support' });
+    calls.length = 0;
+    await operator({ threadId: 71, message: { kind: 'text', text: '/t link' } });
+    expect(calls[0]).toEqual({
+      method: 'sendMessage',
+      token: '777:support',
+      body: { chat_id: 42, text: 'Open the link' },
+    });
+  });
+
+  it('says there is nothing to note on when the customer never wrote', async () => {
+    const { operator, calls, memory } = harness({ forum: true });
+    await memory.repo.setTopic(-100500, 'u1', 71);
+    await operator({ threadId: 71, message: { kind: 'text', text: '//x' } });
+    expect(calls[0]?.body).toMatchObject({ text: 'No ticket yet' });
   });
 });
 
