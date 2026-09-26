@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AuthService } from './auth.service';
@@ -59,18 +60,29 @@ describe('AuthService Telegram OIDC sign-in', () => {
   });
 
   it('refuses without this browser’s nonce, with a forged one, and a nonce used before', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const { service } = harness();
     const body = { idToken: 'x'.repeat(40) };
     await expect(service.authenticateTelegramOidc(body, undefined)).rejects.toMatchObject({
       code: 'AUTH_EXPIRED',
+      reason: 'no nonce cookie',
     });
     await expect(service.authenticateTelegramOidc(body, 'a.1.b')).rejects.toMatchObject({
       code: 'AUTH_EXPIRED',
+      reason: 'nonce cookie',
     });
     const nonce = issueNonce(APP_KEY);
     await service.authenticateTelegramOidc(body, nonce);
     await expect(service.authenticateTelegramOidc(body, nonce)).rejects.toMatchObject({
       code: 'AUTH_EXPIRED',
+      reason: 'nonce already used',
     });
+    // F34: the log names the check, which the answer does not.
+    expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+      'Telegram OIDC sign-in refused: AUTH_EXPIRED (no nonce cookie)',
+      'Telegram OIDC sign-in refused: AUTH_EXPIRED (nonce cookie)',
+      'Telegram OIDC sign-in refused: AUTH_EXPIRED (nonce already used)',
+    ]);
+    warn.mockRestore();
   });
 });

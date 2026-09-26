@@ -52,10 +52,11 @@ export class TelegramOidcVerifier {
     now = Math.floor(Date.now() / 1000),
   ): Promise<TelegramOidcClaims> {
     const [headerPart, payloadPart, signaturePart] = token.split('.');
-    if (!headerPart || !payloadPart || !signaturePart) throw invalid();
+    if (!headerPart || !payloadPart || !signaturePart) throw invalid('not a JWT');
     const header = decode(headerPart) as { alg?: unknown; kid?: unknown };
     const algorithm = typeof header.alg === 'string' ? ALGORITHMS[header.alg] : undefined;
-    if (!algorithm || typeof header.kid !== 'string') throw invalid();
+    if (!algorithm || typeof header.kid !== 'string')
+      throw invalid(`algorithm ${String(header.alg)} or key id not accepted`);
     const key = await this.key(header.kid);
     const signed = verify(
       algorithm.hash,
@@ -63,21 +64,24 @@ export class TelegramOidcVerifier {
       algorithm.dsaEncoding ? { key, dsaEncoding: algorithm.dsaEncoding } : key,
       Buffer.from(signaturePart, 'base64url'),
     );
-    if (!signed) throw invalid();
+    if (!signed) throw invalid('signature');
 
     const claims = decode(payloadPart) as Record<string, unknown>;
     const audience = Array.isArray(claims.aud) ? claims.aud.map(String) : [String(claims.aud)];
-    if (claims.iss !== TELEGRAM_OIDC_ISSUER || !audience.includes(expected.clientId))
-      throw invalid();
+    if (claims.iss !== TELEGRAM_OIDC_ISSUER) throw invalid('iss');
+    if (!audience.includes(expected.clientId))
+      throw invalid(`aud ${audience.join(',')} is not the bot ${expected.clientId}`);
     if (typeof claims.exp !== 'number' || claims.exp + CLOCK_SKEW_SECONDS < now)
-      throw new AuthFailure('AUTH_EXPIRED');
+      throw new AuthFailure('AUTH_EXPIRED', undefined, 'exp');
     if (typeof claims.nonce !== 'string' || !sameText(claims.nonce, expected.nonce))
-      throw invalid();
-    // `[verify]`: the Telegram id arrives as `id` with the `profile` scope
-    // (the documented token example); `sub` is an opaque identifier.
-    if (typeof claims.id !== 'number' || !Number.isSafeInteger(claims.id)) throw invalid();
+      throw invalid('nonce');
+    // The Telegram id arrives as `id` with the `profile` scope; `sub` is an
+    // opaque identifier. The documentation's example shows a number, but a
+    // live token (2026-09-26) carries a string of digits: both are accepted.
+    const id = telegramId(claims.id);
+    if (id === null) throw invalid('id');
     return {
-      id: claims.id,
+      id,
       ...(typeof claims.name === 'string' ? { name: claims.name } : {}),
       ...(typeof claims.given_name === 'string' ? { given_name: claims.given_name } : {}),
       ...(typeof claims.preferred_username === 'string'
@@ -91,7 +95,7 @@ export class TelegramOidcVerifier {
     const fresh = !this.keys || Date.now() - this.keys.at > JWKS_TTL_MS;
     if (fresh || !this.keys?.byKid.has(kid)) await this.loadKeys();
     const key = this.keys?.byKid.get(kid);
-    if (!key) throw invalid();
+    if (!key) throw invalid(`unknown key id ${kid}`);
     return key;
   }
 
@@ -144,8 +148,19 @@ function decode(part: string): unknown {
   try {
     return JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as unknown;
   } catch {
-    throw invalid();
+    throw invalid('not a JWT');
   }
+}
+
+/** A Telegram user id: a safe positive integer, as a number or its digits. */
+function telegramId(value: unknown): number | null {
+  const id =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d{1,16}$/u.test(value)
+        ? Number(value)
+        : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 function sameText(left: string, right: string): boolean {
@@ -154,6 +169,6 @@ function sameText(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function invalid(): AuthFailure {
-  return new AuthFailure('AUTH_INVALID_SIGNATURE');
+function invalid(reason: string): AuthFailure {
+  return new AuthFailure('AUTH_INVALID_SIGNATURE', undefined, reason);
 }

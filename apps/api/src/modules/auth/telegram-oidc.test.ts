@@ -44,7 +44,8 @@ const good = (overrides: Record<string, unknown> = {}) => ({
   iat: now - 10,
   exp: now + 3600,
   nonce: 'n-1',
-  id: 987654321,
+  // As a live token carries it (2026-09-26): a string of digits.
+  id: '987654321',
   name: 'John Doe',
   given_name: 'John',
   preferred_username: 'johndoe',
@@ -67,7 +68,7 @@ describe('Telegram OIDC id_token (core.telegram.org/widgets/login)', () => {
       preferred_username: 'johndoe',
     });
     await expect(
-      instance.verify(token(good(), { alg: 'ES256' }), expected, now),
+      instance.verify(token(good({ id: 987654321 }), { alg: 'ES256' }), expected, now),
     ).resolves.toMatchObject({ id: 987654321 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0]).toEqual([
@@ -80,12 +81,15 @@ describe('Telegram OIDC id_token (core.telegram.org/widgets/login)', () => {
     [
       'signed by another key',
       () => token(good(), { key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey }),
+      'signature',
     ],
-    ['issued by someone else', () => token(good({ iss: 'https://evil.example' }))],
-    ['for another bot', () => token(good({ aud: '1111' }))],
-    ['for another browser', () => token(good({ nonce: 'n-2' }))],
-    ['without the Telegram id', () => token(good({ id: undefined }))],
-    ['with an unknown key id', () => token(good(), { kid: 'nope' })],
+    ['issued by someone else', () => token(good({ iss: 'https://evil.example' })), 'iss'],
+    ['for another bot', () => token(good({ aud: '1111' })), 'aud 1111 is not the bot 8521897198'],
+    ['for another browser', () => token(good({ nonce: 'n-2' })), 'nonce'],
+    ['without the Telegram id', () => token(good({ id: undefined })), 'id'],
+    ['with an id that is not digits', () => token(good({ id: '12a' })), 'id'],
+    ['with an id past a safe integer', () => token(good({ id: '90071992547409930' })), 'id'],
+    ['with an unknown key id', () => token(good(), { kid: 'nope' }), 'unknown key id nope'],
     [
       'tampered with',
       () =>
@@ -93,10 +97,12 @@ describe('Telegram OIDC id_token (core.telegram.org/widgets/login)', () => {
           /\.[^.]+\./u,
           `.${Buffer.from(JSON.stringify(good({ id: 1 }))).toString('base64url')}.`,
         ),
+      'signature',
     ],
-  ])('refuses a token %s', async (_name, build) => {
+  ])('refuses a token %s, saying which check', async (_name, build, reason) => {
     await expect(verifier().instance.verify(build(), expected, now)).rejects.toMatchObject({
       code: 'AUTH_INVALID_SIGNATURE',
+      reason,
     });
   });
 

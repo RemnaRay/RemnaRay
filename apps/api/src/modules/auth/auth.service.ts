@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import { SettingsService } from '../settings/settings.service';
 import { UsersService } from '../users/users.service';
@@ -14,6 +14,8 @@ import type { SessionStorePort } from './auth.session';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly settings: SettingsService,
     private readonly users: UsersService,
@@ -62,6 +64,18 @@ export class AuthService {
     return issueNonce(this.appKey);
   }
 
+  private async verifyOidc(idToken: string, nonce: string | undefined) {
+    const clientId = await this.telegramClientId();
+    if (!clientId) throw new AuthFailure('AUTH_UNAVAILABLE', undefined, 'no bot token');
+    const random = nonce ? checkNonce(this.appKey, nonce) : null;
+    if (!nonce || !random)
+      throw new AuthFailure('AUTH_EXPIRED', undefined, nonce ? 'nonce cookie' : 'no nonce cookie');
+    const claims = await this.oidc.verify(idToken, { clientId, nonce });
+    if (!(await this.sessions.claimOnce(`oidc-nonce:${random}`, NONCE_TTL_SECONDS)))
+      throw new AuthFailure('AUTH_EXPIRED', undefined, 'nonce already used');
+    return claims;
+  }
+
   /**
    * Telegram Login over OIDC: the `id_token` the page's popup received, and
    * the nonce cookie of the browser that asked for it. The token must carry
@@ -73,13 +87,12 @@ export class AuthService {
     requestMeta?: { userAgent?: string; ip?: string; referralCode?: string },
   ) {
     const input = telegramOidcSchema.parse(value);
-    const clientId = await this.telegramClientId();
-    if (!clientId) throw new AuthFailure('AUTH_UNAVAILABLE');
-    const random = nonce ? checkNonce(this.appKey, nonce) : null;
-    if (!nonce || !random) throw new AuthFailure('AUTH_EXPIRED');
-    const claims = await this.oidc.verify(input.idToken, { clientId, nonce });
-    if (!(await this.sessions.claimOnce(`oidc-nonce:${random}`, NONCE_TTL_SECONDS)))
-      throw new AuthFailure('AUTH_EXPIRED');
+    const claims = await this.verifyOidc(input.idToken, nonce).catch((error: unknown) => {
+      // Every refusal answers one of three codes; the log says which check.
+      if (error instanceof AuthFailure)
+        this.logger.warn(`Telegram OIDC sign-in refused: ${error.code} (${error.reason ?? '-'})`);
+      throw error;
+    });
     const firstName = claims.given_name ?? claims.name;
     const user = await this.users.upsert({
       telegramId: String(claims.id),

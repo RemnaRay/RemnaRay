@@ -54,15 +54,17 @@ test.describe('customer account', () => {
       const response = await fetch('/api/v1/auth/telegram/nonce', { credentials: 'include' });
       return (await response.json()) as { clientId: string; nonce: string };
     });
+    // Shaped as a live token (F34, 2026-09-26): 30 seconds of life and the
+    // Telegram id as a string of digits.
     const now = Math.floor(Date.now() / 1000);
     const idToken = oidcToken(state.oidcPrivateKey ?? '', {
       iss: 'https://oauth.telegram.org',
       aud: clientId,
       sub: 'opaque-subject',
       iat: now,
-      exp: now + 300,
+      exp: now + 30,
       nonce,
-      id: Number(state.user.telegramId),
+      id: state.user.telegramId,
       name: state.user.firstName,
       given_name: state.user.firstName,
       preferred_username: state.user.username,

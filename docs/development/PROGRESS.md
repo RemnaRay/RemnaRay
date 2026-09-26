@@ -438,7 +438,7 @@ tests, 25/25 integration, E2E 38 passed.
 The owner redeployed with the repairs and walked the stand again. Findings,
 recorded before repair; owner decisions of 2026-09-26 are quoted with each.
 
-- **F34 (P0, auth) — the site's OIDC login answered `AUTH_INVALID_SIGNATURE`.**
+- **F34 Done (P0, auth) — the site's OIDC login answered `AUTH_INVALID_SIGNATURE`.**
   Evidence: the owner's `id_token` (header and payload only): `kid oidc-1`
   RS256, `aud "8619282969"` (the Client ID BotFather shows), `iss`, `nonce`
   as issued, `exp − iat = 30 s`, and `"id": "7556126867"` — a **string**. The
@@ -446,7 +446,14 @@ recorded before repair; owner decisions of 2026-09-26 are quoted with each.
   digits, not the number of its documentation example; the verifier required
   a number. Also: every refused check answers the same code and nothing is
   logged, so the cause needed the token. Repair: accept a decimal string or
-  a safe integer; log which check refused (no token).
+  a safe integer; log which check refused (no token). Done: `telegramId()` in
+  `telegram-oidc.ts` takes a number or 1–16 digits within a safe integer;
+  `AuthFailure.reason` names the check (signature, iss, aud, nonce, id, key
+  id, cookie nonce, reuse) and `AuthService` logs `Telegram OIDC sign-in
+refused: <code> (<reason>)`; the answer is unchanged. Evidence: verifier
+  tests red on the old code (10 failed) → green, service test asserts the
+  log lines, E2E OIDC sign-in with a live-shaped token (string `id`, 30 s)
+  passed.
 - **F30 (P1) — bot «Проверить оплату» on an unpaid invoice → «Произошла
   ошибка».** Bot log `incidentId zB7PFMjZ`: `description: 'api_error'` for
   `POST /api/internal/v1/me/invoices/<id>/check`; status and code awaited

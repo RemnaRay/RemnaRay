@@ -10,6 +10,8 @@ export class AuthFailure extends HttpException {
     readonly code:
       'AUTH_INVALID_SIGNATURE' | 'AUTH_EXPIRED' | 'AUTH_UNAVAILABLE' | 'UNAUTHENTICATED',
     status = code === 'AUTH_UNAVAILABLE' ? 503 : 401,
+    /** Which check refused, for the log only; never sent to the client. */
+    readonly reason?: string,
   ) {
     super({ error: { code, message: code } }, status);
   }
