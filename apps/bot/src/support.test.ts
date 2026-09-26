@@ -82,6 +82,23 @@ describe('support relay (FR-124, F36)', () => {
     expect(second.answerCallbackQuery).toHaveBeenCalledWith({ text: 'Denied', show_alert: true });
   });
 
+  it('hands on an answer an administrator wrote anonymously, as the group', async () => {
+    const { middleware, api } = relay();
+    const { ctx } = update(
+      { message: { text: 'We are on it', sender_chat: { id: -100500, type: 'supergroup' } } },
+      { id: -100500, type: 'supergroup', title: 'Operators' } as never,
+    );
+    (ctx as unknown as { from: Record<string, unknown> }).from = {
+      id: 1087968824,
+      is_bot: true,
+      first_name: 'Group',
+    };
+    await middleware(ctx, vi.fn());
+    expect(api.operatorSupport).toHaveBeenCalledWith(
+      expect.objectContaining({ from: { id: 1087968824, name: 'Operators' } }),
+    );
+  });
+
   it('passes on everything outside the operators’ chat', async () => {
     const { middleware, api } = relay();
     for (const chat of [

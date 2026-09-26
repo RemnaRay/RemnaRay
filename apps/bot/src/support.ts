@@ -25,8 +25,13 @@ export function supportRelay<C extends Context>(
       return next();
     if (options.bot === 'shop' && config.supportBot) return;
     const from = ctx.from;
-    if (!from || from.is_bot) return;
-    const name = [from.first_name, from.last_name].filter(Boolean).join(' ') || String(from.id);
+    // An administrator who writes anonymously ("as the group") arrives from
+    // @GroupAnonymousBot with the group as `sender_chat`; other bots are ignored.
+    const anonymous = ctx.message?.sender_chat?.id === chat.id;
+    if (!from || (from.is_bot && !anonymous)) return;
+    const name = anonymous
+      ? ('title' in chat && chat.title) || String(chat.id)
+      : [from.first_name, from.last_name].filter(Boolean).join(' ') || String(from.id);
     const callback = ctx.callbackQuery;
     if (callback?.data?.startsWith('st:')) {
       const answer = await api.supportCallback({
