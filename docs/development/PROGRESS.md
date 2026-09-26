@@ -339,9 +339,10 @@ panel users yet).
   tests, web widget/CSP tests, E2E sign-in with a locally published JWKS
   (38 passed). Stand: in the BotFather mini app → Login Widget press **Switch
   to OpenID Connect Login** (the stand's bot is still on the legacy
-  `/setdomain` widget — owner screenshot 2026-09-26), then allow
-  `https://<domain>`, `https://<domain>/ru` and `https://<domain>/en` (the
-  library's `redirect_uri` is `location.origin + location.pathname`) and
+  `/setdomain` widget — owner screenshot 2026-09-26), then add Redirect URIs
+  `https://<domain>/ru` and `https://<domain>/en` (exact match; the library's
+  `redirect_uri` is `location.origin + location.pathname`), the Trusted Origin
+  `https://<domain>` (no trailing slash) and
   compare the shown Client ID with the bot token's id; `docs/setup.md` says so.
 
 **P2 — usability**

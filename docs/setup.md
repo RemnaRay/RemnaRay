@@ -71,10 +71,11 @@ the shop's bot → **Login Widget**:
    to OpenID Connect Login**. Press it: the legacy widget is replaced (the
    site no longer uses it, and the bot's «Открыть кабинет» link does not
    depend on it).
-2. Add the Allowed URLs: the origin `https://<domain>` (the domain of step 2)
-   and the landing pages the button is on, `https://<domain>/ru` and
-   `https://<domain>/en`. The library sends the page it runs on
-   (`location.origin + location.pathname`) as its `redirect_uri`.
+2. Under **Redirect URIs** add the landing pages the button is on,
+   `https://<domain>/ru` and `https://<domain>/en` (the domain of step 2):
+   they must match exactly, and the library sends the page it runs on
+   (`location.origin + location.pathname`) as its `redirect_uri`. Under
+   **Trusted Origins** add `https://<domain>`, without a trailing slash.
 3. Check that the **Client ID** BotFather shows is the number before the colon
    in the bot token: the API reads the Client ID from the token and refuses a
    token issued for another one.
