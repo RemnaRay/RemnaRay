@@ -36,7 +36,7 @@ function screen(
   const api = {
     getConfig: () => ({ supportForwardChatId, supportContact, supportBot }),
     openSupport: vi.fn().mockResolvedValue(undefined),
-    closeSupport: vi.fn().mockResolvedValue(undefined),
+    closeSupport: vi.fn().mockResolvedValue({ ticket: { number: 12 } }),
   };
   return { ctx, api, params, shown };
 }
@@ -50,7 +50,7 @@ describe('bot support screen (FR-124)', () => {
   });
 
   it('opens a conversation with the operators until «Завершить» (F35)', async () => {
-    const { ctx, api, shown } = screen(-100500);
+    const { ctx, api, shown, params } = screen(-100500);
     await showSupport(ctx, api as never);
     expect(api.openSupport).toHaveBeenCalledWith(123);
     expect(shown[0]?.text).toContain('bot.screen.support.open');
@@ -59,7 +59,13 @@ describe('bot support screen (FR-124)', () => {
 
     await endSupport(ctx, api as never);
     expect(api.closeSupport).toHaveBeenCalledWith(123);
-    expect(shown[1]?.text).toBe('bot.screen.support.ended');
+    // F36: the customer's «Завершить» closes their ticket by number.
+    expect(shown[1]?.text).toBe('bot.screen.support.endedTicket');
+    expect(params).toContainEqual({ key: 'bot.screen.support.endedTicket', number: 12 });
+
+    api.closeSupport.mockResolvedValueOnce({ ticket: null });
+    await endSupport(ctx, api as never);
+    expect(shown[2]?.text).toBe('bot.screen.support.ended');
   });
 
   it('falls back to the contact when the operators cannot be reached', async () => {

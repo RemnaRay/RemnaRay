@@ -94,6 +94,9 @@ function service(overrides: Record<string, unknown> = {}, settings: Record<strin
     },
     auditLog: { findMany: vi.fn().mockResolvedValue([]) },
     outboxJob: { create: vi.fn().mockResolvedValue({}) },
+    supportTicket: { findMany: vi.fn().mockResolvedValue([{ id: 'ticket-1' }]) },
+    supportMessage: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
+    supportTopic: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     $queryRaw: vi
       .fn()
       .mockImplementation(() => Promise.resolve([{ balance_minor: state.balanceMinor }])),
@@ -252,5 +255,11 @@ describe('AdminUsersService (FR-140, FR-141)', () => {
     expect(result.before).toMatchObject({ username: 'manta', email: 'a@example.test' });
     expect(result.after).toMatchObject({ username: null, email: null, telegramId: -123 });
     expect(test.db.transaction.create).not.toHaveBeenCalled();
+    // F36: what they wrote to support goes with their name.
+    expect(test.db.supportMessage.updateMany).toHaveBeenCalledWith({
+      where: { ticketId: { in: ['ticket-1'] }, direction: 'customer' },
+      data: { text: null, fileId: null, fileUniqueId: null, authorName: null },
+    });
+    expect(test.db.supportTopic.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
   });
 });

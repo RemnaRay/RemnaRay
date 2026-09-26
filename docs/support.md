@@ -14,6 +14,45 @@ customer's photo or file as it was sent, and the customer sees the operator's.
 Text answers arrive under «Ответ поддержки» in the customer's language, with
 «Завершить» beneath.
 
+## Tickets (owner decision F36)
+
+Every request is a numbered **ticket**; a customer's history stays in one
+topic, a ticket at a time. When a customer with no open ticket writes, a ticket
+opens: the customer gets «Обращение #N создано», and the operators get
+`🎫 Открыт тикет #N` and the customer's **card** in their topic. The card shows:
+
+- the ticket: number, status, who works on it, when it opened (and closed);
+- the customer: name, @username, Telegram id, language, registration, last
+  visit, who invited them, banned / blocked the bot / trial used;
+- the subscription: status, plan, end date, traffic used of the limit, device
+  limit, the subscription link;
+- money: balance, the last purchase, everything paid through providers (the
+  dashboard's rule), unpaid invoices;
+- support: how many requests so far, the previous one's date and rating, the
+  administrator's note.
+
+Its buttons: **«Взять в работу»** (the customer is told an operator joined),
+**«Закрыть»** (the customer is told the request is closed), **«Закрыть тихо»**
+(the customer is told nothing), **«Обновить»** and **«В консоли»** (the user's
+page in the console). Any member of the operators' chat may use them; the
+buttons work only in that chat. The first answer takes a ticket nobody took.
+In the topic, `/close`, `/silent` and `/card` do the same as the buttons. An
+operator writing to a customer without an open ticket opens one.
+
+In a forum the topic's name shows the ticket's status — 🟢 new, 🟡 in work,
+⚪ closed (`editForumTopic`, the same «Управление темами» right).
+
+After a close the customer's next message opens the next ticket. In the shop
+bot «Завершить» closes the ticket from the customer's side (the operators see
+«Пользователь закрыл тикет #N»); in the support bot the confirmation of a new
+ticket carries «Закрыть обращение».
+
+Tickets and their messages (text or caption, the kind and Telegram's
+`file_id` of an attachment, who wrote it) are kept in the database
+(`support_tickets`, `support_messages`, `support_topics`); anonymising a user
+clears what they wrote. Topics opened before tickets (kept in Valkey) are
+carried over on first use.
+
 ## A support bot of its own (optional)
 
 Support can run in a separate Telegram bot (owner decision F35): create one
@@ -47,20 +86,20 @@ bot) and set the group's id (`-100…`) in the wizard's «Бот» step or in
 «Настройки» → «Поддержка».
 
 - **A forum supergroup** (topics enabled) gives every customer a topic of their
-  own, named after them with their Telegram id, opened by a card with their id,
-  username, name and language. Everything an operator writes in that topic goes
+  own, named after them with their Telegram id and the ticket's status, where
+  every ticket opens with the card. Everything an operator writes in that topic goes
   to the customer. The bot must be an administrator with the «Управление темами»
   right; bot administrators receive every message of the group, which is how
   the answers reach it. Without the right, messages arrive in the general topic
   and the administrators get a `support.topics` alert.
-- **A plain group**: each message arrives as a copy replying to a
-  `#support <id> @username` card, and the operator answers with Telegram's
-  «Ответить» on either. The bot sees such replies even in privacy mode. An
-  answer works for 30 days after the question.
+- **A plain group**: a ticket opens with `🎫 Открыт тикет #N` and the card,
+  each message arrives as a copy replying to the card, and the operator
+  answers with Telegram's «Ответить» on any of them. The bot sees such replies
+  even in privacy mode.
 
 If the customer blocked the bot, the operator gets «Не доставлено покупателю»
 in reply. A customer whose message could not be delivered to the operators is
 told so instead of «передано».
 
-The links between topics, messages and customers, and whether a customer's
-conversation is open, are kept in Valkey (`rr:support:*`).
+Whether a customer is writing to support in the shop bot is kept in Valkey
+(`rr:support:open:<id>`); tickets, messages and topics are in the database.

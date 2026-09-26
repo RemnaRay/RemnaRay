@@ -1,7 +1,14 @@
 import { autoRetry } from '@grammyjs/auto-retry';
 import { limit } from '@grammyjs/ratelimiter';
 import { formatMessage, type Locale } from '@remnaray/i18n-core';
-import { Bot, GrammyError, type BotError, type Context, type MiddlewareFn } from 'grammy';
+import {
+  Bot,
+  GrammyError,
+  InlineKeyboard,
+  type BotError,
+  type Context,
+  type MiddlewareFn,
+} from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import type Redis from 'ioredis';
 
@@ -9,7 +16,7 @@ import { ApiClientError, type ApiClient } from './api-client.js';
 import { incidentId, outgoingThrottle } from './bot.js';
 import { normalizeLocale, type BotI18n } from './i18n.js';
 import { supportRelay } from './support.js';
-import { isSupportMessage, movedTo } from './support-inbox.js';
+import { isSupportMessage, messageInfo, movedTo } from './support-inbox.js';
 
 export type SupportContext = Context & {
   t: (key: string, values?: Record<string, unknown>) => string;
@@ -40,6 +47,9 @@ export function createSupportBot(options: {
   });
   bot.api.config.use(autoRetry({ maxDelaySeconds: 60, maxRetryAttempts: 5 }));
   bot.api.config.use(outgoingThrottle());
+  // FR-124, the operators' side: their answers and the ticket cards' buttons
+  // (F36), which it answers itself — before any other callback answer.
+  bot.use(supportRelay<SupportContext>(api, { bot: 'support' }));
   bot.use(async (ctx, next) => {
     if (ctx.callbackQuery) await ctx.answerCallbackQuery();
     await next();
@@ -53,10 +63,24 @@ export function createSupportBot(options: {
       formatMessage(locale, messages, key, { brand: config.brandName, ...values });
     await next();
   });
-  // FR-124, the operators' side: their answers go back from this bot.
-  bot.use(supportRelay<SupportContext>(api, i18n, { bot: 'support' }));
   bot.use(async (ctx, next) => {
     if (ctx.chat?.type === 'private' && ctx.from) await next();
+  });
+  // A ticket belongs to a shop user: someone who writes here first is registered.
+  const registered = new Set<number>();
+  bot.use(async (ctx, next) => {
+    const from = ctx.from;
+    if (from && !registered.has(from.id)) {
+      await api.upsertUser({
+        telegramId: from.id,
+        ...(from.username ? { username: from.username } : {}),
+        firstName: from.first_name,
+        ...(from.language_code ? { languageCode: from.language_code } : {}),
+      });
+      if (registered.size > 10_000) registered.clear();
+      registered.add(from.id);
+    }
+    await next();
   });
   bot.use(
     limit({
@@ -68,12 +92,20 @@ export function createSupportBot(options: {
     }),
   );
   bot.command('start', (ctx) => ctx.reply(ctx.t('bot.support.start')));
+  bot.callbackQuery('support:end', async (ctx) => {
+    const { ticket } = await api.closeSupport(ctx.from.id, 'support');
+    await ctx.reply(
+      ticket
+        ? ctx.t('bot.support.ticket.closedByCustomer', { number: ticket.number })
+        : ctx.t('bot.support.ticket.none'),
+    );
+  });
   bot.on('message', supportBotInbox(api));
   bot.catch(supportBotErrorHandler);
   return { bot };
 }
 
-/** Every message the customer sends is for the operators. */
+/** Every message the customer sends goes into their ticket; a new one is confirmed. */
 export function supportBotInbox(
   api: Pick<ApiClient, 'forwardSupport'>,
 ): MiddlewareFn<SupportContext> {
@@ -86,10 +118,14 @@ export function supportBotInbox(
       return;
     }
     try {
-      const { acknowledge } = await api.forwardSupport(ctx.from.id, message.message_id, {
+      const { ticket } = await api.forwardSupport(ctx.from.id, message.message_id, {
         via: 'support',
+        message: messageInfo(message),
       });
-      if (acknowledge) await ctx.reply(ctx.t('bot.support.sent'));
+      if (ticket.created)
+        await ctx.reply(ctx.t('bot.support.ticket.created', { number: ticket.number }), {
+          reply_markup: new InlineKeyboard().text(ctx.t('bot.btn.supportClose'), 'support:end'),
+        });
     } catch (error) {
       if (!(error instanceof ApiClientError)) throw error;
       // FR-124: a message that did not reach the operators is not reported

@@ -1924,13 +1924,13 @@
     "/api/internal/v1/support/forward": {
       "post": {
         "operationId": "forwardSupportMessage",
-        "summary": "Copy the customer's message to the operators' chat (FR-124)",
+        "summary": "Put the customer's message into their ticket in the operators' chat (FR-124, F36)",
         "responses": {
           "200": {
-            "description": "{ acknowledge: boolean } — true for the first message after «Поддержка»"
+            "description": "{ ticket: { id, number, created } } — created: a new ticket the bot confirms"
           },
           "409": {
-            "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured; SUPPORT_CLOSED: requireOpen and no open conversation; SUPPORT_MOVED: support runs in the other bot"
+            "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured; SUPPORT_CLOSED: requireOpen and the customer did not press «Написать оператору»; SUPPORT_MOVED: support runs in the other bot"
           },
           "502": { "description": "SUPPORT_UNAVAILABLE: Telegram refused the message" }
         },
@@ -1952,6 +1952,17 @@
                     "enum": ["shop", "support"],
                     "default": "shop",
                     "description": "The bot the customer wrote in (F35)"
+                  },
+                  "message": {
+                    "type": "object",
+                    "description": "What the message is and says, kept with the ticket (F36)",
+                    "required": ["kind"],
+                    "properties": {
+                      "kind": { "type": "string" },
+                      "text": { "type": "string" },
+                      "fileId": { "type": "string" },
+                      "fileUniqueId": { "type": "string" }
+                    }
                   }
                 }
               }
@@ -1963,7 +1974,7 @@
     "/api/internal/v1/support/open": {
       "post": {
         "operationId": "openSupportConversation",
-        "summary": "«Поддержка»: the customer's messages go to the operators until closed (FR-124)",
+        "summary": "«Написать оператору»: the customer's messages go into their ticket (FR-124, F36)",
         "responses": {
           "204": { "description": "Opened" },
           "409": { "description": "SUPPORT_UNAVAILABLE: no operators' chat is configured" }
@@ -1973,31 +1984,102 @@
     "/api/internal/v1/support/close": {
       "post": {
         "operationId": "closeSupportConversation",
-        "summary": "«Завершить»: the customer's messages stay with the bot again (FR-124)",
-        "responses": { "204": { "description": "Closed" } }
+        "summary": "«Завершить» / «Закрыть обращение»: the customer closes their ticket (F36)",
+        "responses": {
+          "200": {
+            "description": "{ ticket: { number } | null } — null when there was no open ticket"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "via": { "type": "string", "enum": ["shop", "support"], "default": "shop" }
+                }
+              }
+            }
+          }
+        }
       }
     },
-    "/api/internal/v1/support/route": {
+    "/api/internal/v1/support/operator": {
       "post": {
-        "operationId": "routeSupportAnswer",
-        "summary": "The customer an operator's message in the operators' chat answers (FR-124)",
+        "operationId": "supportOperatorMessage",
+        "summary": "A message in the operators' chat: an answer to the customer, a note or a command (F36)",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["chatId"],
+                "required": ["chatId", "messageId", "from", "message"],
                 "properties": {
                   "chatId": { "type": "integer" },
+                  "messageId": { "type": "integer" },
                   "threadId": { "type": "integer" },
-                  "replyToMessageId": { "type": "integer" }
+                  "replyToMessageId": { "type": "integer" },
+                  "from": {
+                    "type": "object",
+                    "required": ["id", "name"],
+                    "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }
+                  },
+                  "via": { "type": "string", "enum": ["shop", "support"], "default": "shop" },
+                  "message": {
+                    "type": "object",
+                    "required": ["kind"],
+                    "properties": {
+                      "kind": { "type": "string" },
+                      "text": { "type": "string" },
+                      "fileId": { "type": "string" },
+                      "fileUniqueId": { "type": "string" }
+                    }
+                  }
                 }
               }
             }
           }
         },
-        "responses": { "200": { "description": "{ target: { telegramId, language } | null }" } }
+        "responses": {
+          "200": {
+            "description": "{ handled: boolean } — false when the message is none of support's"
+          },
+          "409": { "description": "SUPPORT_MOVED / SUPPORT_UNAVAILABLE" }
+        }
+      }
+    },
+    "/api/internal/v1/support/callback": {
+      "post": {
+        "operationId": "supportCardButton",
+        "summary": "A ticket card's button (st:take|close|silent|card:<ticket id>) (F36)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["chatId", "from", "data"],
+                "properties": {
+                  "chatId": { "type": "integer" },
+                  "from": {
+                    "type": "object",
+                    "required": ["id", "name"],
+                    "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }
+                  },
+                  "data": { "type": "string", "maxLength": 64 },
+                  "via": { "type": "string", "enum": ["shop", "support"], "default": "shop" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ text, alert? } — the answer shown to the operator who pressed it"
+          }
+        }
       }
     },
     "/api/internal/v1/users/upsert": {

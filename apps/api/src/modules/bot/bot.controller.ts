@@ -11,7 +11,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
-import { z } from 'zod';
 
 import { Infrastructure } from '../../infra/infra.module';
 import { InternalTokenGuard, equalToken } from '../auth/auth.guards';
@@ -19,7 +18,6 @@ import { SettingsService } from '../settings/settings.service';
 import { I18nService } from '../public/i18n.service';
 import { emitWebhook, subscriptionData } from '../webhooks/outgoing';
 import { queuePanelSync } from '../remnawave/panel-jobs';
-import { SupportService } from './support.service';
 
 const appendUpdate = `
 if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
@@ -115,7 +113,6 @@ export class BotInternalController {
     private readonly infra: Infrastructure,
     private readonly settings: SettingsService,
     private readonly i18n: I18nService,
-    private readonly support: SupportService,
   ) {}
 
   @Get('i18n/:lang')
@@ -216,64 +213,7 @@ export class BotInternalController {
       secretToken: String(await this.settings.get('bot.support_webhook_secret_token')),
     };
   }
-
-  /**
-   * Section 9.5 `POST /api/internal/v1/support/forward` (FR-124): the
-   * customer's message `messageId` in their chat with the bot is copied to
-   * the operators. `requireOpen` refuses one outside an open conversation.
-   */
-  @Post('support/forward')
-  @HttpCode(200)
-  async supportForward(
-    @Headers('x-acting-user') actingUser: string | undefined,
-    @Body() body: unknown,
-  ) {
-    const input = supportForwardSchema.parse(body);
-    return this.support.forward(telegramIdOf(actingUser), input.messageId, {
-      requireOpen: input.requireOpen,
-      via: input.via,
-    });
-  }
-
-  /** «Поддержка»: the customer's messages go to the operators until closed. */
-  @Post('support/open')
-  @HttpCode(204)
-  async supportOpen(@Headers('x-acting-user') actingUser: string | undefined) {
-    await this.support.open(telegramIdOf(actingUser));
-  }
-
-  /** «Завершить»: the customer's messages stay with the bot again. */
-  @Post('support/close')
-  @HttpCode(204)
-  async supportClose(@Headers('x-acting-user') actingUser: string | undefined) {
-    await this.support.close(telegramIdOf(actingUser));
-  }
-
-  /** FR-124: the customer an operator's message in the operators' chat answers. */
-  @Post('support/route')
-  @HttpCode(200)
-  async supportRoute(@Body() body: unknown) {
-    const input = supportRouteSchema.parse(body);
-    return { target: await this.support.route(input) };
-  }
 }
-
-const supportForwardSchema = z.object({
-  messageId: z.number().int().positive(),
-  requireOpen: z.boolean().default(false),
-  via: z.enum(['shop', 'support']).default('shop'),
-});
-
-function telegramIdOf(actingUser: string | undefined): string {
-  if (!actingUser || !/^\d+$/.test(actingUser)) throw new ForbiddenException('FORBIDDEN');
-  return actingUser;
-}
-
-const supportRouteSchema = z.object({
-  chatId: z.number().int(),
-  threadId: z.number().int().optional(),
-  replyToMessageId: z.number().int().optional(),
-});
 
 @Controller('api/internal/v1/admins')
 @UseGuards(InternalTokenGuard)

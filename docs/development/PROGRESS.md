@@ -553,6 +553,40 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
   has its own stream `tg:support-updates:<bot id>` and a replaced bot's
   stream is deleted.
 
+- **F36 (owner request, 2026-09-27) — support tickets.** The third walk
+  confirmed the separate support bot works (after adding it to the operators'
+  group), the site sign-in (F34), the dashboard revenue (F31) and top-ups
+  (F30). The owner asked for a ticket flow on top of F35: a numbered ticket per
+  request, `🎫 Открыт тикет #N` and a full customer card in the topic, take /
+  close / silent close, and chose (AskUserQuestion): any member of the
+  operators' chat may take and close; messages kept in the database; in this
+  iteration also rating and statistics, templates and internal notes, topic
+  status with reminders and auto-close, actions from the card (only for
+  console admins linked by `admins.telegram_id`, with the section 14.2 limits
+  and the audit log), and a self-help FAQ. A web support chat is later (the
+  stored tickets are its base). Beyond FR-124 and section 12; deliberate,
+  recorded extension. Design (local, `docs/development/specs/` is not tracked):
+  `docs/development/specs/2026-09-27-support-tickets-design.md`; plan:
+  `docs/superpowers/plans/2026-09-27-support-tickets.md`. Stages, one commit
+  each:
+  1. **Done — tickets core.** Migration `0010_support_tickets`
+     (`support_tickets` with the live-ticket partial unique index,
+     `support_messages`, `support_topics`, `support_templates`, `support_faq`);
+     new API module `modules/support` (`TicketsRepository`, `card-data.ts`,
+     `ticket-card.ts`, `SupportService`, internal routes `support/forward`,
+     `open`, `close`, `operator`, `callback`; `support/route` removed — the API
+     relays answers itself). The bot is the transport: the relay hands the
+     operators' messages and `st:*` buttons to the API and answers the button
+     with its text; the support bot registers a first-time writer
+     (`users/upsert`) and offers «Закрыть обращение». Anonymisation clears the
+     customer's support messages. Evidence: API support unit tests (16) and
+     card tests (4), bot relay/inbox/support-bot/screen tests, integration
+     `m4.support` on PostgreSQL 18 (five concurrent messages → one ticket;
+     numbering; conditional close; topics; the card's received money).
+  2. Notes and templates. 3. Rating and statistics. 4. Topic status,
+     reminders, auto-close. 5. Actions from the card. 6. Self-help FAQ.
+  3. Console section.
+
 ### Next
 
 1. P0, P1 except F9/F17, and P2 — done (F1–F8, F10–F16, F18–F28).
@@ -577,6 +611,10 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
    a support bot (F35: its token in «Настройки» → «Поддержка», the support
    bot an administrator of the operators' forum with «Управление темами»).
    Then the M5-004 gates.
+5. Done on the stand (third walk, 2026-09-27): sign-in, «Проверить оплату»,
+   the dashboard and the separate support bot. Now: F36 stages 2–7, then the
+   batch's changesets, an independent review, the full checks, and the owner's
+   redeploy and walk of the tickets.
 
 F17 inventory (for the discussion): nginx zones per IP — `rr_general` 20 r/s
 (burst 50, site pages), `rr_api` 10 r/s (burst 30, `/api/`), `rr_auth` 5 r/m

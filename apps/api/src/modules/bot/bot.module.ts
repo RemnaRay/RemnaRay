@@ -13,7 +13,7 @@ import {
   BotAdminController,
   TelegramWebhookController,
 } from './bot.controller';
-import { SupportService } from './support.service';
+import { SupportModule } from '../support/support.module';
 
 @Module({
   imports: [
@@ -24,9 +24,10 @@ import { SupportService } from './support.service';
     RemnawaveModule,
     PublicModule,
     NotifyModule,
+    SupportModule,
   ],
   controllers: [TelegramWebhookController, BotInternalController, BotAdminController],
-  providers: [InternalTokenGuard, SupportService],
+  providers: [InternalTokenGuard],
 })
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class
 export class BotModule {}

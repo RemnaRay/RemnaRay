@@ -437,6 +437,16 @@ export class AdminUsersService {
         where: { userId: id, status: { in: ['provisioning', 'active', 'grace'] } },
         data: { status: 'revoked' },
       });
+      // F36: what the customer wrote to support goes with their name.
+      const tickets = await tx.supportTicket.findMany({
+        where: { userId: id },
+        select: { id: true },
+      });
+      await tx.supportMessage.updateMany({
+        where: { ticketId: { in: tickets.map((ticket) => ticket.id) }, direction: 'customer' },
+        data: { text: null, fileId: null, fileUniqueId: null, authorName: null },
+      });
+      await tx.supportTopic.deleteMany({ where: { userId: id } });
       await tx.outboxJob.create({
         data: {
           queue: 'panel',

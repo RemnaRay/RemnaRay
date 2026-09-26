@@ -352,9 +352,15 @@ export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void>
   );
 }
 
-/** «Завершить»: the customer's messages stay with the bot again. */
+/** «Завершить»: the customer closes their ticket; their messages stay with the bot again. */
 export async function endSupport(ctx: RrContext, api: ApiClient): Promise<void> {
   if (!ctx.from) return;
-  await api.closeSupport(ctx.from.id);
-  await show(ctx, ctx.t('bot.screen.support.ended'), backButton(ctx));
+  const { ticket } = await api.closeSupport(ctx.from.id);
+  await show(
+    ctx,
+    ticket
+      ? ctx.t('bot.screen.support.endedTicket', { number: ticket.number })
+      : ctx.t('bot.screen.support.ended'),
+    backButton(ctx),
+  );
 }

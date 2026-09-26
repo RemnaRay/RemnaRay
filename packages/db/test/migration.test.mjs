@@ -68,3 +68,20 @@ test('plans without squads are taken off sale, and only such plans may keep none
     /CHECK \(cardinality\(squads\) > 0 OR NOT is_active OR deleted_at IS NOT NULL\)/,
   );
 });
+
+test('support tickets keep one live ticket per customer (owner decision F36)', async () => {
+  const support = await readFile('prisma/migrations/0010_support_tickets/migration.sql', 'utf8');
+  for (const table of [
+    'support_tickets',
+    'support_messages',
+    'support_topics',
+    'support_templates',
+    'support_faq',
+  ])
+    assert.match(support, new RegExp(`CREATE TABLE ${table}\\b`));
+  assert.match(
+    support,
+    /CREATE UNIQUE INDEX ux_support_tickets_live_p ON support_tickets\(user_id\) WHERE status <> 'closed'/,
+  );
+  assert.match(schema, /model SupportTicket \{/);
+});

@@ -487,3 +487,110 @@ model SetupState {
   updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
   @@map("setup_state")
 }
+
+enum SupportTicketStatus {
+  open
+  in_progress
+  closed
+  @@map("support_ticket_status")
+}
+
+enum SupportTicketChannel {
+  shop
+  support
+  web
+  @@map("support_ticket_channel")
+}
+
+enum SupportClosedBy {
+  operator
+  customer
+  auto
+  @@map("support_closed_by")
+}
+
+enum SupportMessageDirection {
+  customer
+  operator
+  note
+  system
+  @@map("support_message_direction")
+}
+
+model SupportTicket {
+  id String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  number BigInt @unique @default(autoincrement())
+  userId String @map("user_id") @db.Uuid
+  channel SupportTicketChannel
+  status SupportTicketStatus @default(open)
+  openedBy String @default("customer") @map("opened_by")
+  assigneeTelegramId BigInt? @map("assignee_telegram_id")
+  assigneeName String? @map("assignee_name")
+  takenAt DateTime? @map("taken_at") @db.Timestamptz(6)
+  firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(6)
+  lastCustomerAt DateTime? @map("last_customer_at") @db.Timestamptz(6)
+  lastOperatorAt DateTime? @map("last_operator_at") @db.Timestamptz(6)
+  remindedAt DateTime? @map("reminded_at") @db.Timestamptz(6)
+  closedAt DateTime? @map("closed_at") @db.Timestamptz(6)
+  closedBy SupportClosedBy? @map("closed_by")
+  closedSilently Boolean @default(false) @map("closed_silently")
+  rating Int? @db.SmallInt
+  ratedAt DateTime? @map("rated_at") @db.Timestamptz(6)
+  chatId BigInt? @map("chat_id")
+  threadId Int? @map("thread_id")
+  cardMessageId Int? @map("card_message_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  @@index([status, createdAt], map: "ix_support_tickets_status_created")
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  ticketId String @map("ticket_id") @db.Uuid
+  direction SupportMessageDirection
+  authorTelegramId BigInt? @map("author_telegram_id")
+  authorName String? @map("author_name")
+  kind String
+  text String?
+  fileId String? @map("file_id")
+  fileUniqueId String? @map("file_unique_id")
+  customerMessageId Int? @map("customer_message_id")
+  operatorChatId BigInt? @map("operator_chat_id")
+  operatorMessageId Int? @map("operator_message_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@index([ticketId, createdAt], map: "ix_support_messages_ticket_created")
+  @@map("support_messages")
+}
+
+model SupportTopic {
+  chatId BigInt @map("chat_id")
+  userId String @map("user_id") @db.Uuid
+  threadId Int @map("thread_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@id([chatId, userId])
+  @@unique([chatId, threadId])
+  @@map("support_topics")
+}
+
+model SupportTemplate {
+  id String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  code String @unique
+  title String
+  body Json
+  sortOrder Int @default(100) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  @@map("support_templates")
+}
+
+model SupportFaq {
+  id String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  question Json
+  answer Json
+  sortOrder Int @default(100) @map("sort_order")
+  enabled Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  @@map("support_faq")
+}

@@ -131,12 +131,13 @@ export function createBot(options: {
 
   bot.api.config.use(autoRetry({ maxDelaySeconds: 60, maxRetryAttempts: 5 }));
   bot.api.config.use(outgoingThrottle());
+  // FR-124: operators answer in their chat and press the ticket cards'
+  // buttons (F36), which the relay answers itself; they are not customers there.
+  bot.use(supportRelay(api));
   bot.use(async (ctx, next) => {
     if (ctx.callbackQuery) await ctx.answerCallbackQuery();
     if (ctx.from) await next();
   });
-  // FR-124: operators answer in their chat; they are not customers there.
-  bot.use(supportRelay(api, i18n));
   bot.use(sequentialize((ctx) => ctx.from?.id.toString()));
   bot.use(
     limit({

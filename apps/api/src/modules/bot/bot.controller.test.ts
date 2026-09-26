@@ -108,7 +108,6 @@ describe('bot ingress boundary', () => {
       { db: { admin: { findMany: () => Promise.resolve([{ telegramId: 123n }]) } } } as never,
       { get: (key: string) => Promise.resolve(settings[key]) } as never,
       { messages: (lang: string) => Promise.resolve(catalogs[lang] ?? {}) } as never,
-      {} as never,
     );
     await expect(controller.messages('en')).resolves.toMatchObject({
       lang: 'en',

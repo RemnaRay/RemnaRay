@@ -6,15 +6,19 @@ import { createSupportBot } from './support-bot.js';
 const catalogs: Record<string, Record<string, string>> = {
   ru: {
     'bot.support.start': 'Поддержка {brand}',
-    'bot.support.sent': 'Передали',
+    'bot.support.ticket.created': 'Обращение #{number}',
+    'bot.support.ticket.closedByCustomer': 'Закрыто #{number}',
+    'bot.btn.supportClose': 'Закрыть обращение',
     'bot.support.unsupported': 'Нельзя',
     'bot.support.off': 'В основном боте',
     'bot.error.support_unavailable': 'Не удалось',
   },
-  en: { 'bot.support.start': '{brand} support', 'bot.support.sent': 'Sent' },
+  en: { 'bot.support.start': '{brand} support' },
 };
 
-function harness(forward = vi.fn().mockResolvedValue({ acknowledge: true })) {
+function harness(
+  forward = vi.fn().mockResolvedValue({ ticket: { id: 't1', number: 3, created: true } }),
+) {
   const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
   const api = {
     getConfig: () =>
@@ -25,7 +29,10 @@ function harness(forward = vi.fn().mockResolvedValue({ acknowledge: true })) {
         supportBot: { username: 'manta_help_bot' },
       }),
     forwardSupport: forward,
-    routeSupport: vi.fn().mockResolvedValue({ target: { telegramId: '42', language: 'en' } }),
+    upsertUser: vi.fn().mockResolvedValue({ user: { language: 'ru' } }),
+    closeSupport: vi.fn().mockResolvedValue({ ticket: { number: 3 } }),
+    operatorSupport: vi.fn().mockResolvedValue({ handled: true }),
+    supportCallback: vi.fn().mockResolvedValue({ text: 'Yours #3' }),
   };
   const { bot } = createSupportBot({
     token: '777:help-token',
@@ -59,7 +66,7 @@ function harness(forward = vi.fn().mockResolvedValue({ acknowledge: true })) {
         ...message,
       },
     } as never);
-  return { calls, api, send };
+  return { calls, api, send, bot };
 }
 
 describe('the support bot (owner decision F35)', () => {
@@ -74,18 +81,48 @@ describe('the support bot (owner decision F35)', () => {
     ]);
   });
 
-  it('hands the operators every photo, file, voice or text, confirming the first', async () => {
+  it('hands the operators every photo, file, voice or text, confirming a new ticket', async () => {
     const forward = vi
       .fn()
-      .mockResolvedValueOnce({ acknowledge: true })
-      .mockResolvedValue({ acknowledge: false });
-    const { calls, send } = harness(forward);
+      .mockResolvedValueOnce({ ticket: { id: 't1', number: 3, created: true } })
+      .mockResolvedValue({ ticket: { id: 't1', number: 3, created: false } });
+    const { calls, send, api } = harness(forward);
     await send({ photo: [{ file_id: 'p1', file_unique_id: 'u1', width: 1, height: 1 }] });
     await send({ voice: { file_id: 'v1', file_unique_id: 'u2', duration: 2 } });
     await send({ text: 'It does not connect' });
     expect(forward).toHaveBeenCalledTimes(3);
-    expect(forward).toHaveBeenCalledWith(42, 5, { via: 'support' });
-    expect(calls.map((call) => call.payload['text'])).toEqual(['Передали']);
+    expect(forward).toHaveBeenCalledWith(42, 5, {
+      via: 'support',
+      message: { kind: 'photo', fileId: 'p1', fileUniqueId: 'u1' },
+    });
+    expect(calls.map((call) => call.payload['text'])).toEqual(['Обращение #3']);
+    expect(calls[0]?.payload['reply_markup']).toEqual({
+      inline_keyboard: [[{ text: 'Закрыть обращение', callback_data: 'support:end' }]],
+    });
+    // Someone who writes here first becomes a shop user, once.
+    expect(api.upsertUser).toHaveBeenCalledTimes(1);
+    expect(api.upsertUser).toHaveBeenCalledWith({
+      telegramId: 42,
+      firstName: 'A',
+      languageCode: 'ru',
+    });
+  });
+
+  it('closes the customer’s ticket on «Закрыть обращение»', async () => {
+    const { calls, api, bot } = harness();
+    await bot.handleUpdate({
+      update_id: 99,
+      callback_query: {
+        id: 'q1',
+        chat_instance: 'c',
+        data: 'support:end',
+        from: { id: 42, is_bot: false, first_name: 'A', language_code: 'ru' },
+        message: { message_id: 8, date: 0, chat: { id: 42, type: 'private' } },
+      },
+    } as never);
+    expect(api.closeSupport).toHaveBeenCalledWith(42, 'support');
+    expect(calls.map((call) => call.method)).toEqual(['answerCallbackQuery', 'sendMessage']);
+    expect(calls[1]?.payload['text']).toBe('Закрыто #3');
   });
 
   it('says what it cannot pass on, and when support moved back to the shop bot', async () => {
@@ -97,21 +134,36 @@ describe('the support bot (owner decision F35)', () => {
     expect(calls.map((call) => call.payload['text'])).toEqual(['Нельзя', 'В основном боте']);
   });
 
-  it('copies an operator’s answer in the customer’s topic back as it is', async () => {
-    const { calls, api, send } = harness();
+  it('hands an operator’s message and a card’s button to the API (F36)', async () => {
+    const { calls, api, bot, send } = harness();
     await send(
       { text: 'We are on it', is_topic_message: true, message_thread_id: 71 },
       { id: -100500, type: 'supergroup' },
     );
-    expect(api.routeSupport).toHaveBeenCalledWith({ chatId: -100500, threadId: 71 });
+    expect(api.operatorSupport).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: -100500, threadId: 71, via: 'support' }),
+    );
+    await bot.handleUpdate({
+      update_id: 100,
+      callback_query: {
+        id: 'q2',
+        chat_instance: 'c',
+        data: 'st:take:t1',
+        from: { id: 7, is_bot: false, first_name: 'Olga' },
+        message: { message_id: 8, date: 0, chat: { id: -100500, type: 'supergroup' } },
+      },
+    } as never);
+    expect(api.supportCallback).toHaveBeenCalledWith({
+      chatId: -100500,
+      from: { id: 7, name: 'Olga' },
+      data: 'st:take:t1',
+      via: 'support',
+    });
+    // Answered once, with the API's text.
     expect(calls).toEqual([
       {
-        method: 'copyMessage',
-        payload: expect.objectContaining({
-          chat_id: 42,
-          from_chat_id: -100500,
-          message_id: 5,
-        }) as object,
+        method: 'answerCallbackQuery',
+        payload: expect.objectContaining({ text: 'Yours #3' }) as object,
       },
     ]);
   });

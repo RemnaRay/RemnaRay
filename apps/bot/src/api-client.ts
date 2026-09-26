@@ -13,6 +13,17 @@ export class ApiClientError extends Error {
   }
 }
 
+/** The bot a customer writes to support in (F35). */
+export type SupportVia = 'shop' | 'support';
+
+/** What a support message is and says, kept with the ticket (F36). */
+export type SupportMessageInfo = {
+  kind: string;
+  text?: string;
+  fileId?: string;
+  fileUniqueId?: string;
+};
+
 export type UserSummary = {
   id: string;
   telegramId: string;
@@ -240,24 +251,31 @@ export class ApiClient {
     );
   }
 
-  /** FR-124: copies the customer's message `messageId` to the operators. */
+  /**
+   * FR-124, owner decision F36: the customer's message `messageId` goes into
+   * their ticket; `created` tells the bot to confirm a new ticket.
+   */
   forwardSupport(
     telegramId: number,
     messageId: number,
-    options: { requireOpen?: boolean; via?: 'shop' | 'support' } = {},
+    options: { requireOpen?: boolean; via?: SupportVia; message?: SupportMessageInfo } = {},
   ) {
-    return this.request<{ acknowledge: boolean }>('/api/internal/v1/support/forward', {
-      method: 'POST',
-      userId: telegramId,
-      body: {
-        messageId,
-        requireOpen: options.requireOpen ?? false,
-        ...(options.via ? { via: options.via } : {}),
+    return this.request<{ ticket: { id: string; number: number; created: boolean } }>(
+      '/api/internal/v1/support/forward',
+      {
+        method: 'POST',
+        userId: telegramId,
+        body: {
+          messageId,
+          requireOpen: options.requireOpen ?? false,
+          ...(options.via ? { via: options.via } : {}),
+          ...(options.message ? { message: options.message } : {}),
+        },
       },
-    });
+    );
   }
 
-  /** «Поддержка»: the customer's messages go to the operators until closed. */
+  /** «Написать оператору»: the customer's messages go to the operators. */
   openSupport(telegramId: number) {
     return this.request<unknown>('/api/internal/v1/support/open', {
       method: 'POST',
@@ -265,19 +283,42 @@ export class ApiClient {
     });
   }
 
-  closeSupport(telegramId: number) {
-    return this.request<unknown>('/api/internal/v1/support/close', {
+  /** «Завершить» / «Закрыть обращение»: the customer closes their ticket. */
+  closeSupport(telegramId: number, via: SupportVia = 'shop') {
+    return this.request<{ ticket: { number: number } | null }>('/api/internal/v1/support/close', {
       method: 'POST',
       userId: telegramId,
+      body: { via },
     });
   }
 
-  /** FR-124: the customer an operator's message in the operators' chat answers. */
-  routeSupport(input: { chatId: number; threadId?: number; replyToMessageId?: number }) {
-    return this.request<{ target: { telegramId: string; language: string } | null }>(
-      '/api/internal/v1/support/route',
-      { method: 'POST', body: input },
-    );
+  /** A message in the operators' chat; the API answers, notes or runs the command. */
+  operatorSupport(input: {
+    chatId: number;
+    messageId: number;
+    threadId?: number;
+    replyToMessageId?: number;
+    from: { id: number; name: string };
+    via: SupportVia;
+    message: SupportMessageInfo;
+  }) {
+    return this.request<{ handled: boolean }>('/api/internal/v1/support/operator', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  /** A ticket card's button in the operators' chat; the answer goes to the presser. */
+  supportCallback(input: {
+    chatId: number;
+    from: { id: number; name: string };
+    data: string;
+    via: SupportVia;
+  }) {
+    return this.request<{ text: string; alert?: boolean }>('/api/internal/v1/support/callback', {
+      method: 'POST',
+      body: input,
+    });
   }
 
   getAdminRole(telegramId: number) {

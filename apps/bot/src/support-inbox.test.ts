@@ -18,13 +18,13 @@ function message(fields: Record<string, unknown>, chatType = 'private') {
 
 describe('support inbox (FR-124, F35)', () => {
   it('hands the operators a photo, file, voice or text of an open conversation', async () => {
-    const forwardSupport = vi.fn().mockResolvedValue({ acknowledge: false });
+    const forwardSupport = vi.fn().mockResolvedValue({ ticket: { number: 1, created: false } });
     const inbox = supportInbox({ forwardSupport });
     for (const fields of [
       { text: 'It does not connect' },
-      { photo: [{ file_id: 'p1' }] },
-      { document: { file_id: 'd1' } },
-      { voice: { file_id: 'v1' } },
+      { photo: [{ file_id: 'p1', file_unique_id: 'u1' }], caption: 'Screen' },
+      { document: { file_id: 'd1', file_unique_id: 'u2' } },
+      { voice: { file_id: 'v1', file_unique_id: 'u3' } },
     ]) {
       const { ctx, reply } = message(fields);
       const next = vi.fn();
@@ -33,16 +33,28 @@ describe('support inbox (FR-124, F35)', () => {
       expect(reply).not.toHaveBeenCalled();
     }
     expect(forwardSupport).toHaveBeenCalledTimes(4);
-    expect(forwardSupport).toHaveBeenCalledWith(42, 5, { requireOpen: true });
+    expect(forwardSupport).toHaveBeenCalledWith(42, 5, {
+      requireOpen: true,
+      message: { kind: 'text', text: 'It does not connect' },
+    });
+    // F36: what the message is, kept with the ticket.
+    expect(forwardSupport).toHaveBeenCalledWith(42, 5, {
+      requireOpen: true,
+      message: { kind: 'photo', text: 'Screen', fileId: 'p1', fileUniqueId: 'u1' },
+    });
   });
 
-  it('confirms the first message after «Поддержка»', async () => {
+  it('confirms a new ticket with its number and «Завершить» (F36)', async () => {
     const inbox = supportInbox({
-      forwardSupport: vi.fn().mockResolvedValue({ acknowledge: true }),
+      forwardSupport: vi.fn().mockResolvedValue({ ticket: { number: 7, created: true } }),
     });
     const { ctx, reply } = message({ text: 'Hello' });
     await inbox(ctx, vi.fn());
-    expect(reply).toHaveBeenCalledWith('bot.screen.support.sent');
+    expect(reply).toHaveBeenCalledWith('bot.support.ticket.created', {
+      reply_markup: {
+        inline_keyboard: [[{ text: 'bot.btn.supportEnd', callback_data: 'support:end' }]],
+      },
+    });
   });
 
   it('leaves a message outside a conversation, a command and a group message alone', async () => {

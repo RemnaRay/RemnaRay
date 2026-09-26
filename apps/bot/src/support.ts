@@ -1,26 +1,21 @@
-import { formatMessage, SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
-import { GrammyError, InlineKeyboard, type Context, type MiddlewareFn } from 'grammy';
+import type { Context, MiddlewareFn } from 'grammy';
 
-import type { ApiClient } from './api-client.js';
-import type { BotI18n } from './i18n.js';
-import { isSupportMessage } from './support-inbox.js';
+import type { ApiClient, SupportVia } from './api-client.js';
+import { isSupportMessage, messageInfo } from './support-inbox.js';
 
 /**
- * FR-124, the operators' side: a message in the operators' chat that answers
- * a customer — written in the customer's forum topic, or a reply to their
- * forwarded message — is sent to that customer: text under «Ответ поддержки»
- * in their language, a photo, file or voice message copied as it is (F35),
- * with «Завершить» for the conversation the answer keeps open. In the
- * support bot (`bot: 'support'`, F35) every answer is copied as it is: that
- * chat is the conversation. When a support bot is configured the shop bot
- * leaves the operators' chat to it. It runs before sessions and dialogs, so
- * an operator is never treated as a customer there. Anything else in that
- * chat is ignored.
+ * FR-124, the operators' side, with the owner's F35 and F36 decisions. In the
+ * operators' chat every member's message — an answer in a customer's topic
+ * or a reply to their ticket, a note, a command — and every press on a ticket
+ * card's button goes to the API, which keeps the ticket and makes the
+ * Telegram calls; the bot answers the button press with what the API says.
+ * When a support bot is configured the shop bot leaves that chat to it. It
+ * runs first, before sessions and dialogs, so an operator is never treated
+ * as a customer there. Anything outside that chat passes on.
  */
 export function supportRelay<C extends Context>(
-  api: Pick<ApiClient, 'getConfig' | 'routeSupport'>,
-  i18n: Pick<BotI18n, 'catalog'>,
-  options: { bot: 'shop' | 'support' } = { bot: 'shop' },
+  api: Pick<ApiClient, 'getConfig' | 'operatorSupport' | 'supportCallback'>,
+  options: { bot: SupportVia } = { bot: 'shop' },
 ): MiddlewareFn<C> {
   return async (ctx, next) => {
     const chat = ctx.chat;
@@ -29,58 +24,42 @@ export function supportRelay<C extends Context>(
     if (config.supportForwardChatId === null || chat.id !== config.supportForwardChatId)
       return next();
     if (options.bot === 'shop' && config.supportBot) return;
+    const from = ctx.from;
+    if (!from || from.is_bot) return;
+    const name = [from.first_name, from.last_name].filter(Boolean).join(' ') || String(from.id);
+    const callback = ctx.callbackQuery;
+    if (callback?.data?.startsWith('st:')) {
+      const answer = await api.supportCallback({
+        chatId: chat.id,
+        from: { id: from.id, name },
+        data: callback.data,
+        via: options.bot,
+      });
+      await ctx.answerCallbackQuery({
+        text: answer.text,
+        ...(answer.alert ? { show_alert: true } : {}),
+      });
+      return;
+    }
+    if (callback) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
     const message = ctx.message;
-    if (!isSupportMessage(message) || message.from.is_bot) return;
-    const text = message.text?.trim();
-    if (message.text !== undefined && !text) return;
-    const { target } = await api.routeSupport({
+    if (!isSupportMessage(message)) return;
+    if (message.text !== undefined && !message.text.trim()) return;
+    await api.operatorSupport({
       chatId: chat.id,
+      messageId: message.message_id,
       ...(message.is_topic_message && message.message_thread_id !== undefined
         ? { threadId: message.message_thread_id }
         : {}),
       ...(message.reply_to_message
         ? { replyToMessageId: message.reply_to_message.message_id }
         : {}),
+      from: { id: from.id, name },
+      via: options.bot,
+      message: messageInfo(message),
     });
-    if (!target) return;
-    const language = (SUPPORTED_LOCALES as readonly string[]).includes(target.language)
-      ? (target.language as Locale)
-      : config.defaultLocale;
-    const catalog = await i18n.catalog(language);
-    const keyboard = new InlineKeyboard().text(
-      formatMessage(language, catalog, 'bot.btn.supportEnd'),
-      'support:end',
-    );
-    try {
-      if (options.bot === 'support')
-        await ctx.api.copyMessage(Number(target.telegramId), chat.id, message.message_id);
-      else if (text)
-        // `formatMessage` escapes the values for HTML, so the message is sent
-        // as HTML: an operator's "<" or "'" reaches the customer as typed.
-        await ctx.api.sendMessage(
-          Number(target.telegramId),
-          formatMessage(language, catalog, 'bot.screen.support.reply', { text }),
-          { parse_mode: 'HTML', reply_markup: keyboard },
-        );
-      else
-        await ctx.api.copyMessage(Number(target.telegramId), chat.id, message.message_id, {
-          reply_markup: keyboard,
-        });
-    } catch (error) {
-      if (!(error instanceof GrammyError)) throw error;
-      const operators = await i18n.catalog(config.defaultLocale);
-      await ctx.reply(
-        formatMessage(config.defaultLocale, operators, 'bot.screen.support.undelivered', {
-          reason: error.description,
-        }),
-        {
-          parse_mode: 'HTML',
-          reply_parameters: { message_id: message.message_id },
-          ...(message.is_topic_message && message.message_thread_id !== undefined
-            ? { message_thread_id: message.message_thread_id }
-            : {}),
-        },
-      );
-    }
   };
 }
