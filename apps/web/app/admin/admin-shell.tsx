@@ -33,6 +33,7 @@ const links: { href: string; key: string; permission: Permission | Permission[] 
   { href: '/admin/promocodes', key: 'promocodes', permission: 'promocodes.read' },
   { href: '/admin/referrals', key: 'referrals', permission: 'referrals.read' },
   { href: '/admin/broadcasts', key: 'broadcasts', permission: 'broadcasts.read' },
+  { href: '/admin/support', key: 'support', permission: 'support.read' },
   { href: '/admin/settings', key: 'settings', permission: 'settings.read' },
   { href: '/admin/admins', key: 'admins', permission: 'admins.write' },
   { href: '/admin/audit', key: 'audit', permission: ['audit.read', 'audit.read.self'] },

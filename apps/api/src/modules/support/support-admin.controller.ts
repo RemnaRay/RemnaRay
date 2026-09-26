@@ -23,6 +23,16 @@ import { SupportAdminService } from './support-admin.service';
 export class SupportAdminController {
   constructor(private readonly support: SupportAdminService) {}
 
+  @Get('tickets')
+  tickets(@Query() query: unknown) {
+    return this.support.tickets(query);
+  }
+
+  @Get('tickets/:id')
+  ticket(@Param('id') id: string) {
+    return this.support.ticket(id);
+  }
+
   @Get('stats')
   stats(@Query() query: unknown) {
     return this.support.stats(query);

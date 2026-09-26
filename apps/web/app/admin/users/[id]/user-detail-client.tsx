@@ -119,7 +119,19 @@ export default function UserDetailClient({ userId }: { userId: string }) {
                   <h1 className="text-2xl font-bold">
                     {data.user.firstName ?? data.user.username ?? data.user.telegramId}
                   </h1>
-                  {data.user.isBanned ? <Badge variant="danger">{t('users.banned')}</Badge> : null}
+                  <div className="flex items-center gap-2">
+                    {data.user.isBanned ? (
+                      <Badge variant="danger">{t('users.banned')}</Badge>
+                    ) : null}
+                    {can(me, 'support.read') ? (
+                      <a
+                        className="text-sm underline"
+                        href={`/admin/support?userId=${encodeURIComponent(userId)}`}
+                      >
+                        {t('helpdesk.userTickets')}
+                      </a>
+                    ) : null}
+                  </div>
                 </div>
 
                 <Tabs defaultValue="profile">

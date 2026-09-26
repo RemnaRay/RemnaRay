@@ -159,6 +159,16 @@ AC-141 audited actions.
 `settings.operator.max_refund_minor` caps a single refund. An operator can never
 debit a balance, run a bulk extension, anonymize a user or edit plans.
 
+## Support (owner decision F36)
+
+`/admin/support` shows the support tickets worked in the operators' Telegram
+chat, their statistics, the answer templates and the self-help questions (see
+[support.md](support.md)). Beyond section 14.2's matrix, `support.read` (admins
+and operators) opens the section and `support.write` (admins) edits templates
+and questions. The same limits apply to the card actions in Telegram (extend,
+reset traffic, credit), which only a console admin with their Telegram ID set
+can run and which are audited like the console's.
+
 ## Settings, providers and system (TASK-M4-009)
 
 `/admin/settings` renders the store settings from `GET /settings/schema`, and the

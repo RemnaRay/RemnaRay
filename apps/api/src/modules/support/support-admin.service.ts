@@ -27,6 +27,18 @@ export const faqSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+export const ticketListSchema = z.object({
+  status: z.enum(['open', 'in_progress', 'closed', 'live']).optional(),
+  assignee: z
+    .string()
+    .regex(/^\d{1,20}$/u)
+    .optional(),
+  userId: z.uuid().optional(),
+  q: z.string().trim().min(1).max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+  cursor: z.uuid().optional(),
+});
+
 export const periodSchema = z.object({
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
@@ -128,6 +140,90 @@ export class SupportAdminService {
     };
   }
 
+  /**
+   * The tickets, newest first: by status (`live` = not closed), by the
+   * operator who took them, by customer (id, or `q`: Telegram id, #number or
+   * @username).
+   */
+  async tickets(query: unknown) {
+    const input = ticketListSchema.parse(query ?? {});
+    const where = {
+      AND: [
+        input.status === 'live'
+          ? { status: { not: 'closed' as const } }
+          : input.status
+            ? { status: input.status }
+            : {},
+        input.assignee ? { assigneeTelegramId: BigInt(input.assignee) } : {},
+        input.userId ? { userId: input.userId } : {},
+        await this.search(input.q),
+      ],
+    };
+    const rows = await this.infra.db.supportTicket.findMany({
+      where,
+      orderBy: { id: 'desc' },
+      take: input.limit + 1,
+      ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+    });
+    const page = rows.slice(0, input.limit);
+    const customers = await this.infra.db.user.findMany({
+      where: { id: { in: [...new Set(page.map((row) => row.userId))] } },
+      select: { id: true, telegramId: true, username: true, firstName: true },
+    });
+    const byId = new Map(customers.map((user) => [user.id, user]));
+    return {
+      items: page.map((row) => ({
+        ...ticketView(row),
+        user: userView(byId.get(row.userId), row.userId),
+      })),
+      nextCursor: rows.length > input.limit ? (page.at(-1)?.id ?? null) : null,
+    };
+  }
+
+  /** `#128` is a ticket; digits are a Telegram id; anything else is a @username. */
+  private async search(q: string | undefined) {
+    if (!q) return {};
+    if (/^#\d{1,18}$/u.test(q)) return { number: BigInt(q.slice(1)) };
+    const users = await this.infra.db.user.findMany({
+      where: /^\d{1,18}$/u.test(q)
+        ? { telegramId: BigInt(q) }
+        : { username: { equals: q.replace(/^@/u, ''), mode: 'insensitive' as const } },
+      select: { id: true },
+      take: 20,
+    });
+    return { userId: { in: users.map((user) => user.id) } };
+  }
+
+  /** One ticket with its history: messages, notes and the bot's lines, oldest first. */
+  async ticket(id: string) {
+    const row = await this.infra.db.supportTicket.findUnique({ where: { id: known(id) } });
+    if (!row) throw new NotFoundException('NOT_FOUND');
+    const [user, messages] = await Promise.all([
+      this.infra.db.user.findUnique({
+        where: { id: row.userId },
+        select: { id: true, telegramId: true, username: true, firstName: true },
+      }),
+      this.infra.db.supportMessage.findMany({
+        where: { ticketId: row.id, NOT: { kind: 'card' } },
+        orderBy: { createdAt: 'asc' },
+        take: 500,
+      }),
+    ]);
+    return {
+      ...ticketView(row),
+      user: userView(user ?? undefined, row.userId),
+      messages: messages.map((message) => ({
+        id: message.id,
+        direction: message.direction,
+        kind: message.kind,
+        text: message.text,
+        hasFile: message.fileId !== null,
+        authorName: message.authorName,
+        createdAt: message.createdAt.toISOString(),
+      })),
+    };
+  }
+
   async faq() {
     const rows = await this.infra.db.supportFaq.findMany({
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -207,6 +303,56 @@ function templateView(row: {
 export function known(id: string): string {
   if (!z.uuid().safeParse(id).success) throw new NotFoundException('NOT_FOUND');
   return id;
+}
+
+function ticketView(row: {
+  id: string;
+  number: bigint;
+  status: string;
+  channel: string;
+  openedBy: string;
+  assigneeTelegramId: bigint | null;
+  assigneeName: string | null;
+  createdAt: Date;
+  takenAt: Date | null;
+  firstResponseAt: Date | null;
+  closedAt: Date | null;
+  closedBy: string | null;
+  closedSilently: boolean;
+  rating: number | null;
+}) {
+  const iso = (value: Date | null) => value?.toISOString() ?? null;
+  return {
+    id: row.id,
+    number: Number(row.number),
+    status: row.status,
+    channel: row.channel,
+    openedBy: row.openedBy,
+    assignee: row.assigneeTelegramId
+      ? { telegramId: row.assigneeTelegramId.toString(), name: row.assigneeName }
+      : null,
+    createdAt: row.createdAt.toISOString(),
+    takenAt: iso(row.takenAt),
+    firstResponseAt: iso(row.firstResponseAt),
+    closedAt: iso(row.closedAt),
+    closedBy: row.closedBy,
+    closedSilently: row.closedSilently,
+    rating: row.rating,
+  };
+}
+
+function userView(
+  user:
+    | { id: string; telegramId: bigint; username: string | null; firstName: string | null }
+    | undefined,
+  id: string,
+) {
+  return {
+    id,
+    telegramId: user?.telegramId.toString() ?? null,
+    username: user?.username ?? null,
+    firstName: user?.firstName ?? null,
+  };
 }
 
 function faqView(row: {

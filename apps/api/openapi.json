@@ -2873,6 +2873,63 @@
           "404": { "description": "NOT_FOUND" }
         }
       }
+    },
+    "/api/admin/v1/support/tickets": {
+      "get": {
+        "operationId": "listSupportTickets",
+        "summary": "Support tickets, newest first (F36; support.read)",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["open", "in_progress", "closed", "live"] }
+          },
+          {
+            "name": "assignee",
+            "in": "query",
+            "description": "The operator's Telegram id",
+            "schema": { "type": "string" }
+          },
+          { "name": "userId", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "#number, a Telegram id or @username",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 30, "maximum": 100 }
+          },
+          { "name": "cursor", "in": "query", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ items: [{ id, number, status, channel, assignee, createdAt, closedAt, rating, user, … }], nextCursor }"
+          }
+        }
+      }
+    },
+    "/api/admin/v1/support/tickets/{id}": {
+      "get": {
+        "operationId": "getSupportTicket",
+        "summary": "A ticket with its history: messages, notes and the bot's lines (F36; support.read)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ticket and messages [{ direction, kind, text, hasFile, authorName, createdAt }]"
+          },
+          "404": { "description": "NOT_FOUND" }
+        }
+      }
     }
   },
   "webhooks": {}

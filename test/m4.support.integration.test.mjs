@@ -168,6 +168,34 @@ test(
         ],
       );
 
+      // The console's list and history (F36): filters by status, number,
+      // Telegram id and @username; the history leaves the cards out.
+      await prisma.supportMessage.create({
+        data: { ticketId: first.id, direction: 'system', kind: 'card' },
+      });
+      await prisma.user.update({ where: { id: other.id }, data: { username: 'boris' } });
+      const listed = async (query) =>
+        (await admin.tickets(query)).items.map((row) => row.number).sort();
+      assert.deepEqual(await listed({}), [1, 2, 3]);
+      assert.deepEqual(await listed({ status: 'live' }), [3]);
+      assert.deepEqual(await listed({ status: 'closed' }), [1, 2]);
+      assert.deepEqual(await listed({ q: '#2' }), [2]);
+      assert.deepEqual(await listed({ q: '42' }), [1, 2]);
+      assert.deepEqual(await listed({ q: '@Boris' }), [3]);
+      assert.deepEqual(await listed({ q: '@nobody' }), []);
+      assert.deepEqual(await listed({ userId: user.id, status: 'closed' }), [1, 2]);
+      assert.deepEqual(await listed({ assignee: '7' }), [2]);
+      const page = await admin.tickets({ limit: 2 });
+      assert.equal(page.items.length, 2);
+      assert.ok(page.nextCursor);
+      assert.equal((await admin.tickets({ limit: 2, cursor: page.nextCursor })).items.length, 1);
+      const history = await admin.ticket(first.id);
+      assert.deepEqual(
+        history.messages.map((message) => [message.direction, message.kind, message.hasFile]),
+        [['customer', 'photo', true]],
+      );
+      assert.equal(history.user.telegramId, '42');
+
       // The minute sweep's SQL (F36): a ticket the customer left after the
       // operators' answer closes; one where the customer spoke last does not.
       const idle = await prisma.supportTicket.findFirstOrThrow({ where: { userId: other.id } });

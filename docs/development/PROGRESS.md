@@ -634,7 +634,14 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      ссылка подписки» and «Написать оператору». Answers are HTML-escaped
      plain text. Evidence: API faq/link tests, console FAQ tests, shop screen
      and support-bot tests.
-  7. Console section.
+  7. **Done — console section.** `/admin/support` (nav, `support.read`):
+     «Тикеты» (filters: not closed/new/in work/closed/all, search `#N`,
+     Telegram id, `@username`, `?userId=` from the user page; the history
+     below the list), «Статистика» (period, totals, per operator),
+     «Шаблоны» and «FAQ» (editors only with `support.write`). API
+     `GET api/admin/v1/support/tickets`, `tickets/:id`. Evidence: web page
+     tests (list, stats, read-only vs editable), `m4.support` list filters,
+     cursor and history on PostgreSQL.
 
 ### Next
 

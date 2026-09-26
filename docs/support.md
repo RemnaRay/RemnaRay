@@ -84,6 +84,13 @@ by default; `support.read`): tickets opened and closed, open now, the time to
 the first answer (average and median), the time to the close, the average
 rating, and the same per operator who took tickets.
 
+**In the console.** «Поддержка» (`support.read`: administrators and
+operators) lists the tickets — not closed, new, in work, closed or all;
+search by `#number`, Telegram id or `@username` — and opens a ticket's history
+(text and captions; attachments by their kind; notes; the bot's lines).
+«Статистика» shows the period's numbers, «Шаблоны» and «FAQ» are edited with
+`support.write` (administrators). A user's page links to their requests.
+
 **Notes and templates.** A message starting with `//` is an internal note:
 it is kept with the ticket and never sent to the customer. `/t` lists the
 answer templates, `/t <code>` sends one to the customer in their language
