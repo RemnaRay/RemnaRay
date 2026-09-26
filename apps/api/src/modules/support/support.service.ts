@@ -236,6 +236,9 @@ export class SupportService {
       if (ticket.status === 'closed')
         return { text: t('bot.support.op.alreadyClosed', { number: Number(ticket.number) }) };
       const taken = await this.take(ticket, input.from, destination);
+      // Closed between the read and the take.
+      if (!taken)
+        return { text: t('bot.support.op.alreadyClosed', { number: Number(ticket.number) }) };
       return { text: t('bot.support.op.taken', { number: Number(taken.number) }) };
     }
     const closed = await this.closeByOperator(ticket, input.from, action === 'silent', destination);
@@ -634,20 +637,22 @@ export class SupportService {
       operatorMessageId: input.messageId,
     });
     const now = new Date();
-    const first = ticket.takenAt === null;
     ticket = await this.tickets.update(ticket.id, {
       lastOperatorAt: now,
       ...(ticket.firstResponseAt === null ? { firstResponseAt: now } : {}),
-      // The first answer takes a ticket nobody took.
-      ...(first
-        ? {
-            status: 'in_progress' as const,
+    });
+    // The first answer takes a ticket nobody took — unless it was closed meanwhile.
+    const taken =
+      ticket.takenAt === null
+        ? await this.tickets.updateIfLive(ticket.id, {
+            status: 'in_progress',
             takenAt: now,
             assigneeTelegramId: BigInt(input.from.id),
             assigneeName: input.from.name,
-          }
-        : {}),
-    });
+          })
+        : null;
+    const first = taken !== null;
+    if (taken) ticket = taken;
     if (input.via === 'shop')
       await this.infra.redis.set(
         openKey(customer.telegramId.toString()),
@@ -711,14 +716,15 @@ export class SupportService {
     ticket: Ticket,
     operator: { id: number; name: string },
     destination: Destination,
-  ): Promise<Ticket> {
+  ): Promise<Ticket | null> {
     const now = new Date();
-    const taken = await this.tickets.update(ticket.id, {
+    const taken = await this.tickets.updateIfLive(ticket.id, {
       status: 'in_progress',
       takenAt: ticket.takenAt ?? now,
       assigneeTelegramId: BigInt(operator.id),
       assigneeName: operator.name,
     });
+    if (!taken) return null;
     const customer = await this.infra.db.user.findUnique({ where: { id: ticket.userId } });
     await this.bestEffort(async () => {
       if (customer)

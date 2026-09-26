@@ -64,6 +64,21 @@ export class TicketsRepository {
     return this.infra.db.supportTicket.update({ where: { id }, data });
   }
 
+  /**
+   * Updates a ticket only while it is live; null when it was closed meanwhile,
+   * so taking or answering never reopens a closed ticket.
+   */
+  async updateIfLive(
+    id: string,
+    data: Parameters<Infrastructure['db']['supportTicket']['updateMany']>[0]['data'],
+  ): Promise<Ticket | null> {
+    const { count } = await this.infra.db.supportTicket.updateMany({
+      where: { id, status: { not: 'closed' } },
+      data,
+    });
+    return count === 0 ? null : this.byId(id);
+  }
+
   /** Closes a live ticket; null when it was already closed (by someone else). */
   async closeIfLive(
     id: string,

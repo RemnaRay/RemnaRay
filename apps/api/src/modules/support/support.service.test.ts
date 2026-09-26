@@ -93,6 +93,12 @@ function memoryTickets() {
       Object.assign(ticket, data);
       return Promise.resolve({ ...ticket });
     },
+    updateIfLive: (id: string, data: Partial<Ticket>) => {
+      const ticket = find(id);
+      if (!ticket || ticket.status === 'closed') return Promise.resolve(null);
+      Object.assign(ticket, data);
+      return Promise.resolve({ ...ticket });
+    },
     closeIfLive: (id: string, closedBy: Ticket['closedBy'], closedSilently: boolean) => {
       const ticket = find(id);
       if (!ticket || ticket.status === 'closed') return Promise.resolve(null);
@@ -586,6 +592,21 @@ describe('SupportService tickets (FR-124, F36)', () => {
     await press('silent', second);
     expect(calls.some((call) => call.body['chat_id'] === 42)).toBe(false);
     expect(memory.tickets[1]).toMatchObject({ closedSilently: true, closedBy: 'operator' });
+  });
+
+  it('never reopens a ticket closed between reading it and taking it', async () => {
+    const { service, memory, press } = harness({ forum: true });
+    await service.forward('42', 5);
+    const id = memory.tickets[0]?.id ?? '';
+    // The customer closes just as the operator presses «Взять».
+    const read = memory.repo.byId;
+    memory.repo.byId = async (ticketId: string) => {
+      const ticket = await read(ticketId);
+      if (ticket) Object.assign(memory.tickets[0] ?? {}, { status: 'closed' });
+      return ticket;
+    };
+    await expect(press('take', id)).resolves.toEqual({ text: 'Already closed #1' });
+    expect(memory.tickets[0]).toMatchObject({ status: 'closed', takenAt: null });
   });
 
   it('refuses buttons pressed outside the operators’ chat', async () => {
