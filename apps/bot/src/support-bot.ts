@@ -17,10 +17,12 @@ import { incidentId, outgoingThrottle } from './bot.js';
 import { normalizeLocale, type BotI18n } from './i18n.js';
 import { supportRelay } from './support.js';
 import { RATING_DATA, rateTicket, ratingKeyboard } from './support-rating.js';
+import { FAQ_DATA, faqAnswer, faqKeyboard } from './support-faq.js';
 import { isSupportMessage, messageInfo, movedTo } from './support-inbox.js';
 
 export type SupportContext = Context & {
   t: (key: string, values?: Record<string, unknown>) => string;
+  locale: Locale;
 };
 
 export type SupportRuntime = { bot: Bot<SupportContext> };
@@ -60,6 +62,7 @@ export function createSupportBot(options: {
     const config = await api.getConfig();
     const locale: Locale = normalizeLocale(ctx.from?.language_code) ?? config.defaultLocale;
     const messages = await i18n.catalog(locale);
+    ctx.locale = locale;
     ctx.t = (key, values = {}) =>
       formatMessage(locale, messages, key, { brand: config.brandName, ...values });
     await next();
@@ -92,7 +95,36 @@ export function createSupportBot(options: {
       keyGenerator: (ctx) => ctx.from?.id.toString(),
     }),
   );
-  bot.command('start', (ctx) => ctx.reply(ctx.t('bot.support.start')));
+  // F36: self-help first — the questions, the customer's own link, and
+  // «Написать оператору»; anything the customer writes still opens a ticket.
+  const menu = async (ctx: SupportContext) => {
+    const { keyboard } = await faqKeyboard(api, ctx.locale);
+    keyboard
+      .text(ctx.t('bot.support.btn.myLink'), 'support:link')
+      .row()
+      .text(ctx.t('bot.btn.supportWrite'), 'support:write');
+    await ctx.reply(ctx.t('bot.support.start'), { reply_markup: keyboard });
+  };
+  bot.command('start', menu);
+  bot.callbackQuery('support:menu', menu);
+  bot.callbackQuery(FAQ_DATA, async (ctx) => {
+    const text = await faqAnswer(api, ctx.match[1] ?? '', ctx.locale);
+    await ctx.reply(text ?? ctx.t('bot.screen.support.faqGone'), {
+      parse_mode: 'HTML',
+      reply_markup: new InlineKeyboard()
+        .text(ctx.t('bot.btn.supportWrite'), 'support:write')
+        .row()
+        .text(ctx.t('bot.btn.back'), 'support:menu'),
+    });
+  });
+  bot.callbackQuery('support:link', async (ctx) => {
+    const { url } = await api.supportLink(ctx.from.id);
+    await ctx.reply(
+      url ? ctx.t('bot.support.ticket.link', { url }) : ctx.t('bot.support.noSubscription'),
+      { parse_mode: 'HTML' },
+    );
+  });
+  bot.callbackQuery('support:write', (ctx) => ctx.reply(ctx.t('bot.support.write')));
   bot.callbackQuery('support:end', async (ctx) => {
     const { ticket } = await api.closeSupport(ctx.from.id, 'support');
     if (!ticket) {

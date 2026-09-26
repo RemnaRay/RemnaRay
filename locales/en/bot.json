@@ -63,7 +63,7 @@
   "bot.screen.support.open": "💬 Write your question — in several messages if you like, with photos, files and voice messages. Everything you write goes to the operators, and their answers come here. When it is solved, press «Done».",
   "bot.screen.support.ended": "The conversation is closed. To write again, press «Support».",
   "bot.screen.support.bot": "💬 Support has a bot of its own, @{username}: write there — photos, files and voice messages are welcome, and the operators answer there.",
-  "bot.support.start": "Hello! This is {brand} support. Write your question — in several messages if you like, with photos, files and voice messages. The operators will answer here.",
+  "bot.support.start": "Hello! This is {brand} support. The answer may already be below. If not, write your question — in several messages, with photos, files and voice messages if you like. The operators will answer here.",
   "bot.support.unsupported": "This kind of message cannot be passed on. Send text, a photo, a file or a voice message.",
   "bot.support.off": "Support is in the shop’s main bot now. Open it and press «Support».",
   "bot.screen.notifications.enabled": "Marketing notifications are enabled.",
@@ -249,5 +249,11 @@
   "bot.support.act.done.credit": "💰 {name} credited {amount} to the balance",
   "bot.support.act.done.reset": "🔄 {name} reset the traffic",
   "bot.support.act.done.link": "🔗 {name} sent the customer the subscription link",
-  "bot.support.ticket.link": "🔗 Your subscription link:\n{url}"
+  "bot.support.ticket.link": "🔗 Your subscription link:\n{url}",
+  "bot.btn.supportWrite": "✍️ Write to an operator",
+  "bot.support.btn.myLink": "🔗 My subscription link",
+  "bot.support.write": "Write your question — in several messages, with photos, files and voice messages if you like. The operators will answer here.",
+  "bot.support.noSubscription": "You have no subscription yet. You can get one in the shop's main bot.",
+  "bot.screen.support.intro": "🆘 Support. The answer to your question may already be below. If not, press «Write to an operator».",
+  "bot.screen.support.faqGone": "This answer is no longer available."
 }

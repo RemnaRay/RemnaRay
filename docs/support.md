@@ -2,7 +2,8 @@
 
 «Поддержка» in the bot (FR-124) shows `brand.support_contact` (a `@username`
 or a URL). When `brand.support_forward_chat_id` names the operators' chat, it
-also opens a conversation with the operators: everything the customer writes
+also opens a conversation with the operators (after «Написать оператору» when
+there are self-help questions): everything the customer writes
 to the bot — text, photos, files, voice and video messages, stickers — goes to
 the operators until the customer presses «Завершить» (or a day passes without
 a message either way). An operator's answer comes back to the customer in the
@@ -13,6 +14,18 @@ Messages are copied (`copyMessage`), not re-typed: an operator sees the
 customer's photo or file as it was sent, and the customer sees the operator's.
 Text answers arrive under «Ответ поддержки» in the customer's language, with
 «Завершить» beneath.
+
+## Self-help first (owner decision F36)
+
+The owner can add **self-help questions** in the console («Поддержка» →
+«FAQ»; question and answer in ru and en, an order, on/off). When there are
+any, «Поддержка» in the shop bot shows them as buttons with «Написать
+оператору», which opens the conversation; without them it opens at once, as
+before. The support bot's `/start` shows the questions, «Моя ссылка
+подписки» (the customer's own link, or a note that there is none) and
+«Написать оператору»; there anything the customer writes opens a ticket
+anyway. An answer is shown as written (plain text), in the customer's
+language or, when that one is empty, the other.
 
 ## Tickets (owner decision F36)
 

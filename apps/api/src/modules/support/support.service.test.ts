@@ -260,6 +260,26 @@ function harness(
       ),
     },
     supportTicket: { findFirst: vi.fn().mockResolvedValue(null) },
+    supportFaq: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          id: 'f1',
+          question: { ru: 'Нет сети?', en: 'No network?' },
+          answer: { ru: 'Да', en: 'Yes' },
+        },
+        { id: 'f2', question: { ru: 'Только ru', en: '' }, answer: { ru: 'Ответ', en: '' } },
+      ]),
+      findFirst: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === '00000000-0000-4000-8000-0000000000f1'
+            ? { question: { ru: 'Нет сети?', en: 'No network?' }, answer: { ru: 'Да', en: '' } }
+            : null,
+        ),
+      ),
+    },
+    panelUser: {
+      findUnique: vi.fn().mockResolvedValue({ subscriptionUrl: 'https://sub.example.test/x' }),
+    },
     supportTemplate: {
       findMany: vi.fn().mockResolvedValue(options.templates ?? []),
       findUnique: vi.fn(({ where }: { where: { code: string } }) =>
@@ -923,6 +943,39 @@ describe('card actions from the operators’ chat (F36)', () => {
     calls.length = 0;
     await operator({ threadId: 71, messageId: 901, message: { kind: 'text', text: '/credit -5' } });
     expect(calls[0]?.body).toMatchObject({ text: 'Usage: /credit' });
+  });
+});
+
+describe('self-help (F36)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('lists the questions in the customer’s language, falling back where one is missing', async () => {
+    const { service } = harness();
+    await expect(service.faq('en')).resolves.toEqual({
+      items: [
+        { id: 'f1', question: 'No network?' },
+        { id: 'f2', question: 'Только ru' },
+      ],
+    });
+    await expect(service.faqAnswer('00000000-0000-4000-8000-0000000000f1', 'en')).resolves.toEqual({
+      question: 'No network?',
+      answer: 'Да',
+    });
+    await expect(service.faqAnswer('../etc', 'en')).resolves.toBeNull();
+    await expect(
+      service.faqAnswer('00000000-0000-4000-8000-0000000000f9', 'en'),
+    ).resolves.toBeNull();
+  });
+
+  it('gives a customer only their own subscription link', async () => {
+    const { service } = harness();
+    await expect(service.subscriptionLink('42')).resolves.toEqual({
+      url: 'https://sub.example.test/x',
+    });
+    await expect(service.subscriptionLink('777')).resolves.toEqual({ url: null });
   });
 });
 

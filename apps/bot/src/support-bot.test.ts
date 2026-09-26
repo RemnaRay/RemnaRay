@@ -33,6 +33,11 @@ function harness(
     upsertUser: vi.fn().mockResolvedValue({ user: { language: 'ru' } }),
     closeSupport: vi.fn().mockResolvedValue({ ticket: { id: 't1', number: 3 } }),
     operatorSupport: vi.fn().mockResolvedValue({ handled: true }),
+    supportFaq: vi.fn().mockResolvedValue({
+      items: [{ id: '00000000-0000-4000-8000-00000000000a', question: 'Нет сети?' }],
+    }),
+    supportFaqAnswer: vi.fn().mockResolvedValue({ question: 'Нет сети?', answer: 'Обновите' }),
+    supportLink: vi.fn().mockResolvedValue({ url: 'https://sub.example.test/x' }),
     supportCallback: vi.fn().mockResolvedValue({ text: 'Yours #3' }),
   };
   const { bot } = createSupportBot({
@@ -80,6 +85,35 @@ describe('the support bot (owner decision F35)', () => {
         payload: expect.objectContaining({ chat_id: 42, text: 'Поддержка Manta' }) as object,
       },
     ]);
+    // F36: the self-help questions, the customer's link and «Написать оператору».
+    expect(calls[0]?.payload['reply_markup']).toEqual({
+      inline_keyboard: [
+        [{ text: 'Нет сети?', callback_data: 'faq:00000000-0000-4000-8000-00000000000a' }],
+        [{ text: 'bot.support.btn.myLink', callback_data: 'support:link' }],
+        [{ text: 'bot.btn.supportWrite', callback_data: 'support:write' }],
+      ],
+    });
+  });
+
+  it('answers a self-help question and sends the customer their link', async () => {
+    const { calls, bot, api } = harness();
+    const press = (data: string, update_id: number) =>
+      bot.handleUpdate({
+        update_id,
+        callback_query: {
+          id: `q${String(update_id)}`,
+          chat_instance: 'c',
+          data,
+          from: { id: 42, is_bot: false, first_name: 'A', language_code: 'ru' },
+          message: { message_id: 8, date: 0, chat: { id: 42, type: 'private' } },
+        },
+      } as never);
+    await press('faq:00000000-0000-4000-8000-00000000000a', 200);
+    expect(api.supportFaqAnswer).toHaveBeenCalledWith('00000000-0000-4000-8000-00000000000a', 'ru');
+    expect(calls[1]?.payload['text']).toBe('❓ <b>Нет сети?</b>\n\nОбновите');
+    await press('support:link', 201);
+    expect(api.supportLink).toHaveBeenCalledWith(42);
+    expect(calls[3]?.payload['text']).toBe('bot.support.ticket.link');
   });
 
   it('hands the operators every photo, file, voice or text, confirming a new ticket', async () => {

@@ -2,9 +2,13 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Get,
   Headers,
   HttpCode,
+  NotFoundException,
+  Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { z } from 'zod';
@@ -79,6 +83,25 @@ export class SupportInternalController {
   async close(@Headers('x-acting-user') actingUser: string | undefined, @Body() body: unknown) {
     const input = closeSchema.parse(body ?? {});
     return { ticket: await this.support.customerClose(telegramIdOf(actingUser), input.via) };
+  }
+
+  /** The self-help questions (F36) in the customer's language. */
+  @Get('faq')
+  async faq(@Query('locale') locale: string | undefined) {
+    return this.support.faq(locale ?? '');
+  }
+
+  @Get('faq/:id')
+  async faqAnswer(@Param('id') id: string, @Query('locale') locale: string | undefined) {
+    const answer = await this.support.faqAnswer(id, locale ?? '');
+    if (!answer) throw new NotFoundException('NOT_FOUND');
+    return answer;
+  }
+
+  /** «Моя ссылка подписки»: the acting customer's subscription link. */
+  @Get('subscription-link')
+  async subscriptionLink(@Headers('x-acting-user') actingUser: string | undefined) {
+    return this.support.subscriptionLink(telegramIdOf(actingUser));
   }
 
   /** The customer rates their closed ticket, once. */

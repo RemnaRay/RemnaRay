@@ -5,7 +5,28 @@ import { SupportAdminService } from './support-admin.service';
 function service() {
   const rows = new Map<string, Record<string, unknown>>();
   const id = '00000000-0000-4000-8000-000000000001';
+  const faq = new Map<string, Record<string, unknown>>();
   const db = {
+    supportFaq: {
+      findMany: vi.fn(() => Promise.resolve([...faq.values()])),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(faq.get(where.id) ?? null),
+      ),
+      create: vi.fn(({ data }: { data: Record<string, unknown> }) => {
+        const row = { id, ...data };
+        faq.set(id, row);
+        return Promise.resolve(row);
+      }),
+      update: vi.fn(({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const row = { ...faq.get(where.id), ...data };
+        faq.set(where.id, row);
+        return Promise.resolve(row);
+      }),
+      delete: vi.fn(({ where }: { where: { id: string } }) => {
+        faq.delete(where.id);
+        return Promise.resolve({});
+      }),
+    },
     supportTemplate: {
       findMany: vi.fn(() => Promise.resolve([...rows.values()])),
       findUnique: vi.fn(({ where }: { where: { id: string } }) =>
@@ -62,5 +83,29 @@ describe('support templates in the console (F36)', () => {
       instance.createTemplate({ ...body, code: 'empty', body: { ru: ' ', en: '' } }),
     ).rejects.toThrow();
     await expect(instance.deleteTemplate('not-a-uuid')).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('self-help questions in the console (F36)', () => {
+  const body = {
+    question: { ru: 'Нет сети?', en: 'No network?' },
+    answer: { ru: 'Обновите подписку', en: 'Refresh the subscription' },
+  };
+
+  it('creates, turns off, and deletes a question, auditing both sides', async () => {
+    const { instance, id } = service();
+    const created = await instance.createFaq(body);
+    expect(created.after).toMatchObject({ id, enabled: true, sortOrder: 100 });
+    const off = await instance.updateFaq(id, { ...body, enabled: false });
+    expect(off.before).toMatchObject({ enabled: true });
+    expect(off.after).toMatchObject({ enabled: false });
+    await expect(instance.faq()).resolves.toMatchObject({ items: [{ enabled: false }] });
+    await expect(instance.deleteFaq(id)).resolves.toMatchObject({ body: { deleted: true } });
+  });
+
+  it('refuses a question without text and an unknown id', async () => {
+    const { instance } = service();
+    await expect(instance.createFaq({ ...body, question: { ru: '', en: ' ' } })).rejects.toThrow();
+    await expect(instance.updateFaq('nope', body)).rejects.toMatchObject({ status: 404 });
   });
 });

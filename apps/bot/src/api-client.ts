@@ -295,6 +295,32 @@ export class ApiClient {
     );
   }
 
+  /** The self-help questions (F36) in `locale`. */
+  supportFaq(locale: string) {
+    return this.request<{ items: Array<{ id: string; question: string }> }>(
+      `/api/internal/v1/support/faq?locale=${encodeURIComponent(locale)}`,
+    );
+  }
+
+  /** One self-help answer; null when it was removed or turned off. */
+  async supportFaqAnswer(id: string, locale: string) {
+    try {
+      return await this.request<{ question: string; answer: string }>(
+        `/api/internal/v1/support/faq/${encodeURIComponent(id)}?locale=${encodeURIComponent(locale)}`,
+      );
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  /** «Моя ссылка подписки»: the customer's subscription link, or null. */
+  supportLink(telegramId: number) {
+    return this.request<{ url: string | null }>('/api/internal/v1/support/subscription-link', {
+      userId: telegramId,
+    });
+  }
+
   /** The customer rates their closed ticket (1–5); only the first rating counts. */
   rateSupport(telegramId: number, ticketId: string, rating: number) {
     return this.request<{ accepted: boolean; number: number | null }>(

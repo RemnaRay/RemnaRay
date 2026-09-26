@@ -1,18 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiClientError } from '../api-client.js';
-import { endSupport, showSupport } from './index.js';
+import { endSupport, showFaqAnswer, showSupport, writeToSupport } from './index.js';
 import type { RrContext } from '../types.js';
 
 function screen(
   supportForwardChatId: number | null,
   supportContact = '@manta_help',
   supportBot: { username: string } | null = null,
+  faq: Array<{ id: string; question: string }> = [],
 ) {
   const params: Record<string, unknown>[] = [];
   const shown: Array<{ text: string; buttons: string[]; urls: string[] }> = [];
   const ctx = {
     from: { id: 123 },
+    locale: 'ru',
     session: {},
     t: (key: string, values: Record<string, unknown> = {}) => {
       params.push({ key, ...values });
@@ -36,6 +38,10 @@ function screen(
   const api = {
     getConfig: () => ({ supportForwardChatId, supportContact, supportBot }),
     openSupport: vi.fn().mockResolvedValue(undefined),
+    supportFaq: vi.fn().mockResolvedValue({ items: faq }),
+    supportFaqAnswer: vi
+      .fn()
+      .mockResolvedValue({ question: 'Нет сети?', answer: 'Обновите <ссылку>' }),
     closeSupport: vi
       .fn()
       .mockResolvedValue({ ticket: { id: '00000000-0000-4000-8000-000000000001', number: 12 } }),
@@ -90,5 +96,35 @@ describe('bot support screen (FR-124)', () => {
     expect(api.openSupport).not.toHaveBeenCalled();
     expect(params).toContainEqual({ key: 'bot.screen.support.bot', username: 'manta_help_bot' });
     expect(shown[0]?.urls).toEqual(['https://t.me/manta_help_bot']);
+  });
+
+  it('offers the self-help questions first, and «Написать оператору» opens the conversation (F36)', async () => {
+    const id = '00000000-0000-4000-8000-00000000000a';
+    const { ctx, api, shown } = screen(-100500, '@manta_help', null, [
+      { id, question: 'Нет сети?' },
+    ]);
+    await showSupport(ctx, api as never);
+    expect(api.supportFaq).toHaveBeenCalledWith('ru');
+    expect(api.openSupport).not.toHaveBeenCalled();
+    expect(shown[0]?.text).toContain('bot.screen.support.intro');
+    expect(shown[0]?.buttons).toEqual([`faq:${id}`, 'support:write', 'home']);
+
+    await showFaqAnswer(ctx, api as never, id);
+    // The owner's text is shown as written, not as HTML.
+    expect(shown[1]?.text).toBe('❓ <b>Нет сети?</b>\n\nОбновите &lt;ссылку&gt;');
+    expect(shown[1]?.buttons).toEqual(['support:write', 'support']);
+
+    await writeToSupport(ctx, api as never);
+    expect(api.openSupport).toHaveBeenCalledWith(123);
+    expect(shown[2]?.buttons).toEqual(['support:end', 'home']);
+  });
+
+  it('shows the questions with the contact when there is no operators’ chat', async () => {
+    const id = '00000000-0000-4000-8000-00000000000a';
+    const { ctx, api, shown } = screen(null, '@manta_help', null, [{ id, question: 'Q' }]);
+    await showSupport(ctx, api as never);
+    expect(shown[0]?.buttons).toEqual([`faq:${id}`, 'home']);
+    await showFaqAnswer(ctx, api as never, id);
+    expect(shown[1]?.buttons).toEqual(['support']);
   });
 });

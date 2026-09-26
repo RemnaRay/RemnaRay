@@ -28,6 +28,33 @@ export class SupportAdminController {
     return this.support.stats(query);
   }
 
+  @Get('faq')
+  faq() {
+    return this.support.faq();
+  }
+
+  @Post('faq')
+  @HttpCode(201)
+  @Permissions('support.write')
+  @Audit('support.faq.create', 'support_faq')
+  createFaq(@Body() body: unknown) {
+    return this.support.createFaq(body);
+  }
+
+  @Put('faq/:id')
+  @Permissions('support.write')
+  @Audit('support.faq.update', 'support_faq', 'id')
+  updateFaq(@Param('id') id: string, @Body() body: unknown) {
+    return this.support.updateFaq(id, body);
+  }
+
+  @Delete('faq/:id')
+  @Permissions('support.write')
+  @Audit('support.faq.delete', 'support_faq', 'id')
+  deleteFaq(@Param('id') id: string) {
+    return this.support.deleteFaq(id);
+  }
+
   @Get('templates')
   templates() {
     return this.support.templates();

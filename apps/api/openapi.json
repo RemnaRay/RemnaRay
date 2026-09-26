@@ -2768,6 +2768,111 @@
         "summary": "The worker's minute sweep: remind of untaken tickets, close idle ones (F36)",
         "responses": { "200": { "description": "{ reminded, closed }" } }
       }
+    },
+    "/api/internal/v1/support/faq": {
+      "get": {
+        "operationId": "listSupportFaqForBot",
+        "summary": "The enabled self-help questions in a locale, for the bots (F36)",
+        "parameters": [{ "name": "locale", "in": "query", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "{ items: [{ id, question }] }" } }
+      }
+    },
+    "/api/internal/v1/support/faq/{id}": {
+      "get": {
+        "operationId": "getSupportFaqAnswerForBot",
+        "summary": "One self-help answer in a locale (F36)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          { "name": "locale", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{ question, answer }" },
+          "404": { "description": "NOT_FOUND: removed or turned off" }
+        }
+      }
+    },
+    "/api/internal/v1/support/subscription-link": {
+      "get": {
+        "operationId": "getSupportSubscriptionLink",
+        "summary": "«Моя ссылка подписки»: the acting customer's subscription link (F36)",
+        "responses": { "200": { "description": "{ url: string | null }" } }
+      }
+    },
+    "/api/admin/v1/support/faq": {
+      "get": {
+        "operationId": "listSupportFaq",
+        "summary": "Self-help questions shown before «Написать оператору» (F36; support.read)",
+        "responses": {
+          "200": {
+            "description": "{ items: [{ id, question: { ru, en }, answer: { ru, en }, sortOrder, enabled }] }"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSupportFaq",
+        "summary": "Add a question (support.write, audited)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["question", "answer"],
+                "properties": {
+                  "question": { "type": "object" },
+                  "answer": { "type": "object" },
+                  "sortOrder": { "type": "integer" },
+                  "enabled": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "The question" } }
+      }
+    },
+    "/api/admin/v1/support/faq/{id}": {
+      "put": {
+        "operationId": "updateSupportFaq",
+        "summary": "Edit or turn off a question (support.write, audited)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        },
+        "responses": {
+          "200": { "description": "The question" },
+          "404": { "description": "NOT_FOUND" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSupportFaq",
+        "summary": "Delete a question (support.write, audited)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "{ deleted: true }" },
+          "404": { "description": "NOT_FOUND" }
+        }
+      }
     }
   },
   "webhooks": {}

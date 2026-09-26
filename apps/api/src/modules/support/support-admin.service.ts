@@ -20,6 +20,13 @@ export const templateSchema = z.object({
   sortOrder: z.number().int().min(0).max(10_000).default(100),
 });
 
+export const faqSchema = z.object({
+  question: localizedText(128),
+  answer: localizedText(4000),
+  sortOrder: z.number().int().min(0).max(10_000).default(100),
+  enabled: z.boolean().default(true),
+});
+
 export const periodSchema = z.object({
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
@@ -121,6 +128,34 @@ export class SupportAdminService {
     };
   }
 
+  async faq() {
+    const rows = await this.infra.db.supportFaq.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    return { items: rows.map(faqView) };
+  }
+
+  async createFaq(body: unknown) {
+    const input = faqSchema.parse(body);
+    const created = await this.infra.db.supportFaq.create({ data: input });
+    return new Audited(null, faqView(created));
+  }
+
+  async updateFaq(id: string, body: unknown) {
+    const input = faqSchema.parse(body);
+    const before = await this.infra.db.supportFaq.findUnique({ where: { id: known(id) } });
+    if (!before) throw new NotFoundException('NOT_FOUND');
+    const updated = await this.infra.db.supportFaq.update({ where: { id }, data: input });
+    return new Audited(faqView(before), faqView(updated));
+  }
+
+  async deleteFaq(id: string) {
+    const before = await this.infra.db.supportFaq.findUnique({ where: { id: known(id) } });
+    if (!before) throw new NotFoundException('NOT_FOUND');
+    await this.infra.db.supportFaq.delete({ where: { id } });
+    return new Audited(faqView(before), null, { deleted: true });
+  }
+
   async templates() {
     const rows = await this.infra.db.supportTemplate.findMany({
       orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
@@ -172,6 +207,22 @@ function templateView(row: {
 export function known(id: string): string {
   if (!z.uuid().safeParse(id).success) throw new NotFoundException('NOT_FOUND');
   return id;
+}
+
+function faqView(row: {
+  id: string;
+  question: unknown;
+  answer: unknown;
+  sortOrder: number;
+  enabled: boolean;
+}) {
+  return {
+    id: row.id,
+    question: row.question,
+    answer: row.answer,
+    sortOrder: row.sortOrder,
+    enabled: row.enabled,
+  };
 }
 
 function duplicateCode(error: unknown): unknown {

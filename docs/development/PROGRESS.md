@@ -625,7 +625,15 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      link to the customer, alert), `parseAction` tests, `m4.support` on
      PostgreSQL (credit within the limit → balance, adjustment and audit
      rows; over the limit and a non-admin → nothing).
-  6. Self-help FAQ.
+  6. **Done — self-help FAQ.** `support_faq` edited in the console
+     (`api/admin/v1/support/faq`, `support.write`, audited); internal
+     `GET support/faq?locale`, `support/faq/:id`, `support/subscription-link`.
+     The shop bot's «Поддержка» shows the questions and «Написать оператору»
+     (`support:write` opens the conversation; with no questions it opens at
+     once, as in F35); the support bot's `/start` shows the questions, «Моя
+     ссылка подписки» and «Написать оператору». Answers are HTML-escaped
+     plain text. Evidence: API faq/link tests, console FAQ tests, shop screen
+     and support-bot tests.
   7. Console section.
 
 ### Next

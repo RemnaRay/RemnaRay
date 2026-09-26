@@ -81,6 +81,43 @@ export class SupportService {
     @Optional() private readonly notify?: NotifyService,
   ) {}
 
+  /** The self-help questions (F36), enabled and in order, in `locale`. */
+  async faq(locale: string): Promise<{ items: Array<{ id: string; question: string }> }> {
+    const fallback = await this.operatorLocale();
+    const rows = await this.infra.db.supportFaq.findMany({
+      where: { enabled: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    return {
+      items: rows.flatMap((row) => {
+        const question = pick(row.question, locale, fallback);
+        return question ? [{ id: row.id, question }] : [];
+      }),
+    };
+  }
+
+  /** One self-help answer in `locale`; null when it is gone or turned off. */
+  async faqAnswer(
+    id: string,
+    locale: string,
+  ): Promise<{ question: string; answer: string } | null> {
+    if (!/^[0-9a-f-]{36}$/u.test(id)) return null;
+    const row = await this.infra.db.supportFaq.findFirst({ where: { id, enabled: true } });
+    if (!row) return null;
+    const fallback = await this.operatorLocale();
+    const question = pick(row.question, locale, fallback);
+    const answer = pick(row.answer, locale, fallback);
+    return question && answer ? { question, answer } : null;
+  }
+
+  /** «Моя ссылка подписки» in the support bot: the customer's own link, if any. */
+  async subscriptionLink(telegramId: string): Promise<{ url: string | null }> {
+    const customer = await this.customer(telegramId);
+    if (!customer) return { url: null };
+    const panel = await this.infra.db.panelUser.findUnique({ where: { userId: customer.id } });
+    return { url: panel?.subscriptionUrl ?? null };
+  }
+
   /** «Написать оператору» in the shop bot: what the customer writes goes to the operators. */
   async open(telegramId: string): Promise<void> {
     await this.destination('shop');

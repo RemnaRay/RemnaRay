@@ -22,6 +22,7 @@ import {
 import { confirmPlanChange, payPlanChange, showPlanChange } from './plan-change.js';
 import { backButton, formatDate, formatMinor, show } from './common.js';
 import { RATING_DATA, rateTicket, ratingKeyboard } from '../support-rating.js';
+import { FAQ_DATA, faqAnswer, faqKeyboard } from '../support-faq.js';
 
 export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
   bot.command('start', (ctx) => {
@@ -105,6 +106,8 @@ export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
     setLanguage(ctx, api, capture(ctx.match, 1) as 'ru' | 'en'),
   );
   bot.callbackQuery('support', (ctx) => showSupport(ctx, api));
+  bot.callbackQuery('support:write', (ctx) => writeToSupport(ctx, api));
+  bot.callbackQuery(FAQ_DATA, (ctx) => showFaqAnswer(ctx, api, capture(ctx.match, 1)));
   bot.callbackQuery('support:end', (ctx) => endSupport(ctx, api));
   bot.callbackQuery(RATING_DATA, rateTicket(api));
   bot.callbackQuery('notif:toggle', (ctx) => toggleNotifications(ctx, api));
@@ -311,6 +314,8 @@ async function adminBroadcastStatus(ctx: RrContext, api: ApiClient): Promise<voi
  * a conversation with the operators: everything the customer writes goes to
  * them until «Завершить» (owner decision F35; section 12's one-message
  * `supportMessage` dialog made a customer press «Поддержка» for every reply).
+ * With self-help questions (F36) the screen offers them first and
+ * «Написать оператору» opens the conversation; without, it opens at once.
  */
 export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void> {
   const config = await api.getConfig();
@@ -329,6 +334,30 @@ export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void>
     );
     return;
   }
+  const faq = await faqKeyboard(api, ctx.locale);
+  const operators = config.supportForwardChatId !== null;
+  if (operators && faq.count === 0) {
+    await writeToSupport(ctx, api);
+    return;
+  }
+  if (operators) faq.keyboard.text(ctx.t('bot.btn.supportWrite'), 'support:write').row();
+  await show(
+    ctx,
+    faq.count > 0
+      ? `${ctx.t('bot.screen.support.intro')}${contact}`
+      : config.supportContact
+        ? ctx.t('bot.screen.support.details', { contact: config.supportContact })
+        : ctx.t('bot.screen.support.none'),
+    faq.keyboard.text(ctx.t('bot.btn.back'), 'home'),
+  );
+}
+
+/** «Написать оператору»: the conversation with the operators opens (F35). */
+export async function writeToSupport(ctx: RrContext, api: ApiClient): Promise<void> {
+  const config = await api.getConfig();
+  const contact = config.supportContact
+    ? `\n\n${ctx.t('bot.screen.support.details', { contact: config.supportContact })}`
+    : '';
   if (config.supportForwardChatId !== null && ctx.from) {
     try {
       await api.openSupport(ctx.from.id);
@@ -352,6 +381,17 @@ export async function showSupport(ctx: RrContext, api: ApiClient): Promise<void>
       : ctx.t('bot.screen.support.none'),
     backButton(ctx),
   );
+}
+
+/** A self-help answer (F36), with «Написать оператору» and «Назад». */
+export async function showFaqAnswer(ctx: RrContext, api: ApiClient, id: string): Promise<void> {
+  const config = await api.getConfig();
+  const text = await faqAnswer(api, id, ctx.locale);
+  const keyboard = new InlineKeyboard();
+  if (config.supportForwardChatId !== null && !config.supportBot)
+    keyboard.text(ctx.t('bot.btn.supportWrite'), 'support:write').row();
+  keyboard.text(ctx.t('bot.btn.back'), 'support');
+  await show(ctx, text ?? ctx.t('bot.screen.support.faqGone'), keyboard);
 }
 
 /** «Завершить»: the customer closes their ticket; their messages stay with the bot again. */
