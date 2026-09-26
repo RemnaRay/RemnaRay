@@ -46,18 +46,33 @@ export async function configureSupportBot(
   actor?: { id?: string },
 ): Promise<{ username: string | null }> {
   if (token === '') {
-    await settings.set({ bot: { support_token: '', support_username: '' } }, actor);
+    // The webhook secrets go with the bot: its address stops answering.
+    await settings.set(
+      {
+        bot: {
+          support_token: '',
+          support_username: '',
+          support_webhook_secret_path: '',
+          support_webhook_secret_token: '',
+        },
+      },
+      actor,
+    );
     return { username: null };
   }
   const me = await telegramGetMe(token);
   if (!me) throw new SupportBotRefused('invalid_token');
   const shopToken = String(await settings.get('bot.token'));
   if (shopToken.split(':')[0] === String(me.id)) throw new SupportBotRefused('same_as_shop_bot');
+  // The same bot keeps its webhook secrets; another bot gets new ones, so
+  // what Telegram still sends for the previous bot is refused.
+  const previous = String(await settings.get('bot.support_token'));
+  const sameBot = previous.split(':')[0] === String(me.id);
   const secretPath =
-    String(await settings.get('bot.support_webhook_secret_path')) ||
+    (sameBot && String(await settings.get('bot.support_webhook_secret_path'))) ||
     randomBytes(24).toString('base64url');
   const secretToken =
-    String(await settings.get('bot.support_webhook_secret_token')) ||
+    (sameBot && String(await settings.get('bot.support_webhook_secret_token'))) ||
     randomBytes(24).toString('base64url');
   await settings.set(
     {

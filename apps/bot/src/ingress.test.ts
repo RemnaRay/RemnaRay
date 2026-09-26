@@ -1,7 +1,7 @@
 import { Bot, BotError } from 'grammy';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BotIngress, SUPPORT_CHANNEL } from './ingress.js';
+import { BotIngress, supportChannel } from './ingress.js';
 import type { RrContext } from './types.js';
 
 const botInfo = {
@@ -100,7 +100,7 @@ describe('BotIngress for the support bot (F35)', () => {
       xack: vi.fn().mockResolvedValue(1),
       eval: vi.fn().mockResolvedValue(1),
     };
-    const ingress = new BotIngress(bot, redis as never, 'support-test', SUPPORT_CHANNEL);
+    const ingress = new BotIngress(bot, redis as never, 'support-test', supportChannel('777'));
 
     await ingress.start({
       mode: 'webhook',
@@ -114,7 +114,7 @@ describe('BotIngress for the support bot (F35)', () => {
 
     expect(redis.xgroup).toHaveBeenCalledWith(
       'CREATE',
-      'tg:support-updates',
+      'tg:support-updates:777',
       'support-bot',
       '0-0',
       'MKSTREAM',
@@ -122,11 +122,11 @@ describe('BotIngress for the support bot (F35)', () => {
     expect(redis.eval).toHaveBeenCalledWith(
       expect.any(String),
       2,
-      'tg:support-updates',
-      'tg:support-received:9',
+      'tg:support-updates:777',
+      'tg:support-received:777:9',
       JSON.stringify({ update_id: 9 }),
     );
-    expect(redis.xack).toHaveBeenCalledWith('tg:support-updates', 'support-bot', '1-0');
+    expect(redis.xack).toHaveBeenCalledWith('tg:support-updates:777', 'support-bot', '1-0');
     expect(telegram).toContainEqual({
       method: 'setWebhook',
       payload: expect.objectContaining({

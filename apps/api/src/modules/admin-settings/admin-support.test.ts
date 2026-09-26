@@ -23,11 +23,13 @@ function harness() {
   vi.stubGlobal('fetch', (url: string) => {
     const token = decodeURIComponent(url.split('/bot')[1]?.split('/')[0] ?? '');
     const bot =
-      token === '777:help-token'
+      token === '777:help-token' || token === '777:new-token'
         ? { id: 777, username: 'manta_help_bot' }
-        : token === '123:shop-token'
-          ? { id: 123, username: 'manta_bot' }
-          : null;
+        : token === '888:other-token'
+          ? { id: 888, username: 'other_help_bot' }
+          : token === '123:shop-token'
+            ? { id: 123, username: 'manta_bot' }
+            : null;
     return Promise.resolve(
       Response.json(bot ? { ok: true, result: bot } : { ok: false, error_code: 401 }),
     );
@@ -73,5 +75,31 @@ describe('the console’s «Поддержка» (FR-124, F35)', () => {
     await expect(
       controller.updateSupport({ token: '123:shop-token' }, request),
     ).rejects.toMatchObject({ response: { error: { code: 'SUPPORT_BOT_SAME' } } });
+  });
+
+  it('keeps a bot’s webhook secrets for the same bot and replaces them otherwise', async () => {
+    const { controller, values, request } = harness();
+    const secrets = () => [
+      values.get('bot.support_webhook_secret_path'),
+      values.get('bot.support_webhook_secret_token'),
+    ];
+
+    await controller.updateSupport({ token: '777:help-token' }, request);
+    const first = secrets();
+    expect(first.every((value) => typeof value === 'string' && value.length > 0)).toBe(true);
+
+    // A revoked and reissued token of the same bot keeps its address.
+    await controller.updateSupport({ token: '777:new-token' }, request);
+    expect(secrets()).toEqual(first);
+
+    // Another bot gets a new address: the first bot's updates are refused.
+    await controller.updateSupport({ token: '888:other-token' }, request);
+    const other = secrets();
+    expect(other[0]).not.toBe(first[0]);
+    expect(other[1]).not.toBe(first[1]);
+
+    // Turned off, it has none.
+    await controller.updateSupport({ token: '' }, request);
+    expect(secrets()).toEqual(['', '']);
   });
 });

@@ -542,7 +542,16 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
   operators' answers back as they are; `SUPPORT_MOVED` covers a message sent
   through the other bot. Evidence: API webhook/config/support/setup/console
   tests, bot support-bot (`handleUpdate`), ingress channel, relay, screen
-  and inbox tests, web console tab test.
+  and inbox tests, web console tab test. Review follow-up (independent
+  read-only review of `f519900..5db3cf5`: no critical or high defect; two
+  confirmed and repaired): a support bot that failed to start (revoked
+  token) made the timer redo the shop bot's setup every 2 s, piling up
+  runs — now only the support bot is retried, with a backoff up to 5 min,
+  and the timer queues nothing while a run waits; turning the support bot
+  off left its webhook secrets valid and its stream readable by the next
+  bot — now clearing or changing the bot drops the secrets, each support bot
+  has its own stream `tg:support-updates:<bot id>` and a replaced bot's
+  stream is deleted.
 
 ### Next
 
@@ -554,9 +563,20 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
    the console zone, the console zone raised to about 120 r/m (burst 120),
    the rest as section 21.3; the deviation is recorded. F29 — move the site
    login to Telegram's OIDC now. Order: F9, F17, F29.
-3. Redeploy and second walk — done (2026-09-26 evening); its findings are
-   F30–F35 above. Repair order: F34, F30, F31, F32, F33, F35.
-4. Then redeploy, re-check those on the stand, and the M5-004 gates.
+3. Redeploy and second walk — done (2026-09-26 evening); its findings
+   F30–F35 are repaired (F34 `7fb605e`, F31 `a463046`, F32 `748415d`, F33
+   `8030a06`, F30 `ba5b014`, F35a `fc600e1`, F35b `03da758`), plus the wizard's
+   sign-in hint (`168db68`) and the batch's changesets (`5db3cf5`). Checks:
+   format, lint, typecheck, 30 turbo test tasks, root 55, build, integration
+   25/25, E2E 38 passed.
+4. Next: push, rebuild the `:dev` images, `git pull` and `./scripts/rr up` on
+   the stand, then `./scripts/rr proxy:reload` (the F17 limits); in BotFather
+   the Trusted Origin without a trailing slash; re-check on the stand: the
+   site sign-in (F34 — the first live login after the fix), «Проверить
+   оплату» (F30), the dashboard (F31), support in the shop bot and, if wanted,
+   a support bot (F35: its token in «Настройки» → «Поддержка», the support
+   bot an administrator of the operators' forum with «Управление темами»).
+   Then the M5-004 gates.
 
 F17 inventory (for the discussion): nginx zones per IP — `rr_general` 20 r/s
 (burst 50, site pages), `rr_api` 10 r/s (burst 30, `/api/`), `rr_auth` 5 r/m

@@ -33,8 +33,12 @@ shop bot's own token; «Отключить бот поддержки» turns it 
 The bot process runs it beside the shop bot in the same delivery mode
 (`bot.mode`): with a webhook it has its own secret path under `/tg/webhook/` and
 its own secret token (`bot.support_webhook_secret_*`), and its updates wait in
-the Valkey stream `tg:support-updates`. Replacing or removing its token removes
-the old bot's webhook.
+the Valkey stream `tg:support-updates:<bot id>`. Removing its token, or giving
+another bot's, removes the old bot's webhook, drops its secrets and deletes its
+stream, so nothing the old bot was sent reaches the new one; a reissued token
+of the same bot keeps them. A support bot that cannot start (a revoked token)
+is retried with a growing pause, up to five minutes, while the shop bot keeps
+running.
 
 ## The operators' chat
 

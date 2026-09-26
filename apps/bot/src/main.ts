@@ -4,7 +4,7 @@ import Redis from 'ioredis';
 import { metricsContentType, metricsText } from '@remnaray/metrics';
 import { ApiClient } from './api-client.js';
 import { createBot, registerCommands, type BotRuntime } from './bot.js';
-import { BotIngress, SUPPORT_CHANNEL } from './ingress.js';
+import { BotIngress, supportChannel } from './ingress.js';
 import { createSupportBot, type SupportContext, type SupportRuntime } from './support-bot.js';
 import type { BotConfig } from './types.js';
 
@@ -19,6 +19,12 @@ let support:
   | { token: string; runtime: SupportRuntime; ingress: BotIngress<SupportContext>; redis: Redis }
   | undefined;
 let supportReady = true;
+/** Backoff of the support bot's retries: a revoked token must not hammer Telegram. */
+let supportFailures = 0;
+let supportRetryAt = 0;
+let lastConfig: BotConfig | undefined;
+/** Runs queued on `configuring`; the timer adds none while one is waiting. */
+let queued = 0;
 let stopping = false;
 let configuring = Promise.resolve();
 let ready = false;
@@ -43,35 +49,57 @@ const server = createServer((request, response) => {
 });
 server.listen(Number(process.env.PORT ?? 3002), '0.0.0.0');
 
-function configure(): Promise<void> {
+/** Queues `work` after the running configuration, counting it in `queued`. */
+function enqueue(work: () => Promise<void>): Promise<void> {
+  queued += 1;
   configuring = configuring
-    .then(async () => {
-      if (stopping) return;
-      const config = await api.getConfig({ fresh: true });
-      if (config.token !== activeToken) {
-        await ingress?.stop();
-        runtime?.redis.disconnect();
-        ingress = undefined;
-        runtime = undefined;
-        activeToken = undefined;
-      }
-      if (!config.token) {
-        ready = false;
-        return;
-      }
-      runtime ??= createBot({ token: config.token, api });
-      ingress ??= new BotIngress(runtime.bot, runtime.redis);
-      await registerCommands(runtime.bot, config);
-      await ingress.start(config);
-      activeToken = config.token;
-      ready = true;
-      await configureSupport(config, runtime);
-    })
-    .catch(() => {
-      ready = false;
-      console.error('Bot configuration unavailable; retrying');
+    .then(work)
+    .catch(() => undefined)
+    .finally(() => {
+      queued -= 1;
     });
   return configuring;
+}
+
+function configure(): Promise<void> {
+  return enqueue(() =>
+    Promise.resolve()
+      .then(async () => {
+        if (stopping) return;
+        const config = await api.getConfig({ fresh: true });
+        if (config.token !== activeToken) {
+          await ingress?.stop();
+          runtime?.redis.disconnect();
+          ingress = undefined;
+          runtime = undefined;
+          activeToken = undefined;
+        }
+        if (!config.token) {
+          ready = false;
+          return;
+        }
+        runtime ??= createBot({ token: config.token, api });
+        ingress ??= new BotIngress(runtime.bot, runtime.redis);
+        await registerCommands(runtime.bot, config);
+        await ingress.start(config);
+        activeToken = config.token;
+        ready = true;
+        lastConfig = config;
+        await configureSupport(config, runtime);
+      })
+      .catch(() => {
+        ready = false;
+        console.error('Bot configuration unavailable; retrying');
+      }),
+  );
+}
+
+/** Retries only the support bot: the shop bot is not set up again for it. */
+function retrySupport(): Promise<void> {
+  return enqueue(async () => {
+    if (stopping || !ready || !runtime || !lastConfig) return;
+    await configureSupport(lastConfig, runtime);
+  });
 }
 /**
  * Starts, replaces or stops the support bot to match the settings. A bot that
@@ -88,6 +116,8 @@ async function configureSupport(config: BotConfig, shop: BotRuntime): Promise<vo
       await old.runtime.bot.api.deleteWebhook({ drop_pending_updates: false }).catch(() => {
         console.error('Support bot webhook not removed');
       });
+      // What it had not handled is for a bot that is gone.
+      await old.redis.del(supportChannel(botIdOf(old.token)).stream).catch(() => 0);
       old.redis.disconnect();
     }
     if (!wanted) {
@@ -101,7 +131,12 @@ async function configureSupport(config: BotConfig, shop: BotRuntime): Promise<vo
         token: wanted.token,
         runtime,
         redis,
-        ingress: new BotIngress(runtime.bot, redis, `support-${randomUUID()}`, SUPPORT_CHANNEL),
+        ingress: new BotIngress(
+          runtime.bot,
+          redis,
+          `support-${randomUUID()}`,
+          supportChannel(botIdOf(wanted.token)),
+        ),
       };
     }
     await support.ingress.start({
@@ -110,10 +145,18 @@ async function configureSupport(config: BotConfig, shop: BotRuntime): Promise<vo
       secretToken: wanted.secretToken,
     });
     supportReady = true;
+    supportFailures = 0;
   } catch {
     supportReady = false;
+    supportFailures += 1;
+    // 2 s, 4 s, 8 s … up to 5 minutes between attempts.
+    supportRetryAt = Date.now() + Math.min(300_000, 1000 * 2 ** supportFailures);
     console.error('Support bot configuration unavailable; retrying');
   }
+}
+
+function botIdOf(token: string): string {
+  return token.split(':')[0] ?? '';
 }
 
 subscriber.on('error', () => {
@@ -134,7 +177,9 @@ void subscriber
 void configure();
 // Reconcile after missed Pub/Sub messages or an initial API outage.
 const timer = setInterval(() => {
-  if (!ready || !supportReady) void configure();
+  if (queued > 0) return;
+  if (!ready) void configure();
+  else if (!supportReady && Date.now() >= supportRetryAt) void retrySupport();
 }, 2000);
 
 async function shutdown() {

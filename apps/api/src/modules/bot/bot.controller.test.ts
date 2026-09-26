@@ -38,6 +38,7 @@ describe('bot ingress boundary', () => {
     const settings: Record<string, string> = {
       'bot.webhook_secret_path': 'shop-path',
       'bot.webhook_secret_token': 'shop-header',
+      'bot.support_token': '777:support',
       'bot.support_webhook_secret_path': 'support-path',
       'bot.support_webhook_secret_token': 'support-header',
     };
@@ -57,8 +58,8 @@ describe('bot ingress boundary', () => {
       { 'x-telegram-bot-api-secret-token': 'support-header' },
       { update_id: 8, message: { text: 'help' } },
     );
-    expect(calls[0]).toContain('tg:support-updates');
-    expect(calls[0]).toContain('tg:support-received:8');
+    expect(calls[0]).toContain('tg:support-updates:777');
+    expect(calls[0]).toContain('tg:support-received:777:8');
     // One bot's path with the other's secret header is nobody's.
     await expect(
       controller.receive(
@@ -67,10 +68,19 @@ describe('bot ingress boundary', () => {
         { update_id: 9 },
       ),
     ).rejects.toMatchObject({ status: 403 });
+    // Turned off: its address answers nobody, even with its old secrets.
+    settings['bot.support_token'] = '';
+    await expect(
+      controller.receive(
+        'support-path',
+        { 'x-telegram-bot-api-secret-token': 'support-header' },
+        { update_id: 10 },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
     settings['bot.support_webhook_secret_path'] = '';
     settings['bot.support_webhook_secret_token'] = '';
     await expect(
-      controller.receive('', { 'x-telegram-bot-api-secret-token': '' }, { update_id: 10 }),
+      controller.receive('', { 'x-telegram-bot-api-secret-token': '' }, { update_id: 11 }),
     ).rejects.toMatchObject({ status: 403 });
     expect(calls).toHaveLength(1);
   });

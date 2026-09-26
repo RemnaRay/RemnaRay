@@ -9,9 +9,6 @@ import { ALLOWED_UPDATES, type BotConfig, type RrContext } from './types.js';
 import { botUpdatesTotal } from '@remnaray/metrics';
 
 export const TELEGRAM_UPDATES_STREAM = 'tg:updates';
-/** The support bot's updates (F35), beside the shop bot's. */
-export const SUPPORT_UPDATES_STREAM = 'tg:support-updates';
-
 /** Where one bot's updates are kept: the shop bot's by default. */
 export type IngressChannel = {
   stream: string;
@@ -28,12 +25,18 @@ export const SHOP_CHANNEL: IngressChannel = {
   allowedUpdates: ALLOWED_UPDATES,
 };
 
-export const SUPPORT_CHANNEL: IngressChannel = {
-  stream: SUPPORT_UPDATES_STREAM,
-  group: 'support-bot',
-  received: 'tg:support-received:',
-  allowedUpdates: ['message', 'callback_query', 'my_chat_member'],
-};
+/**
+ * A support bot's updates (F35), beside the shop bot's: named after the bot,
+ * so the next bot never reads what a replaced one left behind.
+ */
+export function supportChannel(botId: string): IngressChannel {
+  return {
+    stream: `tg:support-updates:${botId}`,
+    group: 'support-bot',
+    received: `tg:support-received:${botId}:`,
+    allowedUpdates: ['message', 'callback_query', 'my_chat_member'],
+  };
+}
 
 // Both transports persist before acknowledging delivery. Telegram may redeliver
 // an update during a mode transition, so append and dedup must be atomic.
