@@ -220,13 +220,13 @@ export class SupportService {
     }
     const cardAction = CARD_ACTIONS[action];
     if (cardAction) {
-      // A double tap is one action: the same operator, ticket and button
-      // within ten seconds runs once.
+      // A double tap, or two operators pressing the same button, is one
+      // action: a card action runs once a minute per ticket.
       const fresh = await this.infra.redis.set(
-        `rr:support:act:${ticket.id}:${action}:${String(input.from.id)}`,
+        `rr:support:act:${ticket.id}:${action}`,
         '1',
         'EX',
-        10,
+        60,
         'NX',
       );
       if (fresh !== 'OK') return { text: t('bot.support.act.duplicate') };

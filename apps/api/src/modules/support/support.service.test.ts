@@ -909,7 +909,7 @@ describe('card actions from the operators’ chat (F36)', () => {
     vi.unstubAllEnvs();
   });
 
-  it('runs a card button once per double tap and leaves a line in the ticket', async () => {
+  it('runs a card button once a minute per ticket and leaves a line in the ticket', async () => {
     const { service, memory, press, actions, calls } = harness({ forum: true });
     await service.forward('42', 5);
     const id = memory.tickets[0]?.id ?? '';
@@ -925,6 +925,15 @@ describe('card actions from the operators’ chat (F36)', () => {
       text: 'Olga extended until 10/08/2026, 12:00 AM',
     });
     await expect(press('ext7', id)).resolves.toEqual({ text: 'Already running' });
+    // Nor does a second operator's press within the minute extend again.
+    await expect(
+      service.callback({
+        chatId: -100500,
+        from: { id: 8, name: 'Pavel' },
+        data: `st:ext7:${id}`,
+        via: 'shop',
+      }),
+    ).resolves.toEqual({ text: 'Already running' });
     expect(actions.run).toHaveBeenCalledTimes(1);
   });
 

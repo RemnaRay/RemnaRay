@@ -61,8 +61,8 @@ only for a **console administrator** whose Telegram ID is set in
 credit up to `operator.max_credit_minor` a day and never debit). They run the
 console's own code, write the same audit row (reason `support #N[: reason]`,
 user agent `telegram:support`) and leave a line in the topic; the link goes to
-the customer from the support bot. A double tap on a button within ten seconds
-runs once, and a command message runs once even if Telegram delivers it twice.
+the customer from the support bot. A card button runs once a minute per ticket (a double tap, or two
+administrators pressing it), and a command message runs once even if Telegram delivers it twice.
 
 **Reminders and auto-close.** The worker sweeps the tickets every minute
 (`maintenance.support-sweep`). A ticket nobody took for
