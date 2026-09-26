@@ -969,6 +969,19 @@ describe('card actions from the operators’ chat (F36)', () => {
     });
   });
 
+  it('shows a name in a button’s popup as written, not as HTML', async () => {
+    const { service, memory } = harness({ forum: true });
+    await service.forward('42', 5);
+    await expect(
+      service.callback({
+        chatId: -100500,
+        from: { id: 9, name: "O'Brien <b>" },
+        data: `st:ext7:${memory.tickets[0]?.id ?? ''}`,
+        via: 'shop',
+      }),
+    ).resolves.toEqual({ text: "O'Brien <b> extended until 10/08/2026, 12:00 AM" });
+  });
+
   it('shows a refusal as an alert', async () => {
     const { service, memory, press, actions } = harness();
     await service.forward('42', 5);

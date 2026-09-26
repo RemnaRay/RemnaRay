@@ -202,8 +202,17 @@ export class SupportService {
     return { handled: true };
   }
 
-  /** A press on a ticket card's button (`st:<action>:<ticket id>`). */
+  /**
+   * A press on a ticket card's button (`st:<action>:<ticket id>`). The answer
+   * is a popup, which Telegram shows as plain text: the HTML escaping of the
+   * message catalog is undone for it.
+   */
   async callback(input: CallbackInput): Promise<{ text: string; alert?: boolean }> {
+    const answer = await this.press(input);
+    return { ...answer, text: plainText(answer.text) };
+  }
+
+  private async press(input: CallbackInput): Promise<{ text: string; alert?: boolean }> {
     const t = await this.operatorTranslate();
     const match =
       /^st:(take|close|silent|card|ext7|ext30|reset|link):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u.exec(
@@ -1236,6 +1245,17 @@ function pick(body: unknown, language: string, fallback: string): string | null 
     if (typeof text === 'string' && text.trim()) return text;
   }
   return null;
+}
+
+/** `O&#39;Brien` → `O'Brien`: the entities `formatMessage` writes, for plain text. */
+function plainText(html: string): string {
+  return html
+    .replace(/<[^>]+>/gu, '')
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;/gu, "'")
+    .replace(/&amp;/gu, '&');
 }
 
 function openKey(telegramId: string): string {
