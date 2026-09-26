@@ -610,7 +610,21 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
      last and the customer stayed silent (`closed_by=auto`, the customer
      asked for a rating). Evidence: service sweep tests, worker cron and
      routing tests, `m4.support` sweep SQL on PostgreSQL.
-  5. Actions from the card.
+  5. **Done — actions from the card.** Buttons `st:ext7|ext30|reset|link` on a
+     live ticket's card and `/extend <days> [reason]`, `/credit <amount>
+[reason]` in the topic. `SupportActions` requires an active console
+     admin with that `admins.telegram_id`, checks the section 14.2 matrix
+     (`users.mutate`, `users.read`, `users.balance.credit`) and calls
+     `AdminUsersService.extend|resetTraffic|adjustBalance` (the operator's
+     daily limit, `SELECT … FOR UPDATE` on the account, integer kopecks), then
+     writes the console's audit row (`support #N`, `telegram:support`).
+     Idempotency: a button per operator/ticket/action once per 10 s, a
+     command once per Telegram message (Valkey `SET NX`). Evidence: actions
+     unit tests (not an admin, audit row, limit → refusal, missing
+     subscription/panel), service tests (double tap, redelivered /credit,
+     link to the customer, alert), `parseAction` tests, `m4.support` on
+     PostgreSQL (credit within the limit → balance, adjustment and audit
+     rows; over the limit and a non-admin → nothing).
   6. Self-help FAQ.
   7. Console section.
 

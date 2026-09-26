@@ -8,6 +8,7 @@ import { NotifyService } from '../notify/notify.service';
 import { I18nService } from '../public/i18n.service';
 import { SettingsService } from '../settings/settings.service';
 import { loadCardData } from './card-data';
+import { SupportActions, type ActionOutcome, type SupportAction } from './support-actions';
 import { notModified, TelegramCallError, telegramCall } from './telegram';
 import { cardKeyboard, cardText, formats, topicName, type Translate } from './ticket-card';
 import { TicketsRepository, type Ticket } from './tickets.repository';
@@ -76,6 +77,7 @@ export class SupportService {
     private readonly settings: SettingsService,
     private readonly tickets: TicketsRepository,
     private readonly i18n: I18nService,
+    private readonly actions: SupportActions,
     @Optional() private readonly notify?: NotifyService,
   ) {}
 
@@ -166,7 +168,9 @@ export class SupportService {
   /** A press on a ticket card's button (`st:<action>:<ticket id>`). */
   async callback(input: CallbackInput): Promise<{ text: string; alert?: boolean }> {
     const t = await this.operatorTranslate();
-    const match = /^st:(take|close|silent|card):([0-9a-f-]{36})$/u.exec(input.data);
+    const match = /^st:(take|close|silent|card|ext7|ext30|reset|link):([0-9a-f-]{36})$/u.exec(
+      input.data,
+    );
     const destination = await this.destination(input.via);
     if (!match || input.chatId !== destination.chatId)
       return { text: t('bot.support.op.denied'), alert: true };
@@ -176,6 +180,20 @@ export class SupportService {
     if (action === 'card') {
       await this.refreshCard(ticket);
       return { text: t('bot.support.op.refreshed') };
+    }
+    const cardAction = CARD_ACTIONS[action];
+    if (cardAction) {
+      // A double tap is one action: the same operator, ticket and button
+      // within ten seconds runs once.
+      const fresh = await this.infra.redis.set(
+        `rr:support:act:${ticket.id}:${action}:${String(input.from.id)}`,
+        '1',
+        'EX',
+        10,
+        'NX',
+      );
+      if (fresh !== 'OK') return { text: t('bot.support.act.duplicate') };
+      return this.act(ticket, cardAction, input.from, destination);
     }
     if (action === 'take') {
       if (ticket.status === 'closed')
@@ -369,6 +387,35 @@ export class SupportService {
         await this.reply(input, destination, t('bot.support.op.noLiveTicket'));
       return;
     }
+    if (command.name === 'extend' || command.name === 'credit') {
+      const action = parseAction(command.name, command.args);
+      if (!action) {
+        await this.reply(input, destination, t(`bot.support.act.usage.${command.name}`));
+        return;
+      }
+      const target =
+        ticket ??
+        (await this.infra.db.supportTicket.findFirst({
+          where: { userId: customer.id },
+          orderBy: { createdAt: 'desc' },
+        }));
+      if (!target) {
+        await this.reply(input, destination, t('bot.support.op.noTicket'));
+        return;
+      }
+      // Telegram may deliver an update twice; the command message runs once.
+      const fresh = await this.infra.redis.set(
+        `rr:support:cmd:${String(input.chatId)}:${String(input.messageId)}`,
+        '1',
+        'EX',
+        7 * 24 * 3600,
+        'NX',
+      );
+      if (fresh !== 'OK') return;
+      const result = await this.act(target, action, input.from, destination);
+      if (result.alert) await this.reply(input, destination, result.text);
+      return;
+    }
     if (command.name === 't') {
       await this.template(command.args, customer, input, destination);
       return;
@@ -385,6 +432,59 @@ export class SupportService {
       return;
     }
     await this.reply(input, destination, t('bot.support.op.unknownCommand'));
+  }
+
+  /**
+   * Runs a card action through `SupportActions` (console admins only) and
+   * leaves a line about it in the ticket; the link goes to the customer.
+   */
+  private async act(
+    ticket: Ticket,
+    action: SupportAction,
+    operator: { id: number; name: string },
+    destination: Destination,
+  ): Promise<{ text: string; alert?: boolean }> {
+    const t = await this.operatorTranslate();
+    const outcome = await this.actions.run(
+      action,
+      ticket.userId,
+      operator.id,
+      Number(ticket.number),
+    );
+    if (!outcome.ok) return { text: t(`bot.support.act.${outcome.reason}`), alert: true };
+    const customer = await this.infra.db.user.findUnique({ where: { id: ticket.userId } });
+    if (outcome.kind === 'link' && customer) {
+      const customerT = await this.customerTranslate(customer.language);
+      await telegramCall(destination.token, 'sendMessage', {
+        chat_id: Number(customer.telegramId),
+        text: customerT('bot.support.ticket.link', { url: outcome.url }),
+        parse_mode: 'HTML',
+      });
+    }
+    const line = await this.actionLine(outcome, operator.name);
+    await this.bestEffort(async () => {
+      await this.postSystem(ticket, destination, line);
+      await this.refreshCard(ticket);
+    });
+    return { text: line };
+  }
+
+  private async actionLine(outcome: ActionOutcome & { ok: true }, name: string): Promise<string> {
+    const t = await this.operatorTranslate();
+    const f = formats(
+      await this.operatorLocale(),
+      String(await this.settings.get('locale.timezone')),
+    );
+    switch (outcome.kind) {
+      case 'extend':
+        return t('bot.support.act.done.extend', { name, until: f.date(outcome.expiresAt) });
+      case 'credit':
+        return t('bot.support.act.done.credit', { name, amount: f.money(outcome.amountMinor) });
+      case 'reset':
+        return t('bot.support.act.done.reset', { name });
+      case 'link':
+        return t('bot.support.act.done.link', { name });
+    }
   }
 
   /** `//text`: a note on the customer's ticket (the live one, or the last). */
@@ -1020,6 +1120,32 @@ export class SupportService {
     await this.infra.redis.set(key, forum ? '1' : '0', 'EX', FORUM_TTL_SECONDS);
     return forum;
   }
+}
+
+/** The card's action buttons. */
+const CARD_ACTIONS: Partial<Record<string, SupportAction>> = {
+  ext7: { kind: 'extend', days: 7 },
+  ext30: { kind: 'extend', days: 30 },
+  reset: { kind: 'reset' },
+  link: { kind: 'link' },
+};
+
+/**
+ * `/extend <days> [reason]` and `/credit <amount ₽> [reason]` (whole roubles
+ * or kopecks after a point or comma); null when the arguments do not parse.
+ */
+export function parseAction(name: 'extend' | 'credit', args: string): SupportAction | null {
+  const [first = '', ...rest] = args.split(/\s+/u);
+  const reason = rest.join(' ').trim() || undefined;
+  if (name === 'extend') {
+    if (!/^\d{1,4}$/u.test(first)) return null;
+    const days = Number(first);
+    return days >= 1 && days <= 3650 ? { kind: 'extend', days, reason } : null;
+  }
+  const match = /^(\d{1,9})(?:[.,](\d{1,2}))?$/u.exec(first);
+  if (!match) return null;
+  const amountMinor = BigInt(match[1] ?? '0') * 100n + BigInt((match[2] ?? '').padEnd(2, '0'));
+  return amountMinor > 0n ? { kind: 'credit', amountMinor, reason } : null;
 }
 
 /**

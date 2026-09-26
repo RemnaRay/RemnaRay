@@ -148,7 +148,8 @@ export function cardText(data: CardData, t: Translate, f: Formats): string {
 
 /**
  * The card's buttons: take (until someone takes it), close, close silently,
- * refresh and the console's user page. A closed ticket keeps the last two.
+ * the actions on the customer, refresh and the console's user page. A closed
+ * ticket keeps the last two.
  */
 export function cardKeyboard(
   ticket: Pick<Ticket, 'id' | 'status' | 'takenAt'>,
@@ -164,6 +165,17 @@ export function cardKeyboard(
       { text: t('bot.support.btn.close'), callback_data: data('close') },
       { text: t('bot.support.btn.silent'), callback_data: data('silent') },
     ]);
+    // Actions on the customer, for console admins (F36).
+    rows.push(
+      [
+        { text: t('bot.support.btn.ext7'), callback_data: data('ext7') },
+        { text: t('bot.support.btn.ext30'), callback_data: data('ext30') },
+      ],
+      [
+        { text: t('bot.support.btn.reset'), callback_data: data('reset') },
+        { text: t('bot.support.btn.link'), callback_data: data('link') },
+      ],
+    );
   }
   rows.push([
     { text: t('bot.support.btn.refresh'), callback_data: data('card') },

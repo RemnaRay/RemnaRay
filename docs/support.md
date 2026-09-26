@@ -39,6 +39,18 @@ buttons work only in that chat. The first answer takes a ticket nobody took.
 In the topic, `/close`, `/silent` and `/card` do the same as the buttons. An
 operator writing to a customer without an open ticket opens one.
 
+**Actions on the customer.** A live ticket's card also has «+7 дней», «+30
+дней», «Сбросить трафик» and «Отправить ссылку»; in the topic `/extend <days>
+[reason]` and `/credit <amount ₽> [reason]` do the same for any number of days
+or a credit to the balance (`150`, `150,50`). Unlike take and close, these are
+only for a **console administrator** whose Telegram ID is set in
+«Администраторы», with their role's rights (section 14.2: an operator may
+credit up to `operator.max_credit_minor` a day and never debit). They run the
+console's own code, write the same audit row (reason `support #N[: reason]`,
+user agent `telegram:support`) and leave a line in the topic; the link goes to
+the customer from the support bot. A double tap on a button within ten seconds
+runs once, and a command message runs once even if Telegram delivers it twice.
+
 **Reminders and auto-close.** The worker sweeps the tickets every minute
 (`maintenance.support-sweep`). A ticket nobody took for
 `support.remind_after_minutes` (15 by default) is announced once in the

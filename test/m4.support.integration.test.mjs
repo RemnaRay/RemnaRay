@@ -28,6 +28,10 @@ test(
         await import('../apps/api/dist/modules/support/support-admin.service.js');
       const { SupportService } =
         await import('../apps/api/dist/modules/support/support.service.js');
+      const { SupportActions } =
+        await import('../apps/api/dist/modules/support/support-actions.js');
+      const { AdminUsersService } =
+        await import('../apps/api/dist/modules/admin-api/admin-users.service.js');
       const prisma = createPrismaClient(databaseUrl);
       const tickets = new TicketsRepository({ db: prisma });
 
@@ -208,6 +212,50 @@ test(
       } finally {
         globalThis.fetch = realFetch;
       }
+
+      // Card actions go through the console's code (F36): an operator linked by
+      // Telegram id credits within the daily limit; the ledger row and the
+      // audit row carry the ticket; over the limit nothing changes.
+      await prisma.admin.create({
+        data: {
+          email: 'operator@example.test',
+          passwordHash: 'x',
+          role: 'operator',
+          telegramId: 7n,
+        },
+      });
+      const limits = { get: async () => '20000' };
+      const actions = new SupportActions(
+        { db: prisma },
+        new AdminUsersService({ db: prisma }, limits, {}),
+      );
+      assert.deepEqual(await actions.run({ kind: 'credit', amountMinor: 15_000n }, user.id, 7, 2), {
+        ok: true,
+        kind: 'credit',
+        amountMinor: 15_000n,
+      });
+      assert.deepEqual(await actions.run({ kind: 'credit', amountMinor: 10_000n }, user.id, 7, 2), {
+        ok: false,
+        reason: 'limit',
+      });
+      assert.deepEqual(await actions.run({ kind: 'credit', amountMinor: 100n }, user.id, 99, 2), {
+        ok: false,
+        reason: 'not_admin',
+      });
+      const account = await prisma.account.findFirstOrThrow({ where: { userId: user.id } });
+      assert.equal(account.balanceMinor, 20_000n);
+      const credits = await prisma.transaction.findMany({
+        where: { userId: user.id, type: 'adjustment' },
+      });
+      assert.deepEqual(
+        credits.map((row) => [row.amountMinor, row.reason]),
+        [[15_000n, 'support #2']],
+      );
+      const audit = await prisma.auditLog.findMany({ where: { entityId: user.id } });
+      assert.deepEqual(
+        audit.map((row) => [row.action, row.reason, row.userAgent]),
+        [['users.balance', 'support #2', 'telegram:support']],
+      );
 
       await prisma.$disconnect();
     } finally {

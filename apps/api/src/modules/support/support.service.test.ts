@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CardData } from './card-data';
-import { parseCommand, SupportService } from './support.service';
+import { parseAction, parseCommand, SupportService } from './support.service';
 import type { MessageInput, Ticket } from './tickets.repository';
 
 vi.mock('./card-data', () => ({
@@ -151,6 +151,13 @@ const catalog: Record<string, string> = {
   'bot.support.op.reminder': 'Waiting #{number} {minutes} min {name}',
   'bot.support.op.autoClosed': 'Auto-closed #{number}',
   'bot.support.btn.open': 'Open',
+  'bot.support.act.duplicate': 'Already running',
+  'bot.support.act.not_admin': 'Admins only',
+  'bot.support.act.usage.credit': 'Usage: /credit',
+  'bot.support.act.done.extend': '{name} extended until {until}',
+  'bot.support.act.done.credit': '{name} credited {amount}',
+  'bot.support.act.done.link': '{name} sent the link',
+  'bot.support.ticket.link': 'Your link: {url}',
   'bot.support.ticket.autoClosed': 'Request #{number} auto-closed',
   'bot.support.op.rated': '{stars} #{number}: {rating}',
   'bot.screen.support.reply': 'Support: {text}',
@@ -174,7 +181,8 @@ function harness(
   const store = new Map<string, string>();
   const redis = {
     get: (key: string) => Promise.resolve(store.get(key) ?? null),
-    set: (key: string, value: string) => {
+    set: (key: string, value: string, ...flags: unknown[]) => {
+      if (flags.includes('NX') && store.has(key)) return Promise.resolve(null);
       store.set(key, value);
       return Promise.resolve('OK');
     },
@@ -225,6 +233,19 @@ function harness(
     return Promise.resolve(Response.json({ ok: true, result: { message_id: ++messageId } }));
   });
   const notify = { alert: vi.fn().mockResolvedValue({ delivered: 1, deduplicated: false }) };
+  const actions = {
+    run: vi.fn((action: { kind: string; amountMinor?: bigint }) =>
+      Promise.resolve(
+        action.kind === 'extend'
+          ? { ok: true, kind: 'extend', expiresAt: new Date('2026-10-08T00:00:00Z') }
+          : action.kind === 'link'
+            ? { ok: true, kind: 'link', url: 'https://sub.example.test/x' }
+            : action.kind === 'credit'
+              ? { ok: true, kind: 'credit', amountMinor: action.amountMinor }
+              : { ok: true, kind: 'reset' },
+      ),
+    ),
+  };
   const customer = {
     id: 'u1',
     telegramId: 42n,
@@ -295,6 +316,7 @@ function harness(
     { get: (key: string) => Promise.resolve(settings[key]) } as never,
     memory.repo as never,
     { messages: () => Promise.resolve(catalog) } as never,
+    actions as never,
     notify as never,
   );
   const operator = (message: Record<string, unknown>) =>
@@ -313,7 +335,7 @@ function harness(
       data: `st:${action}:${ticketId}`,
       via: options.supportToken ? 'support' : 'shop',
     });
-  return { service, calls, store, notify, memory, operator, press };
+  return { service, calls, store, notify, memory, operator, press, actions };
 }
 
 const methods = (calls: Call[]) => calls.map((call) => call.method);
@@ -359,6 +381,14 @@ describe('SupportService tickets (FR-124, F36)', () => {
           [
             { callback_data: `st:close:${memory.tickets[0]?.id ?? ''}` },
             { callback_data: `st:silent:${memory.tickets[0]?.id ?? ''}` },
+          ],
+          [
+            { callback_data: `st:ext7:${memory.tickets[0]?.id ?? ''}` },
+            { callback_data: `st:ext30:${memory.tickets[0]?.id ?? ''}` },
+          ],
+          [
+            { callback_data: `st:reset:${memory.tickets[0]?.id ?? ''}` },
+            { callback_data: `st:link:${memory.tickets[0]?.id ?? ''}` },
           ],
           [
             { callback_data: `st:card:${memory.tickets[0]?.id ?? ''}` },
@@ -829,6 +859,91 @@ describe('notes and templates (F36)', () => {
     await memory.repo.setTopic(-100500, 'u1', 71);
     await operator({ threadId: 71, message: { kind: 'text', text: '//x' } });
     expect(calls[0]?.body).toMatchObject({ text: 'No ticket yet' });
+  });
+});
+
+describe('card actions from the operators’ chat (F36)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('runs a card button once per double tap and leaves a line in the ticket', async () => {
+    const { service, memory, press, actions, calls } = harness({ forum: true });
+    await service.forward('42', 5);
+    const id = memory.tickets[0]?.id ?? '';
+    calls.length = 0;
+
+    await expect(press('ext7', id)).resolves.toEqual({
+      text: 'Olga extended until 10/08/2026, 12:00 AM',
+    });
+    expect(actions.run).toHaveBeenCalledWith({ kind: 'extend', days: 7 }, 'u1', 7, 1);
+    expect(calls[0]?.body).toMatchObject({
+      chat_id: -100500,
+      message_thread_id: 71,
+      text: 'Olga extended until 10/08/2026, 12:00 AM',
+    });
+    await expect(press('ext7', id)).resolves.toEqual({ text: 'Already running' });
+    expect(actions.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the subscription link to the customer', async () => {
+    const { service, memory, press, calls } = harness({ forum: true });
+    await service.forward('42', 5);
+    calls.length = 0;
+    await press('link', memory.tickets[0]?.id ?? '');
+    expect(calls[0]?.body).toMatchObject({
+      chat_id: 42,
+      text: 'Your link: https://sub.example.test/x',
+    });
+  });
+
+  it('shows a refusal as an alert', async () => {
+    const { service, memory, press, actions } = harness();
+    await service.forward('42', 5);
+    actions.run.mockResolvedValueOnce({ ok: false, reason: 'not_admin' } as never);
+    await expect(press('reset', memory.tickets[0]?.id ?? '')).resolves.toEqual({
+      text: 'Admins only',
+      alert: true,
+    });
+  });
+
+  it('credits with /credit once, even when Telegram delivers the command twice', async () => {
+    const { service, operator, actions, calls } = harness({ forum: true });
+    await service.forward('42', 5);
+    await operator({ threadId: 71, message: { kind: 'text', text: '/credit 150,5 compensation' } });
+    await operator({ threadId: 71, message: { kind: 'text', text: '/credit 150,5 compensation' } });
+    expect(actions.run).toHaveBeenCalledTimes(1);
+    expect(actions.run).toHaveBeenCalledWith(
+      { kind: 'credit', amountMinor: 15_050n, reason: 'compensation' },
+      'u1',
+      7,
+      1,
+    );
+    calls.length = 0;
+    await operator({ threadId: 71, messageId: 901, message: { kind: 'text', text: '/credit -5' } });
+    expect(calls[0]?.body).toMatchObject({ text: 'Usage: /credit' });
+  });
+});
+
+describe('parseAction', () => {
+  it('reads days and amounts, and refuses anything else', () => {
+    expect(parseAction('extend', '30 server down')).toEqual({
+      kind: 'extend',
+      days: 30,
+      reason: 'server down',
+    });
+    expect(parseAction('extend', '0')).toBeNull();
+    expect(parseAction('extend', '')).toBeNull();
+    expect(parseAction('credit', '150')).toEqual({
+      kind: 'credit',
+      amountMinor: 15_000n,
+      reason: undefined,
+    });
+    expect(parseAction('credit', '0.99')).toMatchObject({ amountMinor: 99n });
+    expect(parseAction('credit', '1.999')).toBeNull();
+    expect(parseAction('credit', '-5')).toBeNull();
+    expect(parseAction('credit', '0')).toBeNull();
   });
 });
 

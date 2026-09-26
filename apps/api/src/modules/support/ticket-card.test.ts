@@ -107,11 +107,15 @@ describe('the ticket card (F36)', () => {
       '🙋 Взять в работу',
       '✅ Закрыть',
       '🤫 Закрыть тихо',
+      '⏩ +7 дней',
+      '⏩ +30 дней',
+      '🔄 Сбросить трафик',
+      '🔗 Отправить ссылку',
       '🔄 Обновить',
       '🖥 В консоли',
     ]);
     const taken = cardKeyboard({ id, status: 'in_progress', takenAt: new Date() }, t, url);
-    expect(taken.inline_keyboard.flat()).toHaveLength(4);
+    expect(taken.inline_keyboard.flat()).toHaveLength(8);
     const closed = cardKeyboard({ id, status: 'closed', takenAt: new Date() }, t, url);
     expect(closed.inline_keyboard.flat()).toEqual([
       { text: '🔄 Обновить', callback_data: `st:card:${id}` },
