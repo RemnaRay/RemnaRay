@@ -284,10 +284,21 @@ export class PaymentsService {
     return existing ? replayed(existing, input) : null;
   }
 
+  /**
+   * FR-064: a check someone asked for (the customer's «Проверить оплату», the
+   * console's «Перепроверить»), limited to one per 10 s per invoice. The
+   * worker's background poll does not count against that limit: it polls
+   * every pending invoice twice a minute, and used to leave the customer's
+   * button refused a third of the time.
+   */
   async recheck(invoiceId: string) {
     const last = this.recheckAt.get(invoiceId) ?? 0;
     if (Date.now() - last < 10_000) throw new PaymentError('RATE_LIMITED');
     this.recheckAt.set(invoiceId, Date.now());
+    return this.poll(invoiceId);
+  }
+
+  private async poll(invoiceId: string) {
     const invoice = await this.repository.findInvoice(invoiceId);
     if (!invoice) throw new PaymentError('INVOICE_NOT_FOUND');
     const provider = this.providers.get(invoice.provider);
@@ -297,10 +308,18 @@ export class PaymentsService {
     // created (section 11.3.7), so its `fetchStatus` answers `paid` for any
     // invoice, including one the balance never covered.
     if (!provider.capabilities.statusPolling) return invoice;
-    const event = await provider.fetchStatus(
-      invoice.providerInvoiceId ?? invoice.id,
-      await this.providerConfig(invoice.provider),
-    );
+    const config = await this.providerConfig(invoice.provider);
+    let event: ProviderEvent;
+    try {
+      event = await provider.fetchStatus(invoice.providerInvoiceId ?? invoice.id, config);
+    } catch (error) {
+      // The provider did not answer: nothing is known, and the next poll
+      // asks again. It is logged here because the answer only names it.
+      this.logger.warn(
+        `Status check of invoice ${invoice.id} at ${invoice.provider} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new PaymentError('PROVIDER_UNAVAILABLE');
+    }
     const stored = await this.repository.insertEvent({
       provider: invoice.provider,
       externalId: event.eventId ?? `poll:${invoice.id}:${event.type}`,
@@ -334,7 +353,7 @@ export class PaymentsService {
     });
     for (const invoice of invoices) {
       try {
-        await this.recheck(invoice.id);
+        await this.poll(invoice.id);
       } catch {
         /* the next poll retries transient provider failures */
       }

@@ -353,7 +353,9 @@ export class MeService {
 
   async checkInvoice(userId: string, id: string) {
     await this.requireInvoice(userId, id);
-    const invoice = await this.payments.recheck(id);
+    const invoice = await this.payments.recheck(id).catch((error: unknown) => {
+      throw this.paymentFailure(error);
+    });
     if (!invoice) throw new ApiError('NOT_FOUND', HttpStatus.NOT_FOUND);
     return this.invoiceView(invoice);
   }
@@ -732,7 +734,9 @@ export class MeService {
           ? HttpStatus.BAD_REQUEST
           : error.message === 'IDEMPOTENCY_KEY_REUSED'
             ? HttpStatus.UNPROCESSABLE_ENTITY
-            : HttpStatus.CONFLICT;
+            : error.message === 'RATE_LIMITED'
+              ? HttpStatus.TOO_MANY_REQUESTS
+              : HttpStatus.CONFLICT;
       return new ApiError(error.message, status);
     }
     return error;

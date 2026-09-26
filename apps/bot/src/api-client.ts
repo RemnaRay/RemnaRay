@@ -407,6 +407,12 @@ export class ApiClient {
     });
   }
 
+  getInvoice(telegramId: number, invoiceId: string) {
+    return this.request<InvoiceView>(`/api/internal/v1/me/invoices/${invoiceId}`, {
+      userId: telegramId,
+    });
+  }
+
   checkInvoice(telegramId: number, invoiceId: string) {
     return this.request<InvoiceView>(`/api/internal/v1/me/invoices/${invoiceId}/check`, {
       method: 'POST',

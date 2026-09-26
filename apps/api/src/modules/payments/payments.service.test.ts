@@ -193,6 +193,66 @@ describe('PaymentsService.recheck (section 7.3 status polling)', () => {
   });
 });
 
+describe('PaymentsService.recheck limit (FR-064, F30)', () => {
+  const appKey = randomBytes(32).toString('base64');
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  function harness(fetchImpl: () => Promise<Response>) {
+    vi.stubEnv('RR_APP_KEY', appKey);
+    vi.stubGlobal('fetch', fetchImpl);
+    const db = {
+      invoice: { findMany: vi.fn().mockResolvedValue([{ id: 'invoice-1' }]) },
+      paymentProvider: {
+        findUnique: vi.fn().mockResolvedValue({
+          code: 'cryptobot',
+          enabled: true,
+          configEnc: encryptSetting({ token: 't', baseUrl: 'http://cryptobot.test/api' }, appKey)
+            .enc,
+        }),
+      },
+    };
+    const repository = {
+      findInvoice: vi.fn().mockResolvedValue({
+        id: 'invoice-1',
+        provider: 'cryptobot',
+        providerInvoiceId: '77',
+        status: 'pending',
+      }),
+      insertEvent: vi.fn().mockResolvedValue({ id: 'event-1', duplicate: false }),
+      applyEvent: vi.fn(),
+    };
+    return new PaymentsService(
+      { db } as unknown as Infrastructure,
+      repository as unknown as PaymentsRepository,
+      createPaymentProviderRegistry({}),
+    );
+  }
+  const active = () =>
+    Promise.resolve(Response.json({ ok: true, result: { items: [{ status: 'active' }] } }));
+
+  it('leaves the customer’s check free after the worker’s background poll', async () => {
+    const service = harness(active);
+    await expect(service.pollPending()).resolves.toBe(1);
+    await expect(service.recheck('invoice-1')).resolves.toMatchObject({ id: 'invoice-1' });
+  });
+
+  it('refuses a second check of one invoice within 10 seconds', async () => {
+    const service = harness(active);
+    await service.recheck('invoice-1');
+    await expect(service.recheck('invoice-1')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('names a provider that did not answer', async () => {
+    const service = harness(() => Promise.reject(new Error('connect ECONNREFUSED')));
+    await expect(service.recheck('invoice-1')).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+    });
+  });
+});
+
 describe('PaymentsService.recheck of a provider without status polling', () => {
   it('leaves a pending balance invoice as it is instead of asking fetchStatus', async () => {
     const invoice = {

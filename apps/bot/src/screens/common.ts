@@ -21,6 +21,8 @@ export async function show(ctx: RrContext, text: string, keyboard?: InlineKeyboa
         ctx.session.menuMessageId = message.message_id;
       return;
     } catch (error) {
+      // The screen already shows this: nothing to change, nothing to send.
+      if (error instanceof Error && error.message.includes('message is not modified')) return;
       if (!(error instanceof Error) || !error.message.includes("can't be edited")) throw error;
     }
   }
@@ -56,6 +58,17 @@ export function formatDate(value: string, locale = 'ru'): string {
     );
   } catch {
     return new Intl.DateTimeFormat(tag, { ...options, timeZone: 'UTC' }).format(new Date(value));
+  }
+}
+
+/** The time of day in the shop's zone, to the second (a check's stamp). */
+export function formatTime(value: Date, locale = 'ru'): string {
+  const options: Intl.DateTimeFormatOptions = { timeStyle: 'medium' };
+  const tag = locale === 'en' ? 'en-GB' : 'ru-RU';
+  try {
+    return new Intl.DateTimeFormat(tag, { ...options, timeZone: displayTimeZone }).format(value);
+  } catch {
+    return new Intl.DateTimeFormat(tag, { ...options, timeZone: 'UTC' }).format(value);
   }
 }
 

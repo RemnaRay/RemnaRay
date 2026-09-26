@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { InlineKeyboard } from 'grammy';
 
-import type { ApiClient, InvoiceView } from '../api-client.js';
+import { ApiClientError, type ApiClient, type InvoiceView } from '../api-client.js';
 import type { RrContext } from '../types.js';
-import { backButton, formatDate, formatMinor, show } from './common.js';
+import { backButton, formatDate, formatMinor, formatTime, show } from './common.js';
 
 export async function createPayment(
   ctx: RrContext,
@@ -26,16 +26,45 @@ export async function createPayment(
   await showInvoice(ctx, invoice);
 }
 
+/**
+ * FR-064 «Проверить оплату». The answer always changes the screen: a paid
+ * invoice shows its success, and one still unpaid says when it was checked
+ * — or that checks are one per 10 seconds, or that the payment system did
+ * not answer — so a press is never left without a visible answer (F30).
+ */
 export async function checkPayment(
   ctx: RrContext,
   api: ApiClient,
   invoiceId: string,
 ): Promise<void> {
   if (!ctx.from) return;
-  await showInvoice(ctx, await api.checkInvoice(ctx.from.id, invoiceId));
+  const checkedAt = formatTime(new Date(), ctx.locale);
+  try {
+    const invoice = await api.checkInvoice(ctx.from.id, invoiceId);
+    await showInvoice(
+      ctx,
+      invoice,
+      invoice.status === 'pending'
+        ? ctx.t('bot.screen.pay.notYet', { time: checkedAt })
+        : undefined,
+    );
+  } catch (error) {
+    const note =
+      error instanceof ApiClientError && error.status === 429
+        ? ctx.t('bot.screen.pay.checkLimit', { time: checkedAt })
+        : error instanceof ApiClientError && error.code === 'PROVIDER_UNAVAILABLE'
+          ? ctx.t('bot.screen.pay.checkFailed', { time: checkedAt })
+          : undefined;
+    if (!note) throw error;
+    await showInvoice(ctx, await api.getInvoice(ctx.from.id, invoiceId), note);
+  }
 }
 
-export async function showInvoice(ctx: RrContext, invoice: InvoiceView): Promise<void> {
+export async function showInvoice(
+  ctx: RrContext,
+  invoice: InvoiceView,
+  note?: string,
+): Promise<void> {
   if (invoice.status === 'paid') {
     await show(ctx, ctx.t('bot.screen.pay.ok'), backButton(ctx));
     return;
@@ -48,12 +77,9 @@ export async function showInvoice(ctx: RrContext, invoice: InvoiceView): Promise
     .text(ctx.t('bot.btn.check'), `inv:check:${invoice.id}`)
     .row()
     .text(ctx.t('bot.btn.back'), 'home');
-  await show(
-    ctx,
-    ctx.t('bot.screen.pay.wait', {
-      price: formatMinor(invoice.amount.amountMinor, invoice.amount.currency),
-      until: formatDate(invoice.expiresAt, ctx.locale),
-    }),
-    keyboard,
-  );
+  const wait = ctx.t('bot.screen.pay.wait', {
+    price: formatMinor(invoice.amount.amountMinor, invoice.amount.currency),
+    until: formatDate(invoice.expiresAt, ctx.locale),
+  });
+  await show(ctx, note ? `${wait}\n\n${note}` : wait, keyboard);
 }

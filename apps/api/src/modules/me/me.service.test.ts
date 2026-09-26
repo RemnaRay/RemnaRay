@@ -9,6 +9,7 @@ import {
 } from '@remnaray/domain';
 import { describe, expect, it, vi } from 'vitest';
 
+import { PaymentError } from '../payments/payments.errors';
 import { MeService } from './me.service';
 
 const settingValues: Record<string, unknown> = {
@@ -383,6 +384,30 @@ describe('MeService', () => {
     await expect(
       service().instance.previewPromocode('user-1', { code: 'nope1234', planId: plan.id }),
     ).rejects.toMatchObject({ response: { error: { code: 'PROMO_NOT_FOUND' } } });
+  });
+
+  it('answers a check within FR-064’s 10 seconds with 429, a silent provider with 409 (F30)', async () => {
+    const invoice = { id: 'inv-1', userId: 'user-1', status: 'pending' };
+    const answers = [new PaymentError('RATE_LIMITED'), new PaymentError('PROVIDER_UNAVAILABLE')];
+    const payments = {
+      recheck: vi.fn(() => Promise.reject(answers.shift() ?? new Error('unexpected'))),
+    };
+    const instance = new MeService(
+      { db: { invoice: { findUnique: vi.fn().mockResolvedValue(invoice) } } } as never,
+      {} as never,
+      {} as never,
+      payments as never,
+      {} as never,
+      {} as never,
+    );
+    await expect(instance.checkInvoice('user-1', 'inv-1')).rejects.toMatchObject({
+      status: 429,
+      response: { error: { code: 'RATE_LIMITED' } },
+    });
+    await expect(instance.checkInvoice('user-1', 'inv-1')).rejects.toMatchObject({
+      status: 409,
+      response: { error: { code: 'PROVIDER_UNAVAILABLE' } },
+    });
   });
 
   it('refuses to cancel an invoice that is no longer pending', async () => {

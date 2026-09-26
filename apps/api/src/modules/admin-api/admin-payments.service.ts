@@ -157,7 +157,15 @@ export class AdminPaymentsService {
   async recheck(id: string) {
     const before = await this.infra.db.invoice.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('NOT_FOUND');
-    const after = await this.payments.recheck(id);
+    const after = await this.payments.recheck(id).catch((error: unknown) => {
+      // FR-064's 10-second limit and a provider that did not answer are
+      // answers, not failures of ours.
+      if (error instanceof PaymentError && error.code === 'RATE_LIMITED')
+        throw new ApiError('RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+      if (error instanceof PaymentError && error.code === 'PROVIDER_UNAVAILABLE')
+        throw new ApiError('PROVIDER_UNAVAILABLE', HttpStatus.CONFLICT);
+      throw error;
+    });
     return new Audited({ status: before.status }, { status: after?.status ?? before.status });
   }
 

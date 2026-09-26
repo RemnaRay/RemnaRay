@@ -454,11 +454,23 @@ refused: <code> (<reason>)`; the answer is unchanged. Evidence: verifier
   tests red on the old code (10 failed) → green, service test asserts the
   log lines, E2E OIDC sign-in with a live-shaped token (string `id`, 30 s)
   passed.
-- **F30 (P1) — bot «Проверить оплату» on an unpaid invoice → «Произошла
+- **F30 Done (P1) — bot «Проверить оплату» on an unpaid invoice → «Произошла
   ошибка».** Bot log `incidentId zB7PFMjZ`: `description: 'api_error'` for
   `POST /api/internal/v1/me/invoices/<id>/check`; status and code awaited
   from the owner. A repeated press would also hit Telegram's «message is not
-  modified» in `show()`.
+  modified» in `show()`. Cause (found in the code): the worker's
+  `payments.poll-pending` every 30 s runs `PaymentsService.pollPending`,
+  which called `recheck` and so took FR-064's one-check-per-10-s allowance
+  of every pending invoice; a press in those 10 s got `PaymentError
+RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
+  answered 500 (a provider that did not answer did the same). Done: the
+  background poll no longer counts against the limit; the check answers 429
+  `RATE_LIMITED` or 409 `PROVIDER_UNAVAILABLE` (logged with the provider's
+  error), the console «Перепроверить» too; the bot writes onto the invoice
+  when it was checked, that checks are one per 10 s, or that the payment
+  system did not answer, and `show()` treats «message is not modified» as
+  done. Evidence: API tests red on the old code (3) → green; bot screen
+  tests.
 - **F31 Done (P1, owner decision) — dashboard revenue counted a top-up and the
   balance purchase paid from it (300 + 299 = 599 ₽).** FR-142 literally sums
   `purchase + topup − refund`, which counts money spent from the balance
