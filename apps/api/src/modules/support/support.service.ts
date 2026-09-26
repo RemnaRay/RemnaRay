@@ -101,7 +101,7 @@ export class SupportService {
     id: string,
     locale: string,
   ): Promise<{ question: string; answer: string } | null> {
-    if (!/^[0-9a-f-]{36}$/u.test(id)) return null;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(id)) return null;
     const row = await this.infra.db.supportFaq.findFirst({ where: { id, enabled: true } });
     if (!row) return null;
     const fallback = await this.operatorLocale();
@@ -205,9 +205,10 @@ export class SupportService {
   /** A press on a ticket card's button (`st:<action>:<ticket id>`). */
   async callback(input: CallbackInput): Promise<{ text: string; alert?: boolean }> {
     const t = await this.operatorTranslate();
-    const match = /^st:(take|close|silent|card|ext7|ext30|reset|link):([0-9a-f-]{36})$/u.exec(
-      input.data,
-    );
+    const match =
+      /^st:(take|close|silent|card|ext7|ext30|reset|link):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u.exec(
+        input.data,
+      );
     const destination = await this.destination(input.via);
     if (!match || input.chatId !== destination.chatId)
       return { text: t('bot.support.op.denied'), alert: true };

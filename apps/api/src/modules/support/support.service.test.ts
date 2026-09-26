@@ -609,6 +609,15 @@ describe('SupportService tickets (FR-124, F36)', () => {
     expect(memory.tickets[0]).toMatchObject({ status: 'closed', takenAt: null });
   });
 
+  it('refuses a button whose ticket id is not a UUID', async () => {
+    const { press, calls } = harness();
+    await expect(press('close', '-'.repeat(36))).resolves.toEqual({
+      text: 'Denied',
+      alert: true,
+    });
+    expect(calls).toEqual([]);
+  });
+
   it('refuses buttons pressed outside the operators’ chat', async () => {
     const { service, memory, press, calls } = harness();
     await service.forward('42', 5);
@@ -1007,6 +1016,8 @@ describe('self-help (F36)', () => {
       answer: 'Да',
     });
     await expect(service.faqAnswer('../etc', 'en')).resolves.toBeNull();
+    // Not a UUID, though of the right length and characters.
+    await expect(service.faqAnswer('-'.repeat(36), 'en')).resolves.toBeNull();
     await expect(
       service.faqAnswer('00000000-0000-4000-8000-0000000000f9', 'en'),
     ).resolves.toBeNull();
