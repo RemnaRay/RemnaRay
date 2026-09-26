@@ -10,6 +10,13 @@ export type Formats = {
   bytes: (value: bigint) => string;
 };
 
+/** How much of the administrator's note the card shows. */
+const NOTES_MAX = 300;
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 type Button = { text: string; callback_data: string } | { text: string; url: string };
 
 const STATUS_ICON: Record<Ticket['status'], string> = {
@@ -142,7 +149,8 @@ export function cardText(data: CardData, t: Translate, f: Formats): string {
         })
       : t('bot.support.card.first'),
   );
-  if (user.notes) lines.push(t('bot.support.card.notes', { notes: user.notes }));
+  // The console allows 4000 characters of notes; Telegram, 4096 for the whole card.
+  if (user.notes) lines.push(t('bot.support.card.notes', { notes: clip(user.notes, NOTES_MAX) }));
   return lines.join('\n');
 }
 

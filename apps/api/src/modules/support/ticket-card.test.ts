@@ -99,6 +99,16 @@ describe('the ticket card (F36)', () => {
     expect(text).toContain('🆘 Первое обращение');
   });
 
+  it('stays within Telegram’s 4096 characters with the longest note the console allows', () => {
+    const text = cardText(
+      data({ user: { ...data().user, notes: '&'.repeat(4000), firstName: 'x'.repeat(64) } }),
+      t,
+      f,
+    );
+    expect(text.length).toBeLessThan(4096);
+    expect(text).toContain('…');
+  });
+
   it('offers «Взять» until the ticket is taken, and only refresh once it is closed', () => {
     const url = 'https://shop.example.test/admin/users/u1';
     const id = '00000000-0000-4000-8000-000000000001';
