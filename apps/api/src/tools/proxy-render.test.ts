@@ -412,3 +412,28 @@ describe('edge access log (section 19.6, R4)', () => {
     expect(format).not.toContain('$http_referer');
   });
 });
+
+describe('proxy access logs (section 19.6, R113)', () => {
+  it('nginx logs the webhook path masked and the referrer without its query', () => {
+    const config = render('acme').get('nginx.conf') ?? '';
+    const format = /log_format rr_json[^;]+;/u.exec(config)?.[0] ?? '';
+    expect(format).toContain('"uri":"$rr_log_uri"');
+    expect(format).not.toContain('$uri"');
+    expect(format).not.toContain('$http_referer');
+    expect(config).toMatch(
+      /map \$uri \$rr_log_uri \{[^}]*~\^\/tg\/webhook\/ \/tg\/webhook\/\*\*\*;/u,
+    );
+  });
+
+  it('the edge masks the webhook path too', () => {
+    const edge = readFileSync(resolve(proxyRoot, 'external/edge.conf'), 'utf8');
+    expect(edge).toContain('"uri":"$rr_log_uri"');
+  });
+
+  it('Caddy masks the webhook path and drops the query and the referrer`s query', () => {
+    const caddyfile = renderCaddy('acme');
+    expect(caddyfile).toContain('request>uri regexp ^/tg/webhook/[^?]* /tg/webhook/***');
+    expect(caddyfile).toContain('request>uri regexp \\?.*$ ""');
+    expect(caddyfile).toContain('request>headers>Referer regexp \\?.*$ ""');
+  });
+});

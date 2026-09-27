@@ -86,9 +86,11 @@ http:// {
 			request>headers>Cookie delete
 			request>headers>Authorization delete
 			request>headers>X-Telegram-Bot-Api-Secret-Token delete
-			request>uri query {
-				delete token
-			}
+			# Section 19.6: the path without its query (`/auth/tg?token=`) and
+			# never the webhook's `secret_path`; the filters run in order.
+			request>headers>Referer regexp \?.*$ ""
+			request>uri regexp ^/tg/webhook/[^?]* /tg/webhook/***
+			request>uri regexp \?.*$ ""
 		}
 	}
 

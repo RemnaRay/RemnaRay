@@ -732,3 +732,144 @@ test(
     }
   },
 );
+
+test(
+  'Section 19.6: the access logs carry neither the webhook secret path nor a query token',
+  { timeout: 600_000 },
+  async () => {
+    docker(['build', '-f', 'deploy/proxy/nginx/Dockerfile', '-t', IMAGE, '.']);
+    docker(['build', '-f', 'deploy/proxy/caddy/Dockerfile', '-t', CADDY_IMAGE, '.']);
+    const { renderProfile, writeAtomically } =
+      await import('../apps/api/dist/tools/proxy-render.js');
+    const prefix = `rr-logs-${String(process.pid)}`;
+    const network = `${prefix}-net`;
+    const certs = mkdtempSync(join(tmpdir(), 'rr-logs-certs-'));
+    selfSigned(certs);
+    const directories = [];
+    const containers = [];
+    const upstream = `const http = require('node:http');
+      for (const port of [3000, 3001]) http.createServer((q, r) => r.end('ok')).listen(port);`;
+    const request = (args) =>
+      docker(
+        [
+          'run',
+          '--rm',
+          '--network',
+          network,
+          'curlimages/curl:8.17.0',
+          '-sk',
+          '-o',
+          '/dev/null',
+          '-w',
+          '%{http_code}',
+          ...args,
+        ],
+        { expectSuccess: false },
+      );
+    try {
+      docker(['network', 'create', network]);
+      containers.push(`${prefix}-up`);
+      docker([
+        'run',
+        '-d',
+        '--name',
+        `${prefix}-up`,
+        '--network',
+        network,
+        '--network-alias',
+        'api',
+        '--network-alias',
+        'web',
+        'node:24-alpine',
+        'node',
+        '-e',
+        upstream,
+      ]);
+      for (const profile of ['nginx', 'caddy']) {
+        const directory = mkdtempSync(join(tmpdir(), `rr-logs-${profile}-`));
+        directories.push(directory);
+        writeAtomically(
+          directory,
+          renderProfile(
+            resolve(TEMPLATES, profile),
+            {
+              domain: 'shop.example.test',
+              extraDomains: [],
+              acmeEmail: '',
+              adminAllowlist: [],
+              dockerCidr: '172.28.0.0/16',
+              apiDocs: false,
+              internalApi: false,
+              caddyRateLimit: true,
+            },
+            { profile, tlsMode: 'custom', certificatePresent: true },
+          ),
+        );
+        const name = `${prefix}-${profile}`;
+        containers.push(name);
+        docker([
+          'run',
+          '-d',
+          '--name',
+          name,
+          '--network',
+          network,
+          '--network-alias',
+          'shop.example.test',
+          '-v',
+          profile === 'nginx' ? `${directory}:/etc/nginx/conf.d:ro` : `${directory}:/etc/caddy:ro`,
+          '-v',
+          profile === 'nginx' ? `${certs}:/etc/nginx/certs:ro` : `${certs}:/certs:ro`,
+          profile === 'nginx' ? IMAGE : CADDY_IMAGE,
+        ]);
+        let status = '';
+        for (let attempt = 0; attempt < 30 && status !== '200'; attempt += 1) {
+          await sleep(500);
+          status = request(['https://shop.example.test/healthz']);
+        }
+        assert.equal(status, '200', `${name} never answered`);
+        assert.equal(
+          request([
+            '-X',
+            'POST',
+            '-H',
+            'content-type: application/json',
+            '-H',
+            'X-Telegram-Bot-Api-Secret-Token: HEADERSECRET',
+            '-d',
+            '{}',
+            'https://shop.example.test/tg/webhook/SECRETPATH?token=QUERYTOKEN',
+          ]),
+          '200',
+        );
+        assert.equal(
+          request([
+            '-H',
+            'Referer: https://shop.example.test/auth/tg?token=REFERERTOKEN',
+            'https://shop.example.test/auth/tg?token=SIGNINTOKEN',
+          ]),
+          '200',
+        );
+        await sleep(500);
+        const logs = docker(['logs', name]);
+        assert.match(logs, /\/tg\/webhook\/\*\*\*/u, `${name} logged no webhook line:\n${logs}`);
+        for (const secret of [
+          'SECRETPATH',
+          'QUERYTOKEN',
+          'HEADERSECRET',
+          'REFERERTOKEN',
+          'SIGNINTOKEN',
+        ])
+          assert.doesNotMatch(logs, new RegExp(secret, 'u'), `${name} logged ${secret}:\n${logs}`);
+
+        docker(['rm', '-f', name], { expectSuccess: false });
+        containers.splice(containers.indexOf(name), 1);
+      }
+    } finally {
+      for (const container of containers) docker(['rm', '-f', container], { expectSuccess: false });
+      docker(['network', 'rm', network], { expectSuccess: false });
+      rmSync(certs, { recursive: true, force: true });
+      for (const directory of directories) rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

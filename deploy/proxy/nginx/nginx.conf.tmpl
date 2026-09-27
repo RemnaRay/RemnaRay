@@ -20,11 +20,15 @@ http {
     # Docker's embedded DNS: the ACME module and the variable upstreams need it.
     resolver 127.0.0.11 valid=30s ipv6=off;
 
+    # Section 19.6: never the webhook's `secret_path`, and the `Referer`
+    # without its query (a page opened from `/auth/tg?token=` sends it).
+    map $uri $rr_log_uri { ~^/tg/webhook/ /tg/webhook/***; default $uri; }
+    map $http_referer $rr_log_referer { ~^(?<rr_referer_path>[^?]*) $rr_referer_path; default ''; }
     log_format rr_json escape=json
       '{"time":"$time_iso8601","remote_addr":"$remote_addr","request_id":"$request_id",'
-      '"method":"$request_method","uri":"$uri","status":$status,"bytes_sent":$bytes_sent,'
+      '"method":"$request_method","uri":"$rr_log_uri","status":$status,"bytes_sent":$bytes_sent,'
       '"request_time":$request_time,"upstream":"$upstream_addr","upstream_time":"$upstream_response_time",'
-      '"host":"$host","user_agent":"$http_user_agent","referer":"$http_referer","tls_protocol":"$ssl_protocol"}';
+      '"host":"$host","user_agent":"$http_user_agent","referer":"$rr_log_referer","tls_protocol":"$ssl_protocol"}';
     access_log /dev/stdout rr_json;
 
     # nginx is the first public hop; only the compose network may set X-Forwarded-For.

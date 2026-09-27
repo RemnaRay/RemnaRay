@@ -440,9 +440,34 @@ list above:
   `RR_INTERNAL_TOKEN`, change the bot webhook secret path and token, delete
   `rr:asess:*`, and clear the old container logs.
 
-**Exact next:** package 2 — R113 (proxy access logs mask the webhook secret
-path), then R82, R28, R84, P-2, P-9 + R26, R13 + L-34, R24, R25, R137, R27,
-R78, R81, R79 + L-3, L-6, R101.
+- **R113 Done (local) — the proxies' access logs kept the webhook
+  `secret_path`.** Cause: nginx's `rr_json` format logged `$uri` and Caddy's
+  filter removed only the query's `token`, so every Telegram update wrote
+  `/tg/webhook/<secret_path>` to `docker logs` (19.6 forbids it; 21.4: the
+  sensitive fields are cleaned in both proxies); the `Referer` kept its query,
+  and a page opened from `/auth/tg?token=` sends that URL as its assets'
+  referrer. Repair: nginx (`nginx.conf.tmpl`) and the external edge log
+  `$rr_log_uri` (`map $uri`: `/tg/webhook/***`) and the referrer without its
+  query; Caddy's filter drops the referrer's query and rewrites `request>uri`
+  with two `regexp` filters — the webhook path to `/tg/webhook/***`, then the
+  whole query (before: only `token`). Contract checked on 2026-09-28
+  (Context7 `/caddyserver/website`, `log` › `filter` › `regexp`); two
+  `regexp` filters on one field applied in order was tried on
+  `caddy:2.11.4-alpine`, the version the image pins. Evidence:
+  `proxy-render.test.ts` «proxy access logs» (nginx format and map, edge,
+  Caddy filters) red → green; `test/m5.proxy.integration.test.mjs` «Section
+  19.6: the access logs carry neither the webhook secret path nor a query
+  token» — real nginx and Caddy images, a signed-looking
+  `POST /tg/webhook/SECRETPATH?token=…` and `GET /auth/tg?token=…` with a
+  tokened `Referer` — red on nginx (`"uri":"/tg/webhook/SECRETPATH"`,
+  `"referer":"…?token=REFERERTOKEN"`) → green on both. Checks: `m5.proxy`
+  6/6, API proxy-render 33, lint, format, typecheck; `pnpm test` 59/60 (the
+  known local-only docs-link failure on the untracked review files). VPS
+  action: none (the proxy re-renders on deploy).
+
+**Exact next:** package 2 — R82 (the bot logs through pino), then R28, R84,
+P-2, P-9 + R26, R13 + L-34, R24, R25, R137, R27, R78, R81, R79 + L-3, L-6,
+R101.
 
 ## VPS acceptance run — 2026-09-26
 
