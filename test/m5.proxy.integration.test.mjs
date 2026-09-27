@@ -615,3 +615,120 @@ test(
     }
   },
 );
+
+test(
+  'Section 21.3: a security header the upstream also sends reaches the client once',
+  { timeout: 600_000 },
+  async () => {
+    docker(['build', '-f', 'deploy/proxy/nginx/Dockerfile', '-t', IMAGE, '.']);
+    docker(['build', '-f', 'deploy/proxy/caddy/Dockerfile', '-t', CADDY_IMAGE, '.']);
+    const { renderProfile, writeAtomically } =
+      await import('../apps/api/dist/tools/proxy-render.js');
+    const prefix = `rr-once-${String(process.pid)}`;
+    const network = `${prefix}-net`;
+    const certs = mkdtempSync(join(tmpdir(), 'rr-once-certs-'));
+    selfSigned(certs);
+    const directories = [];
+    const containers = [];
+    // `web` sends `nosniff` with every theme asset (its SVGs are sandboxed),
+    // as the proxy does for every answer.
+    const upstream = `const http = require('node:http');
+      for (const port of [3000, 3001])
+        http.createServer((q, r) => {
+          r.setHeader('X-Content-Type-Options', 'nosniff');
+          r.setHeader('Content-Type', 'image/svg+xml');
+          r.end('<svg xmlns="http://www.w3.org/2000/svg"/>');
+        }).listen(port);`;
+    const headersOf = (path) =>
+      docker(
+        [
+          'run',
+          '--rm',
+          '--network',
+          network,
+          'curlimages/curl:8.17.0',
+          '-sk',
+          '-o',
+          '/dev/null',
+          '-D',
+          '-',
+          `https://shop.example.test${path}`,
+        ],
+        { expectSuccess: false },
+      );
+    try {
+      docker(['network', 'create', network]);
+      containers.push(`${prefix}-up`);
+      docker([
+        'run',
+        '-d',
+        '--name',
+        `${prefix}-up`,
+        '--network',
+        network,
+        '--network-alias',
+        'api',
+        '--network-alias',
+        'web',
+        'node:24-alpine',
+        'node',
+        '-e',
+        upstream,
+      ]);
+      for (const profile of ['nginx', 'caddy']) {
+        const directory = mkdtempSync(join(tmpdir(), `rr-once-${profile}-`));
+        directories.push(directory);
+        writeAtomically(
+          directory,
+          renderProfile(
+            resolve(TEMPLATES, profile),
+            {
+              domain: 'shop.example.test',
+              extraDomains: [],
+              acmeEmail: '',
+              adminAllowlist: [],
+              dockerCidr: '172.28.0.0/16',
+              apiDocs: false,
+              internalApi: false,
+              caddyRateLimit: true,
+            },
+            { profile, tlsMode: 'custom', certificatePresent: true },
+          ),
+        );
+        const name = `${prefix}-${profile}`;
+        containers.push(name);
+        docker([
+          'run',
+          '-d',
+          '--name',
+          name,
+          '--network',
+          network,
+          '--network-alias',
+          'shop.example.test',
+          '-v',
+          profile === 'nginx' ? `${directory}:/etc/nginx/conf.d:ro` : `${directory}:/etc/caddy:ro`,
+          '-v',
+          profile === 'nginx' ? `${certs}:/etc/nginx/certs:ro` : `${certs}:/certs:ro`,
+          profile === 'nginx' ? IMAGE : CADDY_IMAGE,
+        ]);
+        let headers = '';
+        for (let attempt = 0; attempt < 30 && !/^HTTP\/\S+ 200/mu.test(headers); attempt += 1) {
+          await sleep(500);
+          headers = headersOf('/themes/manta/favicon.svg');
+        }
+        assert.match(headers, /^HTTP\/\S+ 200/mu, `${name} never proxied:\n${headers}`);
+        const count = headers.match(/^x-content-type-options:/gimu)?.length ?? 0;
+        assert.equal(count, 1, `${name} sent x-content-type-options ${String(count)} times`);
+
+        docker(['rm', '-f', name], { expectSuccess: false });
+        containers.splice(containers.indexOf(name), 1);
+      }
+    } finally {
+      for (const container of containers) docker(['rm', '-f', container], { expectSuccess: false });
+      docker(['network', 'rm', network], { expectSuccess: false });
+      rmSync(certs, { recursive: true, force: true });
+      for (const directory of directories) rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

@@ -103,6 +103,9 @@ server {
     }
     location ^~ /themes/ {
         proxy_cache rr_static; proxy_cache_valid 200 1d;
+        # `web` sends `nosniff` with every theme asset; the proxy adds its own
+        # (security-headers.inc), and the header must reach the client once.
+        proxy_hide_header X-Content-Type-Options;
         proxy_pass http://rr_web;
     }
     # --- the administration console and the wizard (UI) ---

@@ -119,6 +119,23 @@ are repaired here, not moved to M6.
   GitHub (the next push to `dev`). Owner action: create the `main` ruleset
   with the required check `ci-ok` once it has reported once.
 
+### The first CI run on `dev` (run 36330571112, 2026-09-27)
+
+`quality` (with R65), `e2e`, `docker`, `proxy` and Lighthouse passed; `ci-ok`
+failed as designed because both `proxy-smoke` profiles failed. No CI had run
+since 2026-09-20, so three regressions from 2026-09-25/26 had gone unseen.
+One commit each:
+
+- **Done — nginx sent `X-Content-Type-Options` twice for theme assets.**
+  Since `d4827de` (2026-09-25) `web` sends `nosniff` with every theme asset
+  (sandboxed SVGs), and `security-headers.inc` adds it again; Caddy's
+  `header` replaces, so only nginx doubled it. Repair: nginx hides the upstream's
+  `X-Content-Type-Options` (`proxy_hide_header`) in its `/themes/` location. Evidence:
+  `test/m5.proxy.integration.test.mjs` «a security header the upstream also
+  sends reaches the client once» (real nginx and Caddy before an upstream
+  that sends `nosniff`) red on nginx (2 headers) → green on both; `test:m5`
+  10/10, lint, format, proxy tests.
+
 **Exact next:** the P-5 remainder (`VAQYBIN/remnaray-astra` →
 `RemnaRay/RemnaRay` in `docs/install.md` cosign identity, READMEs,
 `update-check.ts`, `.env.example`); then package 1.
