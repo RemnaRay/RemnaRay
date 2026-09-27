@@ -136,6 +136,17 @@ One commit each:
   that sends `nosniff`) red on nginx (2 headers) → green on both; `test:m5`
   10/10, lint, format, proxy tests.
 
+- **Done — the e2e validation test expected the client's `X-Request-Id`
+  behind the proxy.** The test added with F8 (`0e385a1`) sent
+  `x-request-id: e2e-validation-1` and required it back as `requestId`;
+  behind either proxy the id is the proxy's own (section 21: the proxy
+  generates `X-Request-Id` and passes it upstream; 9.3: `requestId` comes from
+  that header), so the smoke run failed while the proxy was right. The test
+  now requires `requestId` to be the `X-Request-Id` the API answered with, and
+  the sent value only on a direct call. Evidence: the CI failure (both
+  profiles); locally on the direct stack the test passes with the strict
+  branch; the smoke profile is confirmed by the next CI run.
+
 **Exact next:** the P-5 remainder (`VAQYBIN/remnaray-astra` →
 `RemnaRay/RemnaRay` in `docs/install.md` cosign identity, READMEs,
 `update-check.ts`, `.env.example`); then package 1.

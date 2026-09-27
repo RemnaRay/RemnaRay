@@ -288,13 +288,20 @@ test.describe('customer account', () => {
       data: { email: 'not an email' },
     });
     expect(response.status()).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: {
-        code: 'VALIDATION_ERROR',
-        details: [{ path: 'email' }],
-        requestId: 'e2e-validation-1',
-      },
+    const body = (await response.json()) as { error: { requestId: string } };
+    expect(body).toMatchObject({
+      error: { code: 'VALIDATION_ERROR', details: [{ path: 'email' }] },
     });
+    // The id is the `X-Request-Id` the API received and answers with: ours on
+    // a direct call, the proxy's own behind one (section 21: the proxy
+    // generates it for every request).
+    const answered = response
+      .headersArray()
+      .filter(({ name }) => name.toLowerCase() === 'x-request-id')
+      .map(({ value }) => value);
+    expect(answered).toContain(body.error.requestId);
+    if (process.env.RR_E2E_EXTERNAL_STACK !== 'true')
+      expect(body.error.requestId).toBe('e2e-validation-1');
   });
 
   test('buys a plan with the mock provider and sees the invoice paid', async ({
