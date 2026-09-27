@@ -93,6 +93,13 @@ async function linkRedemption(
   });
 }
 
+/** FR-020: a plan is sold while it is active and not deleted. */
+function planAvailable<T extends { isActive: boolean; deletedAt: Date | null }>(
+  plan: T | null,
+): plan is T {
+  return plan !== null && plan.isActive && plan.deletedAt === null;
+}
+
 /** Money formatting for notification parameters, in exact minor units. */
 function formatMinorRub(amountMinor: bigint): string {
   const units = (amountMinor / 100n).toString();
@@ -512,6 +519,13 @@ export class PaymentsRepository {
           const canceled = invoice.status === 'canceled';
           const late =
             canceled || invoice.status === 'expired' || invoice.expiresAt < event.receivedAt;
+          // Owner decision О-19 (P-1): money for a plan taken off sale after
+          // the invoice was issued goes to the balance like EX-02 — failing
+          // here would roll the payment back on every retry.
+          const unavailable =
+            invoice.planId !== null &&
+            !planAvailable(await tx.plan.findUnique({ where: { id: invoice.planId } }));
+          const toBalance = underpaid || late || unavailable || invoice.kind === 'topup';
           const credit = paid > 0n ? paid : invoice.amountMinor;
           await tx.invoice.update({
             where: { id: invoice.id },
@@ -524,7 +538,7 @@ export class PaymentsRepository {
           const txRow = await tx.transaction.create({
             data: {
               userId: invoice.userId,
-              type: underpaid || late || invoice.kind === 'topup' ? 'topup' : 'purchase',
+              type: toBalance ? 'topup' : 'purchase',
               status: 'completed',
               amountMinor: credit,
               currency: 'RUB',
@@ -532,7 +546,7 @@ export class PaymentsRepository {
               invoiceId: invoice.id,
             },
           });
-          if (underpaid || late || invoice.kind === 'topup') {
+          if (toBalance) {
             await this.postEntry(
               tx,
               txRow.id,
@@ -580,7 +594,7 @@ export class PaymentsRepository {
               },
             });
           }
-          if (underpaid || late || invoice.kind === 'topup')
+          if (toBalance)
             await queueNotification(
               tx,
               'payment.to_balance',
@@ -596,12 +610,14 @@ export class PaymentsRepository {
               `payment.succeeded:${invoice.id}`,
               { amount: formatMinorRub(invoice.amountMinor) },
             );
-          if (underpaid || late) {
+          if (underpaid || late || unavailable) {
             const alert = underpaid
               ? 'payment.underpaid'
               : canceled
                 ? 'payment.after_cancel'
-                : 'payment.late';
+                : late
+                  ? 'payment.late'
+                  : 'payment.plan_unavailable';
             await tx.outboxJob.create({
               data: {
                 queue: 'notify',
@@ -768,7 +784,7 @@ export class PaymentsRepository {
     planChange = false,
   ) {
     const plan = await tx.plan.findUnique({ where: { id: planId } });
-    if (!plan || !plan.isActive || plan.deletedAt) throw new PaymentError('PLAN_UNAVAILABLE');
+    if (!planAvailable(plan)) throw new PaymentError('PLAN_UNAVAILABLE');
     const now = new Date();
     const live = await tx.subscription.findFirst({
       where: { userId, status: { in: ['provisioning', 'active', 'grace'] } },

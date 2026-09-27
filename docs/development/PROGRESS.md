@@ -266,8 +266,33 @@ times delivered]`; `XAUTOCLAIM` without `JUSTID` increments the count),
   `pnpm build` of P-1 and fixed in the tests. `pnpm build` is now part of each
   repair's gates.
 
-**Exact next:** package 1 — P-1 (a payment for a plan taken off sale goes to
-the balance), then P-1 part 2, R74 and the re-apply backstop, one commit each.
+- **P-1 Done (local) — a payment for a plan taken off sale after invoicing
+  was never credited, silently.** Cause: `applyEvent` reached
+  `activateSubscription`, which throws `PLAN_UNAVAILABLE` for an inactive or
+  deleted plan, and the whole transaction rolled back — on the inline apply
+  (the webhook still answered 2xx), on all five `payments.apply-event` retries
+  and on every poll; no `process_error`, no alert; for Stars nothing ever
+  recovers it. A normal trigger: switching a plan off while someone's 30–60
+  minute invoice is open. Repair (`payments.repository.ts`, owner decision
+  О-19): inside the apply transaction the plan of a plan invoice is read; one
+  that is not available (`planAvailable`, shared with `activateSubscription`)
+  sends the money to the balance exactly like the late branch — `topup`
+  transaction, `provider_clearing → user`, `payment.to_balance`, invoice
+  `paid`, the same reward hooks — with the new `payment.plan_unavailable`
+  alert (after underpaid, after_cancel and late in priority). The three
+  repeated "to balance" conditions became one `toBalance`. Invariants: one
+  transaction per invoice; no revenue and no subscription without an
+  available plan; the ledger matches the balance. The alert type extends the
+  16.x list. Evidence: new `test/m2.payment-recovery.integration.test.mjs`
+  (PostgreSQL 18; added to `test:m2`) «a payment for a plan taken off sale
+  goes to the balance» red (invoice `pending`, `PLAN_UNAVAILABLE` in the log)
+  → green (paid, one `topup` of 29900, balance 29900, one clearing→user
+  entry, no subscription, alert and notice queued, event processed).
+  Checks: API 394, `m2.payment` + `m2.stars` 2/2, build, lint, format,
+  typecheck, i18n-check (2292); `docs/payments/README.md`. VPS action: none.
+
+**Exact next:** package 1 — P-1 part 2 (`plans.remove` counts paid invoices),
+then R74 and the re-apply backstop, one commit each.
 
 ## VPS acceptance run — 2026-09-26
 

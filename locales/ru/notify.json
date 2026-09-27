@@ -31,6 +31,7 @@
   "alerts.payment.after_cancel": "Оплата поступила по отменённому счёту и зачислена на баланс.",
   "alerts.payment.duplicate": "Повторная оплата уже оплаченного счёта зачислена на баланс.",
   "alerts.payment.underpaid": "Получена недоплата по счёту.",
+  "alerts.payment.plan_unavailable": "Оплата поступила за тариф, снятый с продажи, и зачислена на баланс.",
   "alerts.payment.stars_stuck": "Оплата звёздами не записана после нескольких попыток; бот продолжает повторять.",
   "alerts.payment.provider_refund": "Провайдер сообщил о возврате.",
   "alerts.ledger.mismatch": "Аудит книги нашёл расхождение.",

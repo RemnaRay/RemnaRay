@@ -28,6 +28,11 @@ without activating anything, and administrators are alerted (`payment.late`,
 the same payment reported again (EX-03) and changes nothing — except for
 Telegram Stars, where a new charge id is new money (see [stars](./stars.md)).
 
+A payment for a plan taken off sale (inactive or deleted) after the invoice
+was issued is credited to the balance in the same way, and administrators get
+the `payment.plan_unavailable` alert (owner decision О-19): nothing is
+activated, and the customer may buy another plan from the balance.
+
 Provider configuration is deliberately incomplete until an administrator
 enables the provider and records a successful health check. `POST
 /me/invoices` applies the same rule as `GET /me/payment-methods` (AC-061): an
