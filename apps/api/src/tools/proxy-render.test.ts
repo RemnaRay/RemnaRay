@@ -437,3 +437,23 @@ describe('proxy access logs (section 19.6, R113)', () => {
     expect(caddyfile).toContain('request>headers>Referer regexp \\?.*$ ""');
   });
 });
+
+describe('every proxy forwards the client address (P-9)', () => {
+  // The API tells the web container's own requests from a visitor's by the
+  // missing `X-Forwarded-For`, so no proxy may drop it.
+  it('nginx sets it for every location, and no location overrides the headers', () => {
+    const common = readFileSync(resolve(templates, 'common-proxy.inc'), 'utf8');
+    expect(common).toContain('proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;');
+    for (const [name, content] of render('acme'))
+      if (name.startsWith('site')) expect(content, name).not.toContain('proxy_set_header');
+  });
+
+  it('the external edge sets it', () => {
+    const edge = readFileSync(resolve(proxyRoot, 'external/edge.conf'), 'utf8');
+    expect(edge).toContain('proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;');
+  });
+
+  it('Caddy keeps its default', () => {
+    expect(renderCaddy('acme')).not.toMatch(/header_up\s+-X-Forwarded-For/iu);
+  });
+});

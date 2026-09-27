@@ -8,7 +8,13 @@ import { SettingsService } from '../settings/settings.service';
 import { UsersModule } from '../users/users.module';
 import { UsersService } from '../users/users.service';
 import { AuthController, InternalAuthController } from './auth.controller';
-import { AuthGuard, CsrfGuard, InternalTokenGuard, type AuthenticatedRequest } from './auth.guards';
+import {
+  AuthGuard,
+  CsrfGuard,
+  InternalTokenGuard,
+  trustedInternal,
+  type AuthenticatedRequest,
+} from './auth.guards';
 import { AuthService } from './auth.service';
 import { RedisSessionStore, type SessionStorePort } from './auth.session';
 import { ValkeyThrottlerStorage } from './auth.throttler';
@@ -17,11 +23,26 @@ import { WebhookThrottlerGuard } from './webhook-throttler.guard';
 const sessionStore = new RedisSessionStore();
 const throttlerStorage = new ValkeyThrottlerStorage();
 
-/** Internal workers authenticate with a token and have their own job cadence. */
+/**
+ * Internal workers authenticate with a token and have their own job cadence.
+ * The web container's own server-side requests — page data, the setup state,
+ * the bot's sign-in link — are not an anonymous visitor either (P-9, R26,
+ * owner decision 2026-09-28): they come straight from inside the compose
+ * network without `X-Forwarded-For`, which both bundled proxies and the
+ * external edge always set, so a visitor never looks like one. The visitor
+ * is limited at the proxy; the client IP is not forwarded on page data,
+ * since Next.js keys its data cache on the request headers.
+ */
 export function skipThrottleForInternal(context: ExecutionContext): boolean {
   const request = context.switchToHttp().getRequest<FastifyRequest>();
   const path = request.routeOptions.url ?? request.url.split('?')[0] ?? '';
-  return path.startsWith('/api/internal/');
+  if (path.startsWith('/api/internal/')) return true;
+  const socket = (request.raw as FastifyRequest['raw'] | undefined)?.socket.remoteAddress;
+  return (
+    socket !== undefined &&
+    request.headers['x-forwarded-for'] === undefined &&
+    trustedInternal(socket)
+  );
 }
 
 /**

@@ -56,3 +56,54 @@ describe('internal throttling boundary', () => {
     );
   });
 });
+
+// P-9 and R26 (owner decision 2026-09-28): the web container renders pages
+// and exchanges the bot's sign-in link server-side, straight to `api:3000`,
+// so all of it arrived as one anonymous visitor — `ip:<web>`, 60 a minute
+// for the whole shop — and a single client could exhaust it for everybody.
+describe('the web container`s own requests (P-9, R26)', () => {
+  function direct(
+    url: string,
+    socket: string,
+    headers: Record<string, string> = {},
+    ip = socket,
+  ): ExecutionContext {
+    return {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          url,
+          routeOptions: { url: undefined },
+          ip,
+          headers,
+          raw: { socket: { remoteAddress: socket } },
+        }),
+      }),
+    } as unknown as ExecutionContext;
+  }
+
+  it('are not counted as an anonymous visitor', () => {
+    expect(skipThrottleForInternal(direct('/api/v1/public/theme', '172.28.1.7'))).toBe(true);
+    expect(skipThrottleForInternal(direct('/api/v1/auth/tg?token=x', '172.28.1.7'))).toBe(true);
+    expect(skipThrottleForInternal(direct('/api/setup/v1/state', '::ffff:172.28.1.7'))).toBe(true);
+  });
+
+  it('still count a visitor the proxy forwards, by the visitor`s address', () => {
+    const proxied = direct(
+      '/api/v1/public/theme',
+      '172.28.0.10',
+      { 'x-forwarded-for': '198.51.100.4' },
+      '198.51.100.4',
+    );
+    expect(skipThrottleForInternal(proxied)).toBe(false);
+    expect(sessionTracker(proxied.switchToHttp().getRequest())).toBe('ip:198.51.100.4');
+  });
+
+  it('still count a direct request from outside the compose network', () => {
+    expect(skipThrottleForInternal(direct('/api/v1/public/theme', '203.0.113.9'))).toBe(false);
+    expect(
+      skipThrottleForInternal(
+        direct('/api/v1/public/theme', '203.0.113.9', { 'x-forwarded-for': '172.28.1.7' }),
+      ),
+    ).toBe(false);
+  });
+});

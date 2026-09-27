@@ -556,9 +556,35 @@ list above:
   forged Telegram webhooks in a row with 403, none with 429. Checks: API 408,
   `test:m1` 7/7, build, lint, format, typecheck. VPS action: none.
 
-**Exact next:** package 2 — P-9 + R26 (web's own requests out of the
-anonymous bucket), then R13 + L-34, R24, R25, R137, R27, R78, R81,
-R79 + L-3, L-6, R101.
+- **P-9 + R26 Done (local) — every page render and bot sign-in shared one
+  anonymous bucket of 60 a minute.** Cause: the web container calls
+  `api:3000` directly for page data (theme, ten i18n namespaces, config,
+  plans, legal — `revalidate` 5 s to 5 min), the setup state and, from
+  `/auth/tg`, the bot sign-in exchange; none of it carries a client address,
+  so the throttler counted all of it as `ip:<web>`, 60/min. Page data alone
+  can exceed that (P-9: stale or fallback theme, empty `botUsername`, AC-181),
+  and anyone sending 61 `GET /auth/tg?token=x` a minute made «Open account»
+  fail for every customer (R26). Repair (owner decision, 2026-09-28):
+  `skipThrottleForInternal` also passes a request whose socket is inside
+  `RR_TRUSTED_INTERNAL_CIDR` and which has no `X-Forwarded-For` — both
+  bundled proxies and the external edge always set it, so a visitor never
+  qualifies; visitors stay limited at the proxy and, through it, by their own
+  address. The client IP is not forwarded on page data: Next 16.3.5 puts
+  request headers in its data-cache key, so it would split the cache per
+  visitor. Recorded deviation from 9.1 (the web server is not an anonymous
+  visitor). With L-3 the sign-in exchange moves to the browser, where it is
+  counted per visitor again. Evidence: `auth.throttler.test.ts` «the web
+  container's own requests» — direct requests from the compose network
+  (IPv4 and IPv4-mapped) are not counted, red → green; a proxied request is
+  still `ip:<visitor>` and a direct request from outside, with or without a
+  forged `X-Forwarded-For`, still counted (green before and after);
+  `proxy-render.test.ts` «every proxy forwards the client address» pins the
+  assumption (nginx sets it for every location and none overrides the
+  headers, the edge sets it, Caddy keeps its default). Checks: API 414, lint,
+  format, typecheck. VPS action: none.
+
+**Exact next:** package 2 — R13 + L-34 (proxy ports on IPv4 only), then R24,
+R25, R137, R27, R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 
