@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Infrastructure } from '../../infra/infra.module';
 import type { SettingsService } from '../settings/settings.service';
 import { emitWebhook, signature, ulid, type OutgoingEventBody } from './outgoing';
-import { WebhooksService } from './webhooks.service';
+import { WebhooksService, recipientKey } from './webhooks.service';
 
 const event: OutgoingEventBody = {
   id: ulid(Date.parse('2026-09-18T10:00:00Z')),
@@ -83,9 +83,11 @@ describe('section 9.8 outgoing webhooks', () => {
       { url: target.url, secret: 's3cret', events: ['payment.succeeded'], enabled: true },
     ]);
 
-    await expect(webhooks.deliver({ event, url: target.url })).resolves.toEqual({
-      status: 'delivered',
-    });
+    await expect(webhooks.deliver({ event, recipient: recipientKey(target.url) })).resolves.toEqual(
+      {
+        status: 'delivered',
+      },
+    );
 
     const [delivery] = target.received;
     expect(delivery?.body).toBe(JSON.stringify(event));
@@ -110,7 +112,9 @@ describe('section 9.8 outgoing webhooks', () => {
     ]);
     const before = await failures();
 
-    await expect(webhooks.deliver({ event, url: target.url })).rejects.toMatchObject({
+    await expect(
+      webhooks.deliver({ event, recipient: recipientKey(target.url) }),
+    ).rejects.toMatchObject({
       status: 502,
     });
     expect(target.received).toHaveLength(1);
@@ -121,9 +125,9 @@ describe('section 9.8 outgoing webhooks', () => {
     const { webhooks } = service([
       { url: 'http://127.0.0.1:1/hook', secret: 's', events: ['payment.succeeded'], enabled: true },
     ]);
-    await expect(webhooks.deliver({ event, url: 'http://127.0.0.1:1/hook' })).rejects.toMatchObject(
-      { status: 502 },
-    );
+    await expect(
+      webhooks.deliver({ event, recipient: recipientKey('http://127.0.0.1:1/hook') }),
+    ).rejects.toMatchObject({ status: 502 });
   });
 
   it('skips a recipient removed, disabled or unsubscribed since the event', async () => {
@@ -134,11 +138,24 @@ describe('section 9.8 outgoing webhooks', () => {
       [{ url: target.url, secret: 's', events: ['user.created'], enabled: true }],
     ]) {
       const { webhooks } = service(recipients);
-      await expect(webhooks.deliver({ event, url: target.url })).resolves.toEqual({
+      await expect(
+        webhooks.deliver({ event, recipient: recipientKey(target.url) }),
+      ).resolves.toEqual({
         status: 'skipped',
       });
     }
     expect(target.received).toHaveLength(0);
+  });
+
+  it('still delivers a job queued with the recipient`s URL before R84', async () => {
+    const target = await recipient(200);
+    const { webhooks } = service([
+      { url: target.url, secret: 's', events: ['payment.succeeded'], enabled: true },
+    ]);
+    await expect(webhooks.deliver({ event, url: target.url })).resolves.toEqual({
+      status: 'delivered',
+    });
+    expect(target.received).toHaveLength(1);
   });
 
   it('dispatches one delivery per enabled recipient subscribed to the event', async () => {
@@ -156,10 +173,14 @@ describe('section 9.8 outgoing webhooks', () => {
 
     await expect(webhooks.dispatch(event)).resolves.toEqual({ recipients: 2 });
     const rows = created as { data: Record<string, unknown> }[];
+    // R84: the recipient's URL is a secret setting (it often carries a token),
+    // so the outbox row and the BullMQ job name the recipient by a hash.
     expect(rows.map((row) => row.data.payload)).toEqual([
-      { event, url: 'https://a.example/hook' },
-      { event, url: 'https://d.example/hook' },
+      { event, recipient: recipientKey('https://a.example/hook') },
+      { event, recipient: recipientKey('https://d.example/hook') },
     ]);
+    expect(recipientKey('https://a.example/hook')).toMatch(/^[0-9a-f]{16}$/u);
+    expect(JSON.stringify(rows)).not.toMatch(/a\.example|d\.example/u);
     expect(rows[0]?.data).toMatchObject({ queue: 'webhooks', name: 'webhooks.deliver' });
     expect(rows[0]?.data.jobId).toMatch(new RegExp(`^webhook:${event.id}:[0-9a-f]{16}$`, 'u'));
     expect(rows[0]?.data.jobId).not.toBe(rows[1]?.data.jobId);

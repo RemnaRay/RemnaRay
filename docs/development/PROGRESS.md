@@ -508,8 +508,26 @@ list above:
   (the stand is recreated, О-20); if a database dump or backup may have
   leaked, change Robokassa's Password1/Password2.
 
-**Exact next:** package 2 — R84 (recipient URLs out of the outbox), then P-2,
-P-9 + R26, R13 + L-34, R24, R25, R137, R27, R78, R81, R79 + L-3, L-6, R101.
+- **R84 Done (local) — outgoing webhook URLs were copied into the outbox in
+  clear.** Cause: `webhooks.outgoing` is a secret setting (encrypted, URL and
+  secret), but `dispatch` wrote each recipient's full URL into
+  `outbox_jobs.payload` and so into the BullMQ job data in Valkey; such URLs
+  often carry a token (`https://hooks…/T0/B0/<token>`, `?key=`), which then
+  sat unencrypted in the database, its backups and Valkey. Repair:
+  `dispatch` names the recipient by `recipientKey(url)` (the 16-hex SHA-256
+  prefix the job id already used); `deliver` finds the recipient in the
+  settings by that key — it already read the secret there on every attempt —
+  and still accepts a job queued with `url` before this change. Evidence:
+  `webhooks.service.test.ts` «dispatches one delivery per enabled recipient»
+  now requires `{ event, recipient }` and no URL in the rows, red (the URL
+  in the payload) → green; «still delivers a job queued with the recipient's
+  URL before R84» green; the delivery tests address recipients by key.
+  Checks: API 406, `m4.webhooks` 1/1 (dispatch → outbox → worker → signed
+  delivery), build, lint, format, typecheck. VPS action: none.
+
+**Exact next:** package 2 — P-2 (the Telegram webhook secret before the
+throttler, webhook buckets per IP), then P-9 + R26, R13 + L-34, R24, R25,
+R137, R27, R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

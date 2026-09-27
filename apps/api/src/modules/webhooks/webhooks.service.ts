@@ -10,7 +10,16 @@ import { outgoingEventSchema, signature, type OutgoingEventBody } from './outgoi
 
 type Recipient = { url: string; secret: string; events: string[]; enabled: boolean };
 
-const deliverSchema = z.object({ event: outgoingEventSchema, url: z.url() });
+/**
+ * A delivery names its recipient by `recipientKey(url)`: the URL belongs to the
+ * secret `webhooks.outgoing` setting and often carries a token, so it is not
+ * copied into `outbox_jobs` or the BullMQ job. `url` is what jobs queued
+ * before R84 carry.
+ */
+const deliverSchema = z.union([
+  z.object({ event: outgoingEventSchema, recipient: z.string().regex(/^[0-9a-f]{16}$/u) }),
+  z.object({ event: outgoingEventSchema, url: z.url() }),
+]);
 
 /** Section 9.8: 10 s per attempt. */
 const DELIVERY_TIMEOUT_MS = 10_000;
@@ -41,8 +50,8 @@ export class WebhooksService {
           data: {
             queue: 'webhooks',
             name: 'webhooks.deliver',
-            payload: { event, url: recipient.url } as never,
-            jobId: `webhook:${event.id}:${urlKey(recipient.url)}`,
+            payload: { event, recipient: recipientKey(recipient.url) } as never,
+            jobId: `webhook:${event.id}:${recipientKey(recipient.url)}`,
           },
         });
     });
@@ -56,11 +65,14 @@ export class WebhooksService {
    * retries it on the section 9.8 schedule.
    */
   async deliver(body: unknown): Promise<{ status: 'delivered' | 'skipped' }> {
-    const { event, url } = deliverSchema.parse(body);
+    const delivery = deliverSchema.parse(body);
+    const { event } = delivery;
+    const key = 'recipient' in delivery ? delivery.recipient : recipientKey(delivery.url);
     const recipient = (await this.recipients()).find(
-      (candidate) => candidate.url === url && subscribed(candidate, event),
+      (candidate) => recipientKey(candidate.url) === key && subscribed(candidate, event),
     );
     if (!recipient) return { status: 'skipped' };
+    const { url } = recipient;
     const payload = JSON.stringify(event);
     let failure: string;
     try {
@@ -101,6 +113,6 @@ function subscribed(recipient: Recipient, event: OutgoingEventBody): boolean {
   return recipient.enabled && recipient.events.includes(event.type);
 }
 
-function urlKey(url: string): string {
+export function recipientKey(url: string): string {
   return createHash('sha256').update(url).digest('hex').slice(0, 16);
 }
