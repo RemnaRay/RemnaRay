@@ -1,6 +1,6 @@
 import { Module, type ExecutionContext } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import type { FastifyRequest } from 'fastify';
 
 import { SettingsModule } from '../settings/settings.module';
@@ -12,6 +12,7 @@ import { AuthGuard, CsrfGuard, InternalTokenGuard, type AuthenticatedRequest } f
 import { AuthService } from './auth.service';
 import { RedisSessionStore, type SessionStorePort } from './auth.session';
 import { ValkeyThrottlerStorage } from './auth.throttler';
+import { WebhookThrottlerGuard } from './webhook-throttler.guard';
 
 const sessionStore = new RedisSessionStore();
 const throttlerStorage = new ValkeyThrottlerStorage();
@@ -26,7 +27,9 @@ export function skipThrottleForInternal(context: ExecutionContext): boolean {
 /**
  * Section 9.1: webhooks are limited to 600 a minute per provider, apart from
  * the anonymous visitors' 60 a minute per IP. The Telegram webhook is the
- * `telegram` provider.
+ * `telegram` provider. P-2 (owner decision О-16): the bucket is the
+ * provider's per sending address, so forged requests fill only the sender's
+ * own bucket.
  */
 export function webhookProvider(url: string): string | null {
   const path = url.split('?')[0] ?? '';
@@ -44,7 +47,7 @@ export function sessionRequestLimit(context: ExecutionContext): number {
 export function sessionTracker(request: Record<string, unknown>): string {
   const typed = request as unknown as AuthenticatedRequest;
   const provider = webhookProvider(typed.url);
-  if (provider) return `webhook:${provider}`;
+  if (provider) return `webhook:${provider}:ip:${typed.ip}`;
   if (typed.admin) return `admin:${typed.admin.id}`;
   if (typed.user) return `user:${typed.user.id}`;
   return `ip:${typed.ip}`;
@@ -71,7 +74,7 @@ export function sessionTracker(request: Record<string, unknown>): string {
         new AuthService(settings, users, sessions, process.env.RR_APP_KEY ?? ''),
     },
     { provide: APP_GUARD, useClass: AuthGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: WebhookThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     InternalTokenGuard,
   ],

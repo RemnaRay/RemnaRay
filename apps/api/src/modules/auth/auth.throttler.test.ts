@@ -32,13 +32,15 @@ describe('internal throttling boundary', () => {
 
   // Section 9.1: webhooks — 600/min per provider. They used to be counted as
   // anonymous requests, 60/min per IP in the visitors' bucket, so a burst of
-  // provider notifications was refused with 429.
+  // provider notifications was refused with 429. P-2 (О-16): one bucket per
+  // provider let anyone fill it with forged requests and lock the provider
+  // out, so the bucket is the provider's per sending address.
   it.each([
-    ['/webhooks/yookassa', 'webhook:yookassa'],
-    ['/webhooks/robokassa/result', 'webhook:robokassa'],
-    ['/webhooks/remnawave', 'webhook:remnawave'],
-    ['/tg/webhook/s3cr3t-path', 'webhook:telegram'],
-  ])('gives %s its own provider bucket of 600 a minute', (url, tracker) => {
+    ['/webhooks/yookassa', 'webhook:yookassa:ip:192.0.2.1'],
+    ['/webhooks/robokassa/result', 'webhook:robokassa:ip:192.0.2.1'],
+    ['/webhooks/remnawave', 'webhook:remnawave:ip:192.0.2.1'],
+    ['/tg/webhook/s3cr3t-path', 'webhook:telegram:ip:192.0.2.1'],
+  ])('gives %s its own provider bucket of 600 a minute per address', (url, tracker) => {
     const webhook = context(url);
     expect(sessionRequestLimit(webhook)).toBe(600);
     expect(sessionTracker(webhook.switchToHttp().getRequest())).toBe(tracker);
@@ -46,7 +48,7 @@ describe('internal throttling boundary', () => {
 
   it('keeps the query string and other paths out of the webhook buckets', () => {
     expect(sessionTracker(context('/webhooks/lava?x=1').switchToHttp().getRequest())).toBe(
-      'webhook:lava',
+      'webhook:lava:ip:192.0.2.1',
     );
     expect(sessionRequestLimit(context('/webhooksfoo'))).toBe(60);
     expect(sessionTracker(context('/tg/webhookx').switchToHttp().getRequest())).toBe(

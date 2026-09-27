@@ -525,9 +525,40 @@ list above:
   Checks: API 406, `m4.webhooks` 1/1 (dispatch → outbox → worker → signed
   delivery), build, lint, format, typecheck. VPS action: none.
 
-**Exact next:** package 2 — P-2 (the Telegram webhook secret before the
-throttler, webhook buckets per IP), then P-9 + R26, R13 + L-34, R24, R25,
-R137, R27, R78, R81, R79 + L-3, L-6, R101.
+- **P-2 Done (local) — anyone could shut the webhooks out with forged
+  requests.** Cause: the section 9.1 webhook bucket was one per provider
+  (`webhook:<provider>`, 600/min) and the global `ThrottlerGuard` counted a
+  request before its controller checked the secret or signature, so 600
+  forged `POST /tg/webhook/x` (or `/webhooks/<provider>`) a minute from one
+  address — nginx's `rr_webhooks` lets 30 r/s through per IP — made every
+  genuine Telegram update and provider notification answer 429 and blocked
+  the bucket for 60 s. Repair (owner decision О-16): the throttler is now
+  `WebhookThrottlerGuard` (`ThrottlerGuard` with the same options and
+  storage), which refuses a `/tg/webhook/<path>` request whose path and
+  `X-Telegram-Bot-Api-Secret-Token` match no bot with 403 before it counts;
+  the match — shop bot and support bot — moved from the controller to
+  `bot/telegram-webhook-target.ts`, used by both. Payment signatures need the
+  body and the provider's configuration, so they stay in the service; for
+  them, and for Telegram, the bucket is now the provider's per address
+  (`webhook:<provider>:ip:<ip>`, 600/min). Recorded deviation from 9.1
+  («600/min per provider» → per provider and sending address). Contract
+  checked on 2026-09-28: Context7 `/nestjs/throttler` (extending
+  `ThrottlerGuard`, `canActivate`/`shouldSkip`) and the installed 6.7.0
+  typings (constructor with `@InjectThrottlerOptions`,
+  `@InjectThrottlerStorage`, `Reflector`). Evidence:
+  `auth.throttler.test.ts` per-address trackers red
+  (`webhook:yookassa`) → green; `webhook-throttler.guard.test.ts` — a forged
+  Telegram webhook (wrong token, wrong path, malformed escape) is refused
+  without touching the store, a genuine one counts; 601 notifications from
+  one address do not block another — red with the stock guard behaviour
+  (forged accepted; the second address 429) → green. The built API on the e2e
+  stack (PostgreSQL, Valkey) booted with the new guard and answered 650
+  forged Telegram webhooks in a row with 403, none with 429. Checks: API 408,
+  `test:m1` 7/7, build, lint, format, typecheck. VPS action: none.
+
+**Exact next:** package 2 — P-9 + R26 (web's own requests out of the
+anonymous bucket), then R13 + L-34, R24, R25, R137, R27, R78, R81,
+R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

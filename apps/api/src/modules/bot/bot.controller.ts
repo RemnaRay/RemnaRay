@@ -13,21 +13,18 @@ import {
 import { SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
 
 import { Infrastructure } from '../../infra/infra.module';
-import { InternalTokenGuard, equalToken } from '../auth/auth.guards';
+import { InternalTokenGuard } from '../auth/auth.guards';
 import { SettingsService } from '../settings/settings.service';
 import { I18nService } from '../public/i18n.service';
 import { emitWebhook, subscriptionData } from '../webhooks/outgoing';
 import { queuePanelSync } from '../remnawave/panel-jobs';
+import { telegramSecretToken, telegramWebhookTarget } from './telegram-webhook-target';
 
 const appendUpdate = `
 if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 redis.call('XADD', KEYS[1], 'MAXLEN', '~', 10000, '*', 'payload', ARGV[1])
 redis.call('SET', KEYS[2], '1', 'EX', 604800)
 return 1`;
-/** Where a support bot's updates wait for the bot process (F35). */
-export function supportUpdatesStream(botId: string): string {
-  return `tg:support-updates:${botId}`;
-}
 const publicCommandNames = [
   'start',
   'menu',
@@ -62,32 +59,13 @@ export class TelegramWebhookController {
     @Headers() headers: Record<string, string | string[] | undefined>,
     @Body() body: unknown,
   ) {
-    const header = headers['x-telegram-bot-api-secret-token'];
-    const token = Array.isArray(header) ? header[0] : header;
-    // The shop bot and, when configured, the support bot (F35) each have a
-    // secret path and token of their own, and a stream of their own; the
-    // support bot's is named after the bot, so a replaced bot's leftovers are
-    // never read by the next one.
-    const bots = [{ prefix: 'bot.', stream: 'tg:updates', received: 'tg:received:' }];
-    const supportToken = await this.settings.get('bot.support_token');
-    const supportBotId = typeof supportToken === 'string' ? supportToken.split(':')[0] : '';
-    if (supportBotId)
-      bots.push({
-        prefix: 'bot.support_',
-        stream: supportUpdatesStream(supportBotId),
-        received: `tg:support-received:${supportBotId}:`,
-      });
-    let target: (typeof bots)[number] | undefined;
-    for (const bot of bots) {
-      const configuredPath = String(await this.settings.get(`${bot.prefix}webhook_secret_path`));
-      const configuredToken = String(await this.settings.get(`${bot.prefix}webhook_secret_token`));
-      if (
-        configuredPath !== '' &&
-        equalToken(secretPath, configuredPath) &&
-        equalToken(token, configuredToken)
-      )
-        target = bot;
-    }
+    // The throttler guard checked the secret too (P-2); a request whose secret
+    // matches no bot never reached the rate limit.
+    const target = await telegramWebhookTarget(
+      this.settings,
+      secretPath,
+      telegramSecretToken(headers),
+    );
     if (!target) throw new ForbiddenException('FORBIDDEN');
     if (
       !isRecord(body) ||
