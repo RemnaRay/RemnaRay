@@ -717,9 +717,44 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   admin's, an empty index is fine. Checks: API 425, `m4.admin` 1/1, build,
   lint, format, typecheck. VPS action: none.
 
-**Exact next:** package 2 — R81 (wrong passwords counted per email and IP,
-unknown emails indistinguishable, the setup token compared in constant time),
-then R79 + L-3, L-6, R101.
+- **R81 Done (local) — an anonymous guesser could lock an admin out, and
+  the answers named the admins.** Cause: five wrong passwords from anyone
+  set the admin's `locked_until` (9.2), so whoever knew an admin's email kept
+  them out of the console for up to 24 hours at a time; an unknown email was
+  answered without an Argon2 verify (microseconds against tens of
+  milliseconds) and never with 423, which told admins' emails apart; the
+  first setup-token comparison was `!==`. Repair (owner decision 2026-09-28,
+  recorded deviation from 9.2's «`locked_until` of the admin»): wrong
+  passwords are counted in Valkey per email and address
+  (`rr:admin:pwfail:<sha256(email)>:<ip>`, 24-hour window) and lock that pair
+  (`rr:admin:pwlock:…`, 15 minutes doubling to 24 hours); an unknown or
+  inactive email is verified against a decoy Argon2id hash and counted and
+  locked the same way; a right password clears its pair's count; the
+  admin's own `locked_until` is now set by wrong TOTP codes only (R27);
+  `resetPassword` — and the shell's `rr admin:reset-password` — lifts every
+  pair of the email (`rr:admin:pwips:<hash>` lists them). The shell recovery
+  (`scripts/admin-recovery.mjs`) also ends the admin's sessions on a password
+  or TOTP reset (R78's rule; it had been missed there). The setup token is
+  compared through `equalSecret` (SHA-256 of both, `timingSafeEqual`).
+  `docs/admin.md` describes the locks. Evidence: `admin.auth.service.test.ts`
+  «locks the address on the fifth wrong password, not the admin» (423 from
+  that address even with the right password, a challenge from another) red
+  (the admin locked) → green, «answers an unknown email exactly like a known
+  one» red (never 423) → green; `admin.login-timing.test.ts` (Argon2 verify
+  runs for an email that belongs to nobody) red → green;
+  `setup.token-compare.test.ts` red → green; `admin-sessions.test.ts` «a
+  reset password lifts the locks» green; `rr.test.mjs` «the shell recovery
+  ends the admin's sessions and lifts password locks» red → green; the built
+  app image ran the recovery against PostgreSQL 18 and Valkey 9.1: the
+  session, the index, the lock and the list of addresses gone after
+  `reset-password`, the session gone after `reset-totp`, `list` works (the
+  first try found ioredis unresolvable through the `dist/apps/api` symlink;
+  the script now resolves from its real path). Checks: API 429, `m4.admin`
+  1/1, build, lint, format, typecheck; `pnpm test` 62/63 (the known local
+  docs-link failure). VPS action: none.
+
+**Exact next:** package 2 — R79 + L-3 (single-use account link with a
+confirmation page, no Bearer), then L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -13,6 +13,8 @@ type MockRedis = {
   srem(key: string, member: string): Promise<number>;
   smembers(key: string): Promise<string[]>;
   expire(key: string, seconds: number): Promise<number>;
+  incr(key: string): Promise<number>;
+  exists(key: string): Promise<number>;
 };
 
 function createFixture() {
@@ -38,6 +40,12 @@ function createFixture() {
       return Promise.resolve('OK');
     },
     del: (key) => Promise.resolve(values.delete(key) ? 1 : 0),
+    incr: (key) => {
+      const next = Number(values.get(key) ?? '0') + 1;
+      values.set(key, String(next));
+      return Promise.resolve(next);
+    },
+    exists: (key) => Promise.resolve(values.has(key) ? 1 : 0),
     // The session index (R78) is covered by admin-sessions.test.ts.
     sadd: () => Promise.resolve(1),
     srem: () => Promise.resolve(1),
@@ -48,7 +56,8 @@ function createFixture() {
     redis,
     db: {
       admin: {
-        findUnique: () => Promise.resolve(admin),
+        findUnique: ({ where }: { where: { id?: string; email?: string } }) =>
+          Promise.resolve(where.id === admin.id || where.email === admin.email ? admin : null),
         findUniqueOrThrow: () => Promise.resolve(admin),
         update: ({ data }: { data: Record<string, unknown> }) => {
           for (const [key, value] of Object.entries(data)) {
@@ -69,17 +78,39 @@ function createFixture() {
 }
 
 describe('admin authentication', () => {
-  it('locks the account on the fifth wrong password', async () => {
+  it('locks the address on the fifth wrong password, not the admin (R81)', async () => {
     const fixture = createFixture();
     fixture.admin.passwordHash = await hashAdminPassword('correct');
 
     for (let attempt = 1; attempt <= 5; attempt += 1) {
-      const result = fixture.service.login({ email: fixture.admin.email, password: 'wrong' });
+      const result = fixture.service.login(
+        { email: fixture.admin.email, password: 'wrong' },
+        '203.0.113.9',
+      );
       await expect(result).rejects.toMatchObject({
         code: attempt === 5 ? 'ADMIN_LOCKED' : 'ADMIN_INVALID_CREDENTIALS',
       });
     }
-    expect(fixture.admin.lockedUntil).toBeInstanceOf(Date);
+    // Locked from that address, even with the right password…
+    await expect(
+      fixture.service.login({ email: fixture.admin.email, password: 'correct' }, '203.0.113.9'),
+    ).rejects.toMatchObject({ code: 'ADMIN_LOCKED', status: 423 });
+    // …while the admin, elsewhere, still signs in: an anonymous guesser
+    // cannot lock them out.
+    await expect(
+      fixture.service.login({ email: fixture.admin.email, password: 'correct' }, '198.51.100.4'),
+    ).resolves.toMatchObject({ requiresTotp: true });
+    expect(fixture.admin.lockedUntil).toBeNull();
+  }, 30_000);
+
+  it('answers an unknown email exactly like a known one (R81)', async () => {
+    const fixture = createFixture();
+    for (let attempt = 1; attempt <= 5; attempt += 1)
+      await expect(
+        fixture.service.login({ email: 'nobody@example.com', password: 'wrong' }, '203.0.113.9'),
+      ).rejects.toMatchObject({
+        code: attempt === 5 ? 'ADMIN_LOCKED' : 'ADMIN_INVALID_CREDENTIALS',
+      });
   }, 30_000);
 
   it('provisions TOTP and creates a 12-hour admin session after confirmation', async () => {
@@ -88,10 +119,10 @@ describe('admin authentication', () => {
     try {
       const fixture = createFixture();
       fixture.admin.passwordHash = await hashAdminPassword('correct');
-      const login = await fixture.service.login({
-        email: fixture.admin.email,
-        password: 'correct',
-      });
+      const login = await fixture.service.login(
+        { email: fixture.admin.email, password: 'correct' },
+        '192.0.2.1',
+      );
       const setup = await fixture.service.setup({ challengeId: login.challengeId });
       const totp = OTPAuth.URI.parse(setup.otpauthUrl);
       const confirmed = await fixture.service.confirm({
@@ -118,10 +149,10 @@ describe('admin authentication', () => {
     try {
       const fixture = createFixture();
       fixture.admin.passwordHash = await hashAdminPassword('correct');
-      const login = await fixture.service.login({
-        email: fixture.admin.email,
-        password: 'correct',
-      });
+      const login = await fixture.service.login(
+        { email: fixture.admin.email, password: 'correct' },
+        '192.0.2.1',
+      );
       const setup = await fixture.service.setup({ challengeId: login.challengeId });
       const secret = OTPAuth.URI.parse(setup.otpauthUrl).secret.base32;
       const stored = [...fixture.values.values()].join('|');
@@ -140,10 +171,10 @@ describe('admin authentication', () => {
     try {
       const fixture = createFixture();
       fixture.admin.passwordHash = await hashAdminPassword('correct');
-      const login = await fixture.service.login({
-        email: fixture.admin.email,
-        password: 'correct',
-      });
+      const login = await fixture.service.login(
+        { email: fixture.admin.email, password: 'correct' },
+        '192.0.2.1',
+      );
       const setup = await fixture.service.setup({ challengeId: login.challengeId });
       const totp = OTPAuth.URI.parse(setup.otpauthUrl);
       await fixture.service.confirm({ challengeId: login.challengeId, code: totp.generate() });
@@ -167,7 +198,8 @@ describe('wrong TOTP codes (R27)', () => {
     fixture.admin.passwordHash = await hashAdminPassword('correct');
     fixture.admin.totpEnabled = true;
     fixture.admin.totpSecretEnc = encryptTotpSecret(totp.secret.base32, appKey);
-    const login = () => fixture.service.login({ email: fixture.admin.email, password: 'correct' });
+    const login = () =>
+      fixture.service.login({ email: fixture.admin.email, password: 'correct' }, '192.0.2.1');
     return { ...fixture, totp, login };
   }
 

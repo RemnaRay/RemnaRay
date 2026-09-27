@@ -269,3 +269,16 @@ test('up pulls a moving image tag before starting, never a release tag unless as
   assert.ok(pulledBeforeUp(['up', '--pull'], { RR_VERSION: '1.2.3' }));
   assert.ok(pulledBeforeUp(['up', '--pull', '--wait-timeout', '60'], {}));
 });
+
+// R78 and R81: a reset from the shell does what a reset from the console does.
+test('the shell recovery ends the admin`s sessions and lifts password locks', () => {
+  const script = readFileSync('scripts/admin-recovery.mjs', 'utf8');
+  const resetPassword = script.slice(
+    script.indexOf("action === 'reset-password'"),
+    script.indexOf("action === 'reset-totp'"),
+  );
+  const resetTotp = script.slice(script.indexOf("action === 'reset-totp'"));
+  assert.match(resetPassword, /endAdminSessions\(redis, target\.id\)/u);
+  assert.match(resetPassword, /clearPasswordFailures\(redis, target\.email\)/u);
+  assert.match(resetTotp, /endAdminSessions\(redis, target\.id\)/u);
+});

@@ -19,8 +19,8 @@ export class AdminAuthController {
   @Post('login')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  login(@Body() body: unknown) {
-    return this.auth.login(body);
+  login(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    return this.auth.login(body, request.ip);
   }
 
   @Post('totp/setup')

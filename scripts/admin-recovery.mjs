@@ -1,9 +1,15 @@
+import { realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import process from 'node:process';
 
 const require = createRequire(import.meta.url);
 const { createPrismaClient } = require('/app/dist/packages/db/dist/index.js');
 const { hashAdminPassword } = require('/app/dist/apps/api/modules/admin/admin.crypto.js');
+const { endAdminSessions } = require('/app/dist/apps/api/modules/admin/admin-sessions.js');
+const { clearPasswordFailures } = require('/app/dist/apps/api/modules/admin/admin.auth.service.js');
+// ioredis is the API's dependency, resolved from its own package (the real
+// path: `dist/apps/api` is a symlink into the deployed packages).
+const Redis = createRequire(realpathSync('/app/dist/apps/api/main.js'))('ioredis');
 
 const action = process.env.RR_RECOVERY_ACTION;
 const email = process.env.RR_RECOVERY_EMAIL;
@@ -27,6 +33,10 @@ function requirePassword() {
 }
 
 const db = createPrismaClient();
+const redis = new Redis(process.env.VALKEY_URL ?? 'redis://valkey:6379/0', {
+  lazyConnect: true,
+  maxRetriesPerRequest: 1,
+});
 
 try {
   if (action === 'list') {
@@ -72,6 +82,10 @@ try {
         },
       });
     });
+    // R78 and R81: the admin's sessions end, and what wrong passwords locked
+    // is lifted, exactly as a reset from the console does.
+    await endAdminSessions(redis, target.id);
+    await clearPasswordFailures(redis, target.email);
     process.stdout.write(`Password reset completed for ${email}\n`);
   } else if (action === 'reset-totp') {
     const target = await db.admin.findUnique({ where: { email: requireEmail() } });
@@ -94,10 +108,12 @@ try {
         },
       });
     });
+    await endAdminSessions(redis, target.id);
     process.stdout.write(`TOTP reset completed for ${email}\n`);
   } else {
     throw new Error('RR_RECOVERY_ACTION must be list, reset-password or reset-totp');
   }
 } finally {
   await db.$disconnect();
+  redis.disconnect();
 }

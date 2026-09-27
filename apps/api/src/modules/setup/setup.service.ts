@@ -5,6 +5,7 @@ import * as QRCode from 'qrcode';
 import { createRemnawaveClient } from '@remnaray/remnawave-sdk';
 
 import { Infrastructure } from '../../infra/infra.module';
+import { equalSecret } from '../auth/auth.guards';
 import {
   createTotp,
   encryptTotpSecret,
@@ -567,7 +568,8 @@ export class SetupService {
     const row = await this.row();
     if (row.tokenHash) return verify(row.tokenHash, token).catch(() => false);
     const expected = process.env.RR_SETUP_TOKEN ?? '';
-    if (!expected || token !== expected) return false;
+    // R81: compared in constant time, like the stored hash is.
+    if (!expected || !equalSecret(token, expected)) return false;
     await this.infra.db.setupState.update({
       where: { id: 1 },
       data: { tokenHash: await hash(expected, ARGON2_OPTIONS) },

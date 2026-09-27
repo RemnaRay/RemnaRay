@@ -1,5 +1,5 @@
 import { HttpException, Injectable } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as QRCode from 'qrcode';
 
 import { adminMe, type AdminRole } from '@remnaray/domain/rbac';
@@ -9,6 +9,7 @@ import {
   decryptTotpSecret,
   createTotp,
   encryptTotpSecret,
+  hashAdminPassword,
   totpFromBase32,
   verifyAdminPassword,
 } from './admin.crypto';
@@ -16,6 +17,34 @@ import { adminChallengeSchema, adminLoginSchema, adminTotpSchema } from './admin
 import { adminSessionKey, dropAdminSession, storeAdminSession } from './admin-sessions';
 
 const CHALLENGE_TTL = 5 * 60;
+/** Section 9.2: five wrong passwords lock, 15 minutes doubling to 24 hours. */
+const PASSWORD_ATTEMPTS = 5;
+const FAILURE_WINDOW = 24 * 60 * 60;
+
+/** Section 9.2's lock after `failures`: 15 minutes at the fifth, doubling to 24 hours. */
+function lockMinutes(failures: number): number {
+  return failures >= PASSWORD_ATTEMPTS
+    ? Math.min(24 * 60, 15 * 2 ** (failures - PASSWORD_ATTEMPTS))
+    : 0;
+}
+
+/**
+ * Wrong passwords are counted per email and address (R81, owner decision
+ * 2026-09-28; section 9.2 locks the admin): a guesser locks out only the
+ * address it guesses from, never the admin, and an unknown email is counted
+ * and locked exactly like a known one, so the answers name no admin.
+ */
+function passwordKeys(email: string, ip: string) {
+  const who = createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+  return {
+    failures: `rr:admin:pwfail:${who}:${ip}`,
+    lock: `rr:admin:pwlock:${who}:${ip}`,
+    addresses: `rr:admin:pwips:${who}`,
+  };
+}
+
+/** An Argon2id hash to verify against when the email belongs to nobody. */
+let decoyHash: Promise<string> | undefined;
 
 type Challenge = { adminId: string; pendingSecretEnc?: string };
 type AdminSession = { adminId: string; role: AdminRole; totpVerified: true; csrf: string };
@@ -36,22 +65,28 @@ export class AdminAuthService {
 
   constructor(private readonly infra: Infrastructure) {}
 
-  async login(value: unknown) {
+  async login(value: unknown, ip: string) {
     const input = adminLoginSchema.parse(value);
-    const admin = await this.infra.db.admin.findUnique({ where: { email: input.email } });
-    if (!admin || !admin.isActive || admin.deletedAt) {
-      await this.auditFailure(undefined, input.email);
-      throw new AdminAuthFailure('ADMIN_INVALID_CREDENTIALS');
-    }
-    if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+    const keys = passwordKeys(input.email, ip);
+    if ((await this.infra.redis.exists(keys.lock)) === 1)
       throw new AdminAuthFailure('ADMIN_LOCKED');
-    }
-
-    const valid = await verifyAdminPassword(admin.passwordHash, input.password);
-    if (!valid) {
-      const locked = await this.recordFailure(admin);
+    const found = await this.infra.db.admin.findUnique({ where: { email: input.email } });
+    const admin = found?.isActive && !found.deletedAt ? found : null;
+    // The same Argon2 work either way, so the time taken names no admin.
+    decoyHash ??= hashAdminPassword(randomBytes(32).toString('base64url'));
+    const valid = await verifyAdminPassword(
+      admin?.passwordHash ?? (await decoyHash),
+      input.password,
+    );
+    if (!admin || !valid) {
+      const locked = await this.recordPasswordFailure(keys);
+      await this.auditFailure(admin?.id, input.email);
       throw new AdminAuthFailure(locked ? 'ADMIN_LOCKED' : 'ADMIN_INVALID_CREDENTIALS');
     }
+    // The lock wrong TOTP codes set (R27) is the admin's own.
+    if (admin.lockedUntil && admin.lockedUntil > new Date())
+      throw new AdminAuthFailure('ADMIN_LOCKED');
+    await this.infra.redis.del(keys.failures);
 
     // R27: the count of failures is cleared by a completed sign-in only —
     // the password alone is what the second factor must not trust.
@@ -258,9 +293,20 @@ export class AdminAuthService {
     throw new AdminAuthFailure('ADMIN_TOTP_INVALID');
   }
 
+  /** Counts a wrong password against the email and address, and locks the pair at the fifth. */
+  private async recordPasswordFailure(keys: ReturnType<typeof passwordKeys>): Promise<boolean> {
+    const failures = await this.infra.redis.incr(keys.failures);
+    await this.infra.redis.expire(keys.failures, FAILURE_WINDOW);
+    await this.infra.redis.sadd(keys.addresses, keys.failures, keys.lock);
+    await this.infra.redis.expire(keys.addresses, FAILURE_WINDOW);
+    const minutes = lockMinutes(failures);
+    if (minutes > 0) await this.infra.redis.set(keys.lock, '1', 'EX', minutes * 60);
+    return minutes > 0;
+  }
+
   private async recordFailure(
     admin: { id: string; email: string },
-    reason = 'password',
+    reason: string,
   ): Promise<boolean> {
     // The counter is incremented by the database so parallel attempts cannot
     // read the same value and overwrite each other's increment.
@@ -269,8 +315,7 @@ export class AdminAuthService {
       data: { failedLogins: { increment: 1 } },
       select: { failedLogins: true },
     });
-    const minutes =
-      updated.failedLogins >= 5 ? Math.min(24 * 60, 15 * 2 ** (updated.failedLogins - 5)) : 0;
+    const minutes = lockMinutes(updated.failedLogins);
     if (minutes > 0) {
       await this.infra.db.admin.update({
         where: { id: admin.id },
@@ -319,4 +364,17 @@ export class AdminAuthService {
   private challengeKey(id: string) {
     return `rr:admin:challenge:${id}`;
   }
+}
+
+/**
+ * A reset password (R81) clears what wrong passwords for the admin's email
+ * counted and locked, at every address.
+ */
+export async function clearPasswordFailures(
+  redis: Pick<Infrastructure['redis'], 'smembers' | 'del'>,
+  email: string,
+): Promise<void> {
+  const { addresses } = passwordKeys(email, '');
+  const keys = await redis.smembers(addresses);
+  await redis.del(...keys, addresses);
 }

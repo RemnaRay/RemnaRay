@@ -32,6 +32,12 @@ function memoryValkey() {
       Promise.resolve(members.filter((member) => sets.get(key)?.delete(member)).length),
     smembers: (key: string) => Promise.resolve([...(sets.get(key) ?? [])]),
     expire: () => Promise.resolve(1),
+    incr: (key: string) => {
+      const next = Number(strings.get(key) ?? '0') + 1;
+      strings.set(key, String(next));
+      return Promise.resolve(next);
+    },
+    exists: (key: string) => Promise.resolve(strings.has(key) || sets.has(key) ? 1 : 0),
   };
 }
 
@@ -82,7 +88,7 @@ async function signedIn() {
   const auth = new AdminAuthService(infra);
   const admins = new AdminsService(infra);
 
-  const login = await auth.login({ email: admin.email, password: 'Correct1Password' });
+  const login = await auth.login({ email: admin.email, password: 'Correct1Password' }, '192.0.2.1');
   const setup = await auth.setup({ challengeId: login.challengeId });
   const totp = OTPAuth.URI.parse(setup.otpauthUrl);
   const { sessionId } = await auth.confirm({
@@ -127,7 +133,10 @@ describe('an admin`s sessions end with the credentials (R78)', () => {
 
         await admins.resetTotp('a1');
         // Enrolling again used to make the stolen session valid once more.
-        const login = await auth.login({ email: admin.email, password: 'Correct1Password' });
+        const login = await auth.login(
+          { email: admin.email, password: 'Correct1Password' },
+          '192.0.2.1',
+        );
         const setup = await auth.setup({ challengeId: login.challengeId });
         const fresh = await auth.confirm({
           challengeId: login.challengeId,
@@ -149,6 +158,26 @@ describe('an admin`s sessions end with the credentials (R78)', () => {
         await admins.deactivate('a1', { reason: 'leaving' });
 
         expect(await auth.session(sessionId)).toBeUndefined();
+      }),
+    60_000,
+  );
+
+  it(
+    'and a reset password lifts the locks wrong passwords set (R81)',
+    () =>
+      withKey(async () => {
+        const { admin, auth, admins } = await signedIn();
+        for (let attempt = 0; attempt < 5; attempt += 1)
+          await auth.login({ email: admin.email, password: 'wrong' }, '203.0.113.9').catch(() => 0);
+        await expect(
+          auth.login({ email: admin.email, password: 'Correct1Password' }, '203.0.113.9'),
+        ).rejects.toMatchObject({ code: 'ADMIN_LOCKED' });
+
+        await admins.resetPassword('a1', { password: 'Another1Password', reason: 'locked out' });
+
+        await expect(
+          auth.login({ email: admin.email, password: 'Another1Password' }, '203.0.113.9'),
+        ).resolves.toMatchObject({ requiresTotp: true });
       }),
     60_000,
   );

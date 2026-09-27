@@ -9,8 +9,12 @@ and then confirm the generated code; subsequent logins use
 Mutating admin requests must include the CSRF token returned by
 `GET /api/admin/v1/auth/me` in `X-CSRF-Token`, alongside the existing
 same-origin request headers. Passwords use Argon2id with 64 MiB memory, three
-passes, and one thread. Five failed passwords lock the account for 15 minutes;
-later lockouts grow exponentially up to 24 hours.
+passes, and one thread. Five failed passwords from one address lock that
+address out of that email for 15 minutes, later lockouts growing exponentially
+up to 24 hours; an email that belongs to nobody is answered the same way, and a
+guesser elsewhere never locks the admin out. Five wrong TOTP codes — the
+password was right — lock the admin themselves, on the same schedule. Only a
+completed sign-in clears the counts.
 
 The shared RBAC matrix lives in `packages/domain/src/rbac.ts`. Operators receive
 operational permissions only; administration, settings, secret-bearing
@@ -52,7 +56,8 @@ First list the actual administrator email and account state:
 ```
 
 If the password is unknown, reset it. The command also clears the failed-login
-counter and any temporary lock:
+counters and any temporary lock, and ends the admin's sessions (a TOTP reset
+ends them too):
 
 ```sh
 ./scripts/rr admin:reset-password
@@ -88,8 +93,11 @@ is copied into the audit row.
 
 ## Session and challenge handling
 
-- The password failure counter is incremented by the database, so parallel
-  attempts cannot overwrite each other and the fifth failure always locks.
+- The failure counters are atomic increments — the password's in Valkey per
+  email and address, the TOTP's in the database — so parallel attempts cannot
+  overwrite each other and the fifth failure always locks.
+- Each session is listed under its admin, so a password or TOTP reset and a
+  deactivation end all of them.
 - The TOTP enrolment secret is encrypted with `RR_APP_KEY` before it is written
   to Valkey, exactly like the stored secret.
 - Deleting the login challenge is the atomic commit point for issuing a session:

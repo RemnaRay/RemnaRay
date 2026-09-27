@@ -4,6 +4,7 @@ import { type AdminRole } from '@remnaray/domain/rbac';
 
 import { Infrastructure } from '../../infra/infra.module';
 import { endAdminSessions } from './admin-sessions';
+import { clearPasswordFailures } from './admin.auth.service';
 import { Audited } from './audit.interceptor';
 import { hashAdminPassword } from './admin.crypto';
 import {
@@ -129,6 +130,7 @@ export class AdminsService {
       },
     });
     await endAdminSessions(this.infra.redis, id);
+    await clearPasswordFailures(this.infra.redis, before.email);
     return new Audited(
       { id: before.id, passwordChangedAt: null },
       { id: before.id, passwordChangedAt: new Date().toISOString() },

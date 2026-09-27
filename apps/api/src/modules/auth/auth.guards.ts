@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 import {
   type CanActivate,
@@ -29,6 +29,14 @@ export function equalToken(actual: unknown, expected: string | undefined): boole
   const a = Buffer.from(actual);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+/**
+ * A secret compared in constant time whatever its length: both sides are
+ * hashed first, so neither the content nor the length leaks through timing.
+ */
+export function equalSecret(actual: string, expected: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(actual), digest(expected));
 }
 export function trustedInternal(address: string): boolean {
   const ip = address.replace(/^::ffff:/, '');
