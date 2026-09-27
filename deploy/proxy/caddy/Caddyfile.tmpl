@@ -6,8 +6,10 @@
 	# written out below. Certificate management and the HTTP-01 challenge are
 	# untouched by this — only the redirect is.
 	auto_https disable_redirects
-	# Reachable only inside the compose network: the port is never published.
-	admin 0.0.0.0:2019
+	# R137 (owner decision О-14): the admin API accepts a whole new
+	# configuration, so it listens inside this container only — `caddy reload`
+	# runs here. Prometheus reads the metrics server on :2020 below.
+	admin localhost:2019
 	servers {
 		trusted_proxies static {{DOCKER_CIDR}}
 		client_ip_headers X-Forwarded-For
@@ -25,6 +27,12 @@
 	}
 	metrics
 {{CADDY_RATE_LIMIT_ORDER}}
+}
+
+# Prometheus text for the compose network (section 20.2); the port is never
+# published.
+:2020 {
+	metrics
 }
 
 (rr_security_headers) {

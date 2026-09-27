@@ -873,3 +873,129 @@ test(
     }
   },
 );
+
+test(
+  'R137: Caddy`s admin API answers only inside its container; the metrics port answers the network',
+  { timeout: 600_000 },
+  async () => {
+    docker(['build', '-f', 'deploy/proxy/caddy/Dockerfile', '-t', CADDY_IMAGE, '.']);
+    const { renderProfile, writeAtomically } =
+      await import('../apps/api/dist/tools/proxy-render.js');
+    const prefix = `rr-admin-${String(process.pid)}`;
+    const network = `${prefix}-net`;
+    const certs = mkdtempSync(join(tmpdir(), 'rr-admin-certs-'));
+    selfSigned(certs);
+    const directory = mkdtempSync(join(tmpdir(), 'rr-admin-caddy-'));
+    const containers = [];
+    const curl = (url, args = []) =>
+      docker(
+        [
+          'run',
+          '--rm',
+          '--network',
+          network,
+          'curlimages/curl:8.17.0',
+          '-s',
+          '-o',
+          '/dev/null',
+          '-w',
+          '%{http_code}',
+          '--max-time',
+          '5',
+          ...args,
+          url,
+        ],
+        { expectSuccess: false },
+      );
+    try {
+      docker(['network', 'create', network]);
+      containers.push(`${prefix}-up`);
+      docker([
+        'run',
+        '-d',
+        '--name',
+        `${prefix}-up`,
+        '--network',
+        network,
+        '--network-alias',
+        'api',
+        '--network-alias',
+        'web',
+        'node:24-alpine',
+        'node',
+        '-e',
+        `for (const port of [3000, 3001]) require('node:http').createServer((q, r) => r.end('ok')).listen(port);`,
+      ]);
+      writeAtomically(
+        directory,
+        renderProfile(
+          resolve(TEMPLATES, 'caddy'),
+          {
+            domain: 'shop.example.test',
+            extraDomains: [],
+            acmeEmail: '',
+            adminAllowlist: [],
+            dockerCidr: '172.28.0.0/16',
+            apiDocs: false,
+            internalApi: false,
+            caddyRateLimit: true,
+          },
+          { profile: 'caddy', tlsMode: 'custom', certificatePresent: true },
+        ),
+      );
+      const name = `${prefix}-caddy`;
+      containers.push(name);
+      docker([
+        'run',
+        '-d',
+        '--name',
+        name,
+        '--network',
+        network,
+        '--network-alias',
+        'proxy-caddy',
+        '-v',
+        `${directory}:/etc/caddy:ro`,
+        '-v',
+        `${certs}:/certs:ro`,
+        CADDY_IMAGE,
+      ]);
+      let metrics = '';
+      for (let attempt = 0; attempt < 30 && metrics !== '200'; attempt += 1) {
+        await sleep(500);
+        metrics = curl('http://proxy-caddy:2020/metrics');
+      }
+      assert.equal(metrics, '200', 'the metrics port never answered');
+      // curl reports 000 when nothing listens there.
+      assert.equal(curl('http://proxy-caddy:2019/config/'), '000');
+      assert.equal(
+        curl('http://proxy-caddy:2019/load', [
+          '-X',
+          'POST',
+          '-H',
+          'content-type: application/json',
+          '-d',
+          '{}',
+        ]),
+        '000',
+      );
+      // `caddy reload`, which the reloader runs inside the container, still
+      // reaches it.
+      docker([
+        'exec',
+        name,
+        'caddy',
+        'reload',
+        '--config',
+        '/etc/caddy/Caddyfile',
+        '--adapter',
+        'caddyfile',
+      ]);
+    } finally {
+      for (const container of containers) docker(['rm', '-f', container], { expectSuccess: false });
+      docker(['network', 'rm', network], { expectSuccess: false });
+      rmSync(certs, { recursive: true, force: true });
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

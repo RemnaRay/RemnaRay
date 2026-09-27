@@ -32,7 +32,7 @@ scrape_configs:
   - job_name: caddy
     metrics_path: /metrics
     static_configs:
-      - targets: ['proxy-caddy:2019']
+      - targets: ['proxy-caddy:2020']
         labels: { service: proxy }
 
   - job_name: prometheus

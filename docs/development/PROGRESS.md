@@ -653,8 +653,32 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   API 4 in the file, lint, format; `pnpm test` 61/62 (the known local
   docs-link failure). VPS action: none (the stand runs the nginx profile).
 
-**Exact next:** package 2 — R137 (the Caddy admin API on localhost), then
-R27, R78, R81, R79 + L-3, L-6, R101.
+- **R137 Done (local) — any container could reconfigure Caddy.** Cause: the
+  Caddy template (after 21.4) put the admin API on `0.0.0.0:2019` so that
+  Prometheus could read `proxy-caddy:2019/metrics`; that API also takes
+  `POST /load` from anyone who reaches it, and it checks no `Host`/`Origin`,
+  so a compromised `web`, `bot`, `worker` or `api` could serve `/data` (the
+  ACME account and certificate keys; Caddy runs as root) or send the shop's
+  traffic elsewhere. Repair (owner decision О-14): `admin localhost:2019` —
+  `caddy reload`, which the reloader runs inside the container, still
+  reaches it — and a metrics-only server `:2020 { metrics }`, never
+  published; `prometheus.yml` scrapes `proxy-caddy:2020`;
+  `docs/monitoring.md` says so. Recorded deviation from 21.4 (`admin
+0.0.0.0:2019`) and 20.2 (metrics on the admin port). Contract checked on
+  2026-09-28 (Context7 `/caddyserver/website`: the `metrics` directive in its
+  own site block, the global `metrics` option). Evidence:
+  `proxy-render.test.ts` «the Caddy admin API» red → green;
+  `monitoring.test.mjs` scrape target red → green; the old template answered
+  `GET http://proxy-caddy:2019/config/` from another container with 200;
+  `m5.proxy` «R137» (real Caddy image) — `:2020/metrics` 200 from the
+  network, `:2019/config/` and `POST :2019/load` refused (no listener),
+  `caddy reload` inside the container succeeds — red (no metrics port) →
+  green. Checks: `m5.proxy` 7/7, `m5.grafana` 1/1, API proxy-render 39,
+  lint, format; `pnpm test` 61/62 (the known local docs-link failure). VPS
+  action: none (the stand runs the nginx profile).
+
+**Exact next:** package 2 — R27 (wrong TOTP codes lock the admin), then R78,
+R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

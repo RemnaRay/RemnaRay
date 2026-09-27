@@ -39,7 +39,8 @@ container that reached `api:3000` directly never met the proxy. The check reads
 
 The proxies report on themselves too: nginx serves `stub_status` on
 `127.0.0.1:8081/nginx_status` inside its container, for an exporter an owner
-may add, and Caddy serves Prometheus text on its admin port `:2019`. The
+may add, and Caddy serves Prometheus text on a metrics-only port `:2020` (its
+admin API stays on `localhost:2019` inside the container). The
 shipped dashboard reads the application metrics, so neither is required.
 
 ## Turning monitoring on
@@ -82,7 +83,7 @@ owner over Telegram; Alertmanager is not part of the delivery.
 
 ## The `caddy` target under the nginx profile
 
-`prometheus.yml` scrapes `proxy-caddy:2019` unconditionally, so under the nginx
+`prometheus.yml` scrapes `proxy-caddy:2020` unconditionally, so under the nginx
 profile that target reads `down`. That is the honest reading: nginx publishes
 `stub_status`, which is not Prometheus text, and a target quietly removed would
-hide a Caddy deployment whose admin port stopped answering.
+hide a Caddy deployment whose metrics port stopped answering.

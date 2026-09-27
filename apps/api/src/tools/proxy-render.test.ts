@@ -485,3 +485,17 @@ describe('the external edge and /metrics (R24)', () => {
     expect(edge).not.toMatch(/location[^{]*\/metrics[^{]*\{[^}]*proxy_pass/u);
   });
 });
+
+describe('the Caddy admin API (R137)', () => {
+  // Owner decision О-14: on 0.0.0.0 any container of the compose network
+  // could `POST /load` a configuration — serve `/data` (the ACME keys) or
+  // send the shop's traffic elsewhere. `caddy reload` runs inside the
+  // container, so the admin API only needs localhost; Prometheus reads a
+  // metrics-only server.
+  it('listens on localhost only, and the metrics have a port of their own', () => {
+    const caddyfile = renderCaddy('acme');
+    expect(caddyfile).toMatch(/^\tadmin localhost:2019$/mu);
+    expect(caddyfile).not.toContain('0.0.0.0:2019');
+    expect(caddyfile).toMatch(/^:2020 \{\n\tmetrics\n\}$/mu);
+  });
+});

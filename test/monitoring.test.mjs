@@ -45,8 +45,11 @@ test('the monitoring profile is part of the deployment and starts nothing by def
 test('Prometheus scrapes every process that carries section 9.9 metrics', () => {
   for (const target of ['api:3000', 'bot:3002', 'worker:3003'])
     assert.ok(prometheus.includes(target), `prometheus.yml does not scrape ${target}`);
-  // Section 20.2: Caddy answers Prometheus on its admin port; nginx does not.
-  assert.ok(prometheus.includes('proxy-caddy:2019'));
+  // Section 20.2: Caddy answers Prometheus; nginx does not. R137 (owner
+  // decision О-14): on a metrics-only port, since the admin API that used to
+  // serve them accepts configuration from anyone who reaches it.
+  assert.ok(prometheus.includes('proxy-caddy:2020'));
+  assert.ok(!prometheus.includes('proxy-caddy:2019'));
 });
 
 test('the dashboard reads the section 9.9 metrics and nothing invented', () => {
