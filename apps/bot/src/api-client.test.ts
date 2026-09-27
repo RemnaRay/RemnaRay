@@ -161,4 +161,22 @@ describe('ApiClient', () => {
     expect(requests[0]).toMatchObject({ body: { invoiceId: 'invoice-1' }, actingUser: '42' });
     expect(requests[2]?.body).toMatchObject({ telegramPaymentChargeId: 'charge' });
   });
+
+  it('raises an alert to the administrators through the internal notify endpoint (R102)', async () => {
+    const requests: Request[] = [];
+    const api = new ApiClient({
+      baseUrl: 'http://api.test',
+      internalToken: 'internal-secret',
+      fetchImpl: (input, init) => {
+        requests.push(new Request(input, init));
+        return Promise.resolve(new Response('{"delivered":1,"deduplicated":false}'));
+      },
+    });
+
+    await api.alert({ type: 'payment.stars_stuck', details: 'update 6' });
+
+    expect(requests[0]?.method).toBe('POST');
+    expect(requests[0]?.url).toBe('http://api.test/api/internal/v1/notify/alert');
+    expect(await requests[0]?.json()).toEqual({ type: 'payment.stars_stuck', details: 'update 6' });
+  });
 });

@@ -176,6 +176,134 @@ describe('BotIngress Stars payment updates (R1)', () => {
   });
 });
 
+type Batching = {
+  processBatch(entries: Array<[string, string[]]>, claimed: boolean): Promise<void>;
+};
+
+describe('BotIngress delivery limit (R102)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function streamed(deliveries: number, onPaymentStuck = vi.fn().mockResolvedValue(undefined)) {
+    const bot = new Bot<RrContext>('123:token', { botInfo: botInfo as never });
+    const redis = {
+      duplicate: () => ({ disconnect: vi.fn() }),
+      xack: vi.fn().mockResolvedValue(1),
+      xadd: vi.fn().mockResolvedValue('9-0'),
+      // XPENDING's extended form: id, owner, idle ms, times delivered.
+      xpending: vi.fn((_stream: string, _group: string, id: string) =>
+        Promise.resolve([[id, 'test-consumer', 60_000, deliveries]]),
+      ),
+    };
+    const ingress = new BotIngress(bot, redis as never, 'test-consumer', undefined, {
+      onPaymentStuck,
+    });
+    const batch = (entries: Array<[string, string[]]>, claimed = true) =>
+      (ingress as unknown as Batching).processBatch(entries, claimed);
+    return { bot, redis, batch, onPaymentStuck };
+  }
+
+  it('dead-letters a poison entry at the fifth delivery, without logging its payload', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { redis, batch } = streamed(5);
+
+    // JSON.parse quotes its input in the error message.
+    await batch([['3-0', ['payload', 'secret text']]]);
+
+    expect(redis.xadd).toHaveBeenCalledWith(
+      'tg:updates:dead',
+      'MAXLEN',
+      '~',
+      1000,
+      '*',
+      'id',
+      '3-0',
+      'payload',
+      'secret text',
+      'reason',
+      expect.any(String),
+      'deliveries',
+      '5',
+    );
+    expect(redis.xack).toHaveBeenCalledWith('tg:updates', 'bot', '3-0');
+    expect(redis.xadd.mock.invocationCallOrder[0]).toBeLessThan(
+      redis.xack.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret text');
+  });
+
+  it('keeps a poison entry for another delivery before the limit', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { redis, batch } = streamed(2);
+
+    await batch([['3-0', ['payload', 'not json']]]);
+
+    expect(redis.xadd).not.toHaveBeenCalled();
+    expect(redis.xack).not.toHaveBeenCalled();
+  });
+
+  it('goes on with the batch after an entry that fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { bot, redis, batch } = streamed(1);
+    const seen: number[] = [];
+    bot.use((ctx) => {
+      seen.push(ctx.update.update_id);
+    });
+
+    await batch(
+      [
+        ['3-0', ['nothing', 'here']],
+        ['4-0', ['payload', JSON.stringify(update)]],
+      ],
+      false,
+    );
+
+    expect(seen).toEqual([5]);
+    expect(redis.xack).toHaveBeenCalledWith('tg:updates', 'bot', '4-0');
+    // New entries are first deliveries: no XPENDING round trip.
+    expect(redis.xpending).not.toHaveBeenCalled();
+  });
+
+  it('never drops a payment and alerts once it reaches the limit', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { bot, redis, batch, onPaymentStuck } = streamed(5);
+    registerStars(bot, {
+      starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503)),
+    } as unknown as ApiClient);
+    bot.catch(() => undefined);
+
+    await batch([['6-0', ['payload', JSON.stringify(payment)]]]);
+
+    expect(redis.xack).not.toHaveBeenCalled();
+    expect(redis.xadd).not.toHaveBeenCalled();
+    expect(onPaymentStuck).toHaveBeenCalledWith({
+      updateId: 6,
+      chargeId: 'charge-1',
+      deliveries: 5,
+    });
+  });
+
+  it('keeps a payment below the limit without an alert, and survives a failed alert', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failing = vi.fn().mockRejectedValue(new Error('api down'));
+    const early = streamed(4, failing);
+    registerStars(early.bot, {
+      starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503)),
+    } as unknown as ApiClient);
+    early.bot.catch(() => undefined);
+    await early.batch([['6-0', ['payload', JSON.stringify(payment)]]]);
+    expect(failing).not.toHaveBeenCalled();
+
+    const late = streamed(7, failing);
+    // Not a BotError (grammY refuses an uninitialised bot this way), still a payment.
+    vi.spyOn(late.bot, 'handleUpdate').mockRejectedValue(new Error('Bot not initialized!'));
+    await late.batch([['6-0', ['payload', JSON.stringify(payment)]]]);
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(late.redis.xack).not.toHaveBeenCalled();
+    expect(late.redis.xadd).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('Stars payment alert failed', { updateId: 6 });
+  });
+});
+
 describe('BotIngress for the support bot (F35)', () => {
   it('keeps its updates in a stream of its own and asks Telegram for its own updates', async () => {
     const bot = new Bot<RrContext>('777:token', { botInfo: botInfo as never });

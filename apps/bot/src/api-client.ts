@@ -567,6 +567,11 @@ export class ApiClient {
     );
   }
 
+  /** FR-163: an alert to the administrators; the API sends one per type per hour. */
+  alert(body: { type: string; details?: string }): Promise<unknown> {
+    return this.request<unknown>('/api/internal/v1/notify/alert', { method: 'POST', body });
+  }
+
   markBlocked(telegramId: number): Promise<unknown> {
     return this.request<unknown>(`/api/internal/v1/users/${String(telegramId)}/bot-blocked`, {
       method: 'POST',

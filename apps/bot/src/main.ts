@@ -79,7 +79,16 @@ function configure(): Promise<void> {
           return;
         }
         runtime ??= createBot({ token: config.token, api });
-        ingress ??= new BotIngress(runtime.bot, runtime.redis);
+        ingress ??= new BotIngress(runtime.bot, runtime.redis, undefined, undefined, {
+          // R102: a Stars payment the shop still has not recorded is kept in
+          // the stream and reported, never dropped.
+          onPaymentStuck: async (payment) => {
+            await api.alert({
+              type: 'payment.stars_stuck',
+              details: `update ${String(payment.updateId)}, charge ${payment.chargeId}, ${String(payment.deliveries)} deliveries`,
+            });
+          },
+        });
         await registerCommands(runtime.bot, config);
         await ingress.start(config);
         activeToken = config.token;

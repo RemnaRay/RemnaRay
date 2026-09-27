@@ -37,7 +37,11 @@ bot:
   stays pending in the `tg:updates` stream and is delivered again about every
   minute. The customer is told once, on the first failure, that the payment
   was received and is being credited (`bot.payment.received`, with the
-  incident id of the log line).
+  incident id of the log line). A payment update is never dropped: from the
+  fifth delivery on, the administrators get the `payment.stars_stuck` alert
+  (once an hour) while the bot keeps retrying. Any other stream entry that
+  cannot be handled at all is moved to `tg:updates:dead` after five
+  deliveries and acknowledged.
 - A second charge with another `telegram_payment_charge_id` for an invoice
   already paid — two copies of one invoice paid before the first was applied —
   is credited to the balance as a top-up of its own, and administrators get

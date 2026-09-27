@@ -31,6 +31,7 @@
   "alerts.payment.after_cancel": "A payment arrived for a canceled invoice and was credited to the balance.",
   "alerts.payment.duplicate": "A second payment for an already paid invoice was credited to the balance.",
   "alerts.payment.underpaid": "An underpayment was received.",
+  "alerts.payment.stars_stuck": "A Telegram Stars payment is still unrecorded after several attempts; the bot keeps retrying.",
   "alerts.payment.provider_refund": "The provider reported a refund.",
   "alerts.ledger.mismatch": "The ledger audit found a mismatch.",
   "alerts.referral.daily_cap": "The daily referral reward cap was reached.",

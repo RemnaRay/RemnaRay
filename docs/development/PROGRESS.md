@@ -231,8 +231,38 @@ One commit each:
   action: after deploy compare the bot's `getStarTransactions` with the
   `stars` rows of `payment_events` for payments already lost.
 
-**Exact next:** package 1 — R102 (delivery count, dead-letter, `payment.stars_stuck`),
-then P-1, P-1 part 2, R74 and the re-apply backstop, one commit each.
+- **R102 Done (local) — the bot stream retried a failing entry forever, and
+  one failure held up its batch.** Cause (2a «Recorded debts», half-closed by
+  F2 and reopened for payments by R1): no delivery count was read, an entry
+  that could not be handled at all (bad envelope, JSON or `update_id`, bot not
+  initialised) was reclaimed every 60 s with no limit or alert, and its throw
+  left the rest of its batch of ten waiting another minute. Repair
+  (`apps/bot/src/ingress.ts`): a claimed entry reads its delivery count with
+  `XPENDING <stream> <group> <id> <id> 1` (a new entry is delivery 1); every
+  entry has its own try/catch; at `MAX_DELIVERIES = 5` (about five minutes) a
+  non-payment entry is written to `<stream>:dead` (`MAXLEN ~ 1000`: id,
+  payload, reason, deliveries) and then acknowledged; a `successful_payment`
+  is never acknowledged on failure, and from the fifth delivery the shop
+  ingress raises `payment.stars_stuck` through the new `ApiClient.alert`
+  (`POST /api/internal/v1/notify/alert`; the API sends one per type per hour,
+  FR-163), a failed alert only logged. Logs carry the entry id, the count and
+  the error class — not the message, since `JSON.parse` quotes its input.
+  Contract checked on 2026-09-28 against the Valkey documentation (Context7
+  `/valkey-io/valkey-doc`: XPENDING's extended form is `[id, owner, idle ms,
+times delivered]`; `XAUTOCLAIM` without `JUSTID` increments the count),
+  ioredis 5.11.1 `xpending(key, group, start, end, count)`. The alert type
+  extends the 16.x list (like `payment.after_cancel`). Evidence:
+  `ingress.test.ts` «delivery limit (R102)» — dead-letter at 5 and not at 2,
+  the batch goes on after a broken entry, a payment is kept and alerted at 5
+  (and not at 4, also when the failure is not a `BotError`, and when the
+  alert fails) — red (no batch handling or count existed) → green, and the
+  payload-free log red (the parse message quoted it) → green;
+  `api-client.test.ts` `alert()` red → green. Checks: bot 91, lint, format,
+  typecheck, i18n-check (2290). VPS action: after deploy check
+  `XLEN tg:updates:dead`.
+
+**Exact next:** package 1 — P-1 (a payment for a plan taken off sale goes to
+the balance), then P-1 part 2, R74 and the re-apply backstop, one commit each.
 
 ## VPS acceptance run — 2026-09-26
 

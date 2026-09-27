@@ -38,6 +38,20 @@ export function supportChannel(botId: string): IngressChannel {
   };
 }
 
+/**
+ * R102: an entry that keeps failing is given up after this many deliveries —
+ * about five minutes, as `XAUTOCLAIM` takes it back after 60 s idle. A Stars
+ * payment is never given up; the administrators are alerted instead.
+ */
+export const MAX_DELIVERIES = 5;
+
+export type StuckPayment = { updateId: number; chargeId: string; deliveries: number };
+
+export type IngressOptions = {
+  /** Called for a `successful_payment` still unrecorded at `MAX_DELIVERIES`. */
+  onPaymentStuck?: (payment: StuckPayment) => Promise<void>;
+};
+
 // Both transports persist before acknowledging delivery. Telegram may redeliver
 // an update during a mode transition, so append and dedup must be atomic.
 const APPEND = `
@@ -59,6 +73,7 @@ export class BotIngress<C extends Context = RrContext> {
     private readonly redis: Redis,
     private readonly consumer = `bot-${randomUUID()}`,
     private readonly channel: IngressChannel = SHOP_CHANNEL,
+    private readonly options: IngressOptions = {},
   ) {
     this.reader = redis.duplicate();
   }
@@ -150,8 +165,7 @@ export class BotIngress<C extends Context = RrContext> {
           10,
         )) as [string, Array<[string, string[]]>];
         this.claimCursor = claimed[0];
-        // A claimed entry is at least its second delivery.
-        for (const [id, fields] of claimed[1]) await this.processMessage(id, fields, 2);
+        await this.processBatch(claimed[1], true);
         const batches = (await this.reader.xreadgroup(
           'GROUP',
           this.channel.group,
@@ -164,16 +178,105 @@ export class BotIngress<C extends Context = RrContext> {
           this.channel.stream,
           '>',
         )) as Array<[string, Array<[string, string[]]>]> | null;
-        for (const [, messages] of batches ?? []) {
-          for (const [id, fields] of messages) await this.processMessage(id, fields);
-        }
+        for (const [, messages] of batches ?? []) await this.processBatch(messages, false);
       } catch (error) {
-        // Keep PEL entries for retry; never print the update payload or token.
+        // Reading the stream failed; the PEL keeps every unacknowledged entry.
         console.error('Telegram update stream failed', {
           error: error instanceof Error ? error.message : 'unknown',
         });
         await delay(500);
       }
+    }
+  }
+
+  /**
+   * One entry failing never holds up the rest of its batch (R102). A new
+   * entry is its first delivery; a claimed one reads its count from the PEL,
+   * which `XAUTOCLAIM` has just incremented.
+   */
+  private async processBatch(entries: Array<[string, string[]]>, claimed: boolean): Promise<void> {
+    for (const [id, fields] of entries) {
+      let deliveries = 1;
+      try {
+        if (claimed) deliveries = await this.deliveries(id);
+        await this.processMessage(id, fields, deliveries);
+      } catch (error) {
+        await this.failed(id, fields, deliveries, error);
+      }
+    }
+  }
+
+  private async deliveries(id: string): Promise<number> {
+    const rows = (await this.redis.xpending(
+      this.channel.stream,
+      this.channel.group,
+      id,
+      id,
+      1,
+    )) as Array<[string, string, number, number]>;
+    // Claimed, so delivered at least twice even if the entry left the PEL.
+    return Math.max(rows[0]?.[3] ?? 2, 2);
+  }
+
+  /** An entry that could not be handled at all stays pending up to the limit. */
+  private async failed(
+    id: string,
+    fields: string[] | null,
+    deliveries: number,
+    error: unknown,
+  ): Promise<void> {
+    const reason = error instanceof Error ? error.message : 'unknown';
+    // Never print the update payload or token — and a parse error's message
+    // quotes the payload, so only the error's class is logged.
+    console.error('Telegram update stream entry failed', {
+      id,
+      deliveries,
+      error: error instanceof Error ? error.name : 'unknown',
+    });
+    const index = fields?.indexOf('payload') ?? -1;
+    const payload = index < 0 ? undefined : fields?.[index + 1];
+    const payment = paymentOf(payload);
+    if (payment) {
+      await this.stuck(payment, deliveries);
+      return;
+    }
+    if (deliveries < MAX_DELIVERIES) return;
+    try {
+      await this.redis.xadd(
+        `${this.channel.stream}:dead`,
+        'MAXLEN',
+        '~',
+        1000,
+        '*',
+        'id',
+        id,
+        'payload',
+        payload ?? '',
+        'reason',
+        reason.slice(0, 200),
+        'deliveries',
+        String(deliveries),
+      );
+      await this.redis.xack(this.channel.stream, this.channel.group, id);
+      console.error('Telegram update stream entry dead-lettered', { id, deliveries });
+    } catch (failure) {
+      console.error('Telegram update dead-letter failed', {
+        id,
+        error: failure instanceof Error ? failure.name : 'unknown',
+      });
+    }
+  }
+
+  /** A payment still unrecorded at the limit: kept, and the administrators told. */
+  private async stuck(
+    payment: { updateId: number; chargeId: string },
+    deliveries: number,
+  ): Promise<void> {
+    if (deliveries < MAX_DELIVERIES || !this.options.onPaymentStuck) return;
+    try {
+      await this.options.onPaymentStuck({ ...payment, deliveries });
+    } catch {
+      console.error('Stars payment alert failed', { updateId: payment.updateId });
     }
   }
 
@@ -193,19 +296,24 @@ export class BotIngress<C extends Context = RrContext> {
       // `handleUpdate` throws the `BotError` to its caller. FR-127: the error
       // handler logs it and answers `error.generic` with an incident id.
       // Anything else (the bot is not initialised) stays in the PEL for
-      // `XAUTOCLAIM`.
+      // `XAUTOCLAIM`, up to `MAX_DELIVERIES`.
       if (!(error instanceof BotError)) throw error;
       // R1: the stars are taken and Telegram never sends the update again,
       // so a payment the shop did not record stays in the PEL for
       // `XAUTOCLAIM`; recording it is idempotent by the charge id. The
       // customer is answered once, on the first delivery.
-      if (update.message?.successful_payment) {
+      const payment = update.message?.successful_payment;
+      if (payment) {
         if (deliveries === 1) await this.report(error as BotError<C>);
         else
           console.error('Telegram payment update kept pending', {
             updateId: update.update_id,
             deliveries,
           });
+        await this.stuck(
+          { updateId: update.update_id, chargeId: payment.telegram_payment_charge_id },
+          deliveries,
+        );
         return;
       }
       await this.report(error as BotError<C>);
@@ -225,6 +333,20 @@ export class BotIngress<C extends Context = RrContext> {
         error: failure instanceof Error ? failure.name : 'unknown',
       });
     }
+  }
+}
+
+/** The payment a raw stream payload carries, if it parses as one. */
+function paymentOf(payload: string | undefined): { updateId: number; chargeId: string } | null {
+  if (!payload) return null;
+  try {
+    const update = JSON.parse(payload) as Update;
+    const payment = update.message?.successful_payment;
+    return payment
+      ? { updateId: update.update_id, chargeId: payment.telegram_payment_charge_id }
+      : null;
+  } catch {
+    return null;
   }
 }
 
