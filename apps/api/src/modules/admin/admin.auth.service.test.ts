@@ -9,6 +9,10 @@ type MockRedis = {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ...args: unknown[]): Promise<'OK' | null>;
   del(key: string): Promise<number>;
+  sadd(key: string, member: string): Promise<number>;
+  srem(key: string, member: string): Promise<number>;
+  smembers(key: string): Promise<string[]>;
+  expire(key: string, seconds: number): Promise<number>;
 };
 
 function createFixture() {
@@ -34,6 +38,11 @@ function createFixture() {
       return Promise.resolve('OK');
     },
     del: (key) => Promise.resolve(values.delete(key) ? 1 : 0),
+    // The session index (R78) is covered by admin-sessions.test.ts.
+    sadd: () => Promise.resolve(1),
+    srem: () => Promise.resolve(1),
+    smembers: () => Promise.resolve([]),
+    expire: () => Promise.resolve(1),
   };
   const infra = {
     redis,

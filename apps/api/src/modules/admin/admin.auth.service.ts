@@ -13,8 +13,8 @@ import {
   verifyAdminPassword,
 } from './admin.crypto';
 import { adminChallengeSchema, adminLoginSchema, adminTotpSchema } from './admin.schemas';
+import { adminSessionKey, dropAdminSession, storeAdminSession } from './admin-sessions';
 
-const ADMIN_SESSION_TTL = 12 * 60 * 60;
 const CHALLENGE_TTL = 5 * 60;
 
 type Challenge = { adminId: string; pendingSecretEnc?: string };
@@ -146,7 +146,9 @@ export class AdminAuthService {
   }
 
   async logout(sessionId: string | undefined): Promise<void> {
-    if (sessionId) await this.infra.redis.del(this.sessionKey(sessionId));
+    if (!sessionId) return;
+    const session = await this.session(sessionId);
+    await dropAdminSession(this.infra.redis, session?.adminId, sessionId);
   }
 
   async session(sessionId: string | undefined): Promise<AdminSession | undefined> {
@@ -171,11 +173,11 @@ export class AdminAuthService {
       throw new AdminAuthFailure('ADMIN_INVALID_CREDENTIALS');
     const csrf = randomBytes(32).toString('base64url');
     const sessionId = randomBytes(32).toString('base64url');
-    await this.infra.redis.set(
-      this.sessionKey(sessionId),
+    await storeAdminSession(
+      this.infra.redis,
+      adminId,
+      sessionId,
       JSON.stringify({ adminId, role, totpVerified: true, csrf }),
-      'EX',
-      ADMIN_SESSION_TTL,
     );
     const admin = await this.infra.db.admin.findUniqueOrThrow({ where: { id: adminId } });
     await this.infra.db.admin.update({
@@ -201,7 +203,7 @@ export class AdminAuthService {
   }
 
   private async readSession(id: string): Promise<AdminSession> {
-    const raw = await this.infra.redis.get(this.sessionKey(id));
+    const raw = await this.infra.redis.get(adminSessionKey(id));
     if (!raw) throw new AdminAuthFailure('ADMIN_INVALID_CREDENTIALS');
     const parsed = JSON.parse(raw) as Partial<Record<string, unknown>>;
     if (
@@ -316,9 +318,5 @@ export class AdminAuthService {
 
   private challengeKey(id: string) {
     return `rr:admin:challenge:${id}`;
-  }
-
-  private sessionKey(id: string) {
-    return `rr:asess:${id}`;
   }
 }

@@ -698,8 +698,28 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   Valkey now honours `NX` and reports what `DEL` removed). Checks: API 422,
   `m4.admin` 1/1, build, lint, format, typecheck. VPS action: none.
 
-**Exact next:** package 2 — R78 (password and TOTP resets end the admin's
-sessions), then R81, R79 + L-3, L-6, R101.
+- **R78 Done (local) — a reset password or TOTP left the admin's sessions
+  alive.** Cause: `reset-password` changed only the hash and the counters, so
+  a stolen `rr_asid` worked for up to 12 more hours (7.4: `rr:asess` ends on
+  logout and on a password change); `reset-totp` only made the guard answer
+  403 until the admin enrolled again, after which the old session was valid
+  once more; there was no index of an admin's sessions to end. Repair
+  (`admin/admin-sessions.ts`): a sign-in stores `rr:asess:<sid>` and adds the
+  id to `rr:asess:admin:<adminId>` (a set that lives as long as its newest
+  session could); logout removes it from the set; `resetPassword`,
+  `resetTotp` and `deactivate` end every session in the set. No migration.
+  Evidence: new `admin-sessions.test.ts` — both services on one in-memory
+  Valkey: a session made by a real sign-in (password, enrolment) is gone
+  after a password reset, after a TOTP reset and a new enrolment (the new
+  session lives), and after a deactivation — red (still valid, all three)
+  → green; the built helpers on a real `valkey:9.1-alpine`: index TTL 43200,
+  logout removes one id, ending removes the admin's sessions and not another
+  admin's, an empty index is fine. Checks: API 425, `m4.admin` 1/1, build,
+  lint, format, typecheck. VPS action: none.
+
+**Exact next:** package 2 — R81 (wrong passwords counted per email and IP,
+unknown emails indistinguishable, the setup token compared in constant time),
+then R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

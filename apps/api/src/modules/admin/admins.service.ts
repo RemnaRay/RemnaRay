@@ -3,6 +3,7 @@ import { HttpException, HttpStatus, Injectable, NotFoundException } from '@nestj
 import { type AdminRole } from '@remnaray/domain/rbac';
 
 import { Infrastructure } from '../../infra/infra.module';
+import { endAdminSessions } from './admin-sessions';
 import { Audited } from './audit.interceptor';
 import { hashAdminPassword } from './admin.crypto';
 import {
@@ -111,7 +112,9 @@ export class AdminsService {
 
   async deactivate(id: string, body: unknown) {
     adminReasonSchema.parse(body);
-    return this.mutate(id, { isActive: false }, true);
+    const result = await this.mutate(id, { isActive: false }, true);
+    await endAdminSessions(this.infra.redis, id);
+    return result;
   }
 
   async resetPassword(id: string, body: unknown) {
@@ -125,6 +128,7 @@ export class AdminsService {
         lockedUntil: null,
       },
     });
+    await endAdminSessions(this.infra.redis, id);
     return new Audited(
       { id: before.id, passwordChangedAt: null },
       { id: before.id, passwordChangedAt: new Date().toISOString() },
@@ -140,6 +144,7 @@ export class AdminsService {
       data: { totpEnabled: false, totpSecretEnc: null },
       select: SELECT,
     });
+    await endAdminSessions(this.infra.redis, id);
     return new Audited(priorState, view(after));
   }
 

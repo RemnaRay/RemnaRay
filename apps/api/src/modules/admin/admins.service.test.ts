@@ -67,7 +67,9 @@ function fixture(rows: Row[]) {
       ),
     $transaction: (callback: (tx: unknown) => Promise<unknown>) => callback(db),
   };
-  return { rows, service: new AdminsService({ db } as never) };
+  // Ending the sessions (R78) is covered by admin-sessions.test.ts.
+  const redis = { smembers: () => Promise.resolve([]), del: () => Promise.resolve(0) };
+  return { rows, service: new AdminsService({ db, redis } as never) };
 }
 
 describe('admins management (FR-143)', () => {
