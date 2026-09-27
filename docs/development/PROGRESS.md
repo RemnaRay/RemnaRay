@@ -814,7 +814,26 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   loads for the first five) → green (one, then one more after the minute).
   Checks: API 433, lint, format, typecheck. VPS action: none.
 
-**Exact next:** package 2 — R101 (the bot answers only in private chats).
+- **R101 Done (local) — the shop bot answered in groups, in public.** Cause:
+  past the operators' chat nothing checked the chat type, so in any group the
+  bot was added to (BotFather allows it by default) `/sub@bot` posted the
+  caller's subscription link and «Личный кабинет» the caller's sign-in link
+  where every member could read and press them, and every member who wrote
+  was registered as a customer. Repair (`apps/bot/src/bot.ts`): right after
+  the operators' relay (`supportRelay`, which keeps its chat) an update from
+  any chat but a private one stops — a button press there is only answered
+  so its spinner stops; updates without a chat (a Stars `pre_checkout_query`)
+  go on. Evidence: new `bot.test.ts` on the real `createBot` (in-memory
+  Valkey, a recording API): `/sub@shop_bot` in a supergroup, `/start` in a
+  group and a button pressed in a group reach no API call but the relay's
+  configuration read and no Telegram call but `answerCallbackQuery` — red
+  (the screens ran: the user registered, the `sub` and `home` screens
+  answered) → green; a private `/start` still registers the user. Checks:
+  bot 97, build, lint, format, typecheck, i18n-check (2312). VPS action: none
+  (optionally turn off «Allow Groups» for the bot in BotFather).
+
+**Exact next:** package 2 — the integration suites of the touched areas and
+the package record.
 
 ## VPS acceptance run — 2026-09-26
 

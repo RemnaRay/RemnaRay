@@ -146,6 +146,12 @@ export function createBot(options: {
   bot.use(supportRelay(api));
   bot.use(async (ctx, next) => {
     if (ctx.callbackQuery) await ctx.answerCallbackQuery();
+    // R101: past the operators' chat the shop answers in private chats only.
+    // In a group a command or a button would post the caller's subscription
+    // link or sign-in link where everyone reads it, and every member who wrote
+    // would become a customer. Updates without a chat (a Stars
+    // `pre_checkout_query`) go on.
+    if (ctx.chat && ctx.chat.type !== 'private') return;
     if (ctx.from) await next();
   });
   bot.use(sequentialize((ctx) => ctx.from?.id.toString()));
