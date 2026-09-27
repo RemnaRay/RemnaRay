@@ -351,7 +351,10 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`${path} failed with ${String(response.status)}`);
       throw new Error(`job failed: ${String(response.status)} ${text.slice(0, 200)}`);
     }
-    return response.json();
+    // An endpoint that returns nothing answers with an empty body; parsing it
+    // failed the job after the API had done the work (R49).
+    const text = await response.text();
+    return text ? (JSON.parse(text) as unknown) : null;
   }
 }
 

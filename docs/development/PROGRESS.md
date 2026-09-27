@@ -179,9 +179,27 @@ One commit each:
   30, lint, format, typecheck. **Not yet verified:** `cosign verify` against
   a release signed from the new repository (no release exists yet).
 
-**Exact next:** package 1 — R49 (the worker's `call()` and an empty body),
-then R1, R102, P-1, P-1 part 2, R74 and the re-apply backstop, one commit
-each.
+### Package 1 — money loss
+
+- **R49 Done (local) — every `payments.apply-event` job ended `failed` after
+  the payment had been applied.** Cause: the apply endpoint
+  (`POST /api/internal/v1/payments/events/:id/apply`) returned `undefined`, so the API
+  answered 201 with an empty body and the worker's `call()` failed on
+  `response.json()` (`SyntaxError: Unexpected end of JSON input`); BullMQ then
+  retried four more no-op applies and parked the job in `failed`, burying real
+  apply failures in `/admin/system` and `rr_queue_jobs{state="failed"}`. No
+  money effect: the apply had committed and repeats are no-ops. Repair: `call()`
+  reads the text and parses only a non-empty body (an empty body is `null`,
+  a refused call still throws); `PaymentsService.applyEvent` answers
+  `{ applied: true }`. Evidence: `apps/worker/src/queues/worker-call.test.ts`
+  (a real HTTP server answering 201 without a body) red `SyntaxError` → green;
+  `payments.service.test.ts` «answers the worker with a body» red
+  (`undefined`) → green. Checks: worker 33, API 394, lint, format, typecheck,
+  i18n-check. VPS action: after deploy clear the accumulated failed jobs of
+  the `payments` queue.
+
+**Exact next:** package 1 — R1 (the bot XACKs a failed `successful_payment`),
+then R102, P-1, P-1 part 2, R74 and the re-apply backstop, one commit each.
 
 ## VPS acceptance run — 2026-09-26
 

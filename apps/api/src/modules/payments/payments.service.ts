@@ -360,8 +360,10 @@ export class PaymentsService {
     }
     return invoices.length;
   }
-  applyEvent(eventId: string) {
-    return this.repository.applyEvent(eventId);
+  /** The worker's `payments.apply-event` job (7.3); it expects a JSON body back (R49). */
+  async applyEvent(eventId: string) {
+    await this.repository.applyEvent(eventId);
+    return { applied: true };
   }
   refund(transactionId: string, amountMinor: bigint, reason: string) {
     return this.repository.refund(transactionId, amountMinor, reason);

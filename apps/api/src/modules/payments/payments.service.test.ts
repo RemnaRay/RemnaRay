@@ -645,3 +645,13 @@ describe('PaymentsService receipts (FR-062)', () => {
     expect(new URL(await robokassaLink('none')).searchParams.has('Receipt')).toBe(false);
   });
 });
+
+describe('PaymentsService.applyEvent for the payments.apply-event job (R49)', () => {
+  it('answers the worker with a body once the event is applied', async () => {
+    // An empty response failed every job after the apply had committed.
+    const { repository, service } = harness();
+    repository.applyEvent.mockResolvedValue(undefined);
+    await expect(service.applyEvent('event-1')).resolves.toEqual({ applied: true });
+    expect(repository.applyEvent).toHaveBeenCalledWith('event-1');
+  });
+});
