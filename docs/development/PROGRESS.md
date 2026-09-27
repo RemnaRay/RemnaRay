@@ -301,8 +301,36 @@ times delivered]`; `XAUTOCLAIM` without `JUSTID` increments the count),
   (resolved, plan deleted) → green; «deletes a plan nobody paid for» green.
   Checks: API 396, build, lint, format, typecheck. VPS action: none.
 
-**Exact next:** package 1 — R74 (one ordered lock of every account a payment
-touches), then the re-apply backstop, one commit each.
+- **R74 Done (local) — a payment could deadlock with another money path of
+  the same people.** Cause: `applyEvent` locked `{provider_clearing, user}`
+  for its first entry and `{user, revenue}` for the second, while
+  `settleBalance` and `refund` take `revenue` first (the lowest id, seeded by 0001) — a balance purchase or refund of the same user closed the cycle and
+  PostgreSQL aborted one side (40P01). Checking `onPaid` as the queue asked
+  found a second cycle: the referral reward (`referrals.engine.ts post()`)
+  locks `referral_expense` and the referrer's account only through its
+  `UPDATE`s, after the payment's own locks, so a referee's top-up and the
+  referrer's own payment could wait on each other whenever the referrer's
+  account id is below the clearing account's. Repair: `lockAccounts` in
+  `payments.repository.ts` ensures and locks, in one `SELECT … ORDER BY id
+FOR UPDATE`, the payer's account, the provider's clearing account, `revenue`
+  when revenue moves and — when the reward hooks run and the payer has a
+  non-rejected attribution — the referrer's account and `referral_expense`;
+  it runs before the first entry in `applyEvent`, `creditSecondCharge`,
+  `settleBalance` and `refund`, so every path takes the same rows in one
+  global order (the later per-entry locks are already held). PostgreSQL 18
+  (Context7 `/websites/postgresql_18`, `SELECT` locking clause) sorts before
+  it locks, and `id` never changes, so the order holds. Evidence:
+  `m2.payment-recovery` «a purchase does not deadlock with a balance purchase
+  on revenue» and «a top-up does not deadlock on the referrer it rewards» —
+  deterministic: B holds one account, waits until the apply shows
+  `wait_event_type = 'Lock'`, then takes a second — red (`40P01 deadlock
+detected`) → green. Checks: API 396, `m2.payment`, `m2.stars`,
+  `m4.rewards`, `m4.admin` 4/4, build, lint, format, typecheck. VPS action:
+  none.
+
+**Exact next:** package 1 — the re-apply backstop (migration 0011,
+`reapplyUnapplied`, `payments.reapply-events`), then the package's integration
+suites and summary.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import process from 'node:process';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Buffer } from 'node:buffer';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 
@@ -122,6 +123,178 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
       );
       const event = await prisma.paymentEvent.findFirst({ where: { invoiceId: invoice.id } });
       assert.ok(event.processedAt);
+    });
+
+    // R74: two transactions that each wait for a row the other holds is a
+    // deadlock PostgreSQL breaks by aborting one (40P01). Transaction B holds
+    // `first`, waits until the apply is blocked on a row lock, then locks
+    // `second` the way another money path would. Both must finish.
+    const lockAccount = (tx, id) =>
+      tx.$queryRaw`SELECT id FROM accounts WHERE id = ${id}::uuid FOR UPDATE`;
+    const applyBlocked = async () => {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const [row] = await prisma.$queryRaw`
+          SELECT count(*)::int AS waiting FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+        if (row.waiting > 0) return;
+        await delay(50);
+      }
+      throw new Error('the apply never waited for a lock');
+    };
+    const contend = async (apply, first, second) => {
+      let applying;
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await lockAccount(tx, first);
+          applying = apply();
+          applying.catch(() => undefined);
+          await applyBlocked();
+          await lockAccount(tx, second);
+        },
+        { timeout: 30_000 },
+      );
+      await holder.catch(() => undefined);
+      const [held, applied] = await Promise.allSettled([holder, applying]);
+      return { held, applied };
+    };
+    const accountOf = async (userId) => {
+      await prisma.$executeRaw`INSERT INTO accounts (kind, user_id, currency) VALUES ('user', ${userId}::uuid, 'RUB') ON CONFLICT DO NOTHING`;
+      return (await prisma.account.findFirst({ where: { kind: 'user', userId } })).id;
+    };
+    const storedPayment = async (repo, userId, provider, kind, planId, amountMinor) => {
+      const invoice = await prisma.invoice.create({
+        data: {
+          userId,
+          kind,
+          planId,
+          provider,
+          status: 'pending',
+          amountMinor,
+          currency: 'RUB',
+          idempotencyKey: `m2-rec-${provider}-${userId}`,
+          providerInvoiceId: `m2-rec-${provider}-${userId}`,
+          expiresAt: new Date(Date.now() + 30 * 60_000),
+        },
+      });
+      const stored = await repo.insertEvent({
+        provider,
+        externalId: `m2-rec-${invoice.id}`,
+        invoiceId: invoice.id,
+        event: {
+          eventId: `m2-rec-${invoice.id}`,
+          providerInvoiceId: invoice.providerInvoiceId,
+          type: 'paid',
+          paidAmountMinorRub: amountMinor,
+        },
+        raw: {
+          providerInvoiceId: invoice.providerInvoiceId,
+          paidAmountMinorRub: String(amountMinor),
+        },
+        headers: {},
+        signatureOk: true,
+      });
+      return { invoice, eventId: stored.id };
+    };
+
+    await t.test(
+      'R74: a purchase does not deadlock with a balance purchase on revenue',
+      async () => {
+        const user = await customer();
+        const bought = await plan('m2-lock-revenue', 10000n);
+        const payer = await accountOf(user.id);
+        const revenue = (await prisma.account.findFirst({ where: { kind: 'revenue' } })).id;
+        const { invoice, eventId } = await storedPayment(
+          repository,
+          user.id,
+          'm2-lock-a',
+          'purchase',
+          bought.id,
+          10000n,
+        );
+
+        // Old order: the apply held clearing and the payer, then waited for
+        // revenue — which B holds while it asks for the payer.
+        const { held, applied } = await contend(
+          () => repository.applyEvent(eventId),
+          revenue,
+          payer,
+        );
+
+        assert.equal(held.status, 'fulfilled', String(held.reason));
+        assert.equal(applied.status, 'fulfilled', String(applied.reason));
+        assert.equal(
+          (await prisma.invoice.findUnique({ where: { id: invoice.id } })).status,
+          'paid',
+        );
+      },
+    );
+
+    await t.test('R74: a top-up does not deadlock on the referrer it rewards', async () => {
+      const { RewardsService } =
+        await import('../apps/api/dist/modules/rewards/rewards.service.js');
+      const values = {
+        'referral.enabled': true,
+        'referral.mode': 'percent_first',
+        'referral.percent': 20,
+        'referral.fixed_minor': '0',
+        'referral.all_months': 0,
+        'referral.invitee_bonus': { type: 'none', value: 0 },
+        'referral.invitee_bonus_trigger': 'first_paid',
+        'referral.hold_hours': 0,
+        'referral.max_rewards_per_day': 20,
+        'referral.min_source_amount_minor': '0',
+        'referral.count_topups': true,
+        'trial.days': 3,
+        'trial.traffic_gb': 10,
+        'trial.device_limit': 1,
+        'trial.squads': [],
+      };
+      const settings = { get: (key) => Promise.resolve(values[key]) };
+      const rewarding = new PaymentsRepository(
+        prisma,
+        new RewardsService({ db: prisma, redis: null }, settings),
+      );
+      const referrer = await customer();
+      const user = await customer();
+      await prisma.referralAttribution.create({
+        data: {
+          refereeId: user.id,
+          referrerId: referrer.id,
+          source: 'telegram',
+          code: referrer.referralCode,
+          status: 'pending',
+        },
+      });
+      // Ids grow with creation: referrer < this provider's clearing < payer.
+      const referrerAccount = await accountOf(referrer.id);
+      await prisma.$executeRaw`INSERT INTO accounts (kind, provider, currency) VALUES ('provider_clearing', 'm2-lock-b', 'RUB')`;
+      const clearing = (
+        await prisma.account.findFirst({
+          where: { kind: 'provider_clearing', provider: 'm2-lock-b' },
+        })
+      ).id;
+      await accountOf(user.id);
+      const { eventId } = await storedPayment(
+        rewarding,
+        user.id,
+        'm2-lock-b',
+        'topup',
+        null,
+        5000n,
+      );
+
+      // Old order: the apply held clearing and the payer, then `onPaid`
+      // waited for the referrer — whom B holds while it asks for clearing.
+      const { held, applied } = await contend(
+        () => rewarding.applyEvent(eventId),
+        referrerAccount,
+        clearing,
+      );
+
+      assert.equal(held.status, 'fulfilled', String(held.reason));
+      assert.equal(applied.status, 'fulfilled', String(applied.reason));
+      assert.equal(await balanceOf(user.id), 5000n);
+      assert.equal(await balanceOf(referrer.id), 1000n);
     });
 
     await prisma.$disconnect();

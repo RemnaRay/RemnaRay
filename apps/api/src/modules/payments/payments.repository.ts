@@ -289,8 +289,7 @@ export class PaymentsRepository {
     );
     const invoice = rows[0];
     if (!invoice || invoice.status !== 'pending') return;
-    await this.ensureAccount(tx, 'user', invoice.userId, '');
-    await this.ensureAccount(tx, 'revenue', invoice.userId, '');
+    await this.lockAccounts(tx, invoice.userId, { revenue: true });
     const accounts = await tx.$queryRaw<Array<{ id: string; kind: string; balance: bigint }>>(
       Prisma.sql`SELECT id, kind, balance_minor AS balance FROM accounts WHERE (kind = 'user'::account_kind AND user_id = ${invoice.userId}::uuid) OR kind = 'revenue'::account_kind ORDER BY id FOR UPDATE`,
     );
@@ -395,8 +394,7 @@ export class PaymentsRepository {
       if (original.type !== 'purchase') throw new PaymentError('REFUND_NOT_PURCHASE');
       if (amountMinor <= 0n || original.refundedMinor + amountMinor > original.amountMinor)
         throw new PaymentError('REFUND_EXCEEDS_REMAINING');
-      await this.ensureAccount(tx, 'revenue', original.userId, '');
-      await this.ensureAccount(tx, 'user', original.userId, '');
+      await this.lockAccounts(tx, original.userId, { revenue: true });
       const accounts = await tx.$queryRaw<Array<{ id: string; kind: string }>>(
         Prisma.sql`SELECT id, kind FROM accounts WHERE (kind = 'revenue'::account_kind) OR (kind = 'user'::account_kind AND user_id = ${original.userId}::uuid) ORDER BY id FOR UPDATE`,
       );
@@ -526,6 +524,10 @@ export class PaymentsRepository {
             invoice.planId !== null &&
             !planAvailable(await tx.plan.findUnique({ where: { id: invoice.planId } }));
           const toBalance = underpaid || late || unavailable || invoice.kind === 'topup';
+          await this.lockAccounts(tx, invoice.userId, {
+            provider: invoice.provider,
+            revenue: !toBalance,
+          });
           const credit = paid > 0n ? paid : invoice.amountMinor;
           await tx.invoice.update({
             where: { id: invoice.id },
@@ -667,6 +669,7 @@ export class PaymentsRepository {
   ): Promise<void> {
     const credit = paidAmountMinorRub ? BigInt(paidAmountMinorRub) : invoice.amountMinor;
     if (credit <= 0n) return;
+    await this.lockAccounts(tx, invoice.userId, { provider: invoice.provider, revenue: false });
     const txRow = await tx.transaction.create({
       data: {
         userId: invoice.userId,
@@ -711,6 +714,45 @@ export class PaymentsRepository {
       type: txRow.type,
       amountMinor: txRow.amountMinor,
     });
+  }
+
+  /**
+   * Section 11.7 (R74): every account a payment moves money between is
+   * locked up front in one `ORDER BY id FOR UPDATE` — the payer, the
+   * provider's clearing account, revenue and, when rewards run, the
+   * referrer's account and `referral_expense` that `onPaid`/`onRefund`
+   * post to. Locking them one entry at a time let two money paths take the
+   * same rows in opposite orders and deadlock. Later locks of these rows in
+   * the same transaction are already held and never wait.
+   */
+  private async lockAccounts(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    options: { provider?: string; revenue: boolean },
+  ): Promise<void> {
+    const users = [userId];
+    const kinds: string[] = options.revenue ? ['revenue'] : [];
+    if (this.rewards) {
+      const attribution = await tx.referralAttribution.findUnique({
+        where: { refereeId: userId },
+        select: { referrerId: true, status: true },
+      });
+      if (attribution && attribution.status !== 'rejected') {
+        users.push(attribution.referrerId);
+        kinds.push('referral_expense');
+      }
+    }
+    for (const user of users) await this.ensureAccount(tx, 'user', user, '');
+    for (const kind of kinds) await this.ensureAccount(tx, kind, userId, '');
+    if (options.provider)
+      await this.ensureAccount(tx, 'provider_clearing', userId, options.provider);
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM accounts WHERE
+        (kind = 'user'::account_kind AND user_id = ANY(${users}::uuid[]))
+        OR (kind::text = ANY(${kinds}::text[]))
+        OR (kind = 'provider_clearing'::account_kind AND provider = ${options.provider ?? null})
+      ORDER BY id FOR UPDATE
+    `);
   }
 
   private async postEntry(
