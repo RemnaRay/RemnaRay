@@ -832,8 +832,50 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   bot 97, build, lint, format, typecheck, i18n-check (2312). VPS action: none
   (optionally turn off «Allow Groups» for the bot in BotFather).
 
-**Exact next:** package 2 — the integration suites of the touched areas and
-the package record.
+**Package 2 status (2026-09-28): repairs done and verified locally; NOT
+VERIFIED on CI, the VPS or live Telegram.** Seventeen repairs, one commit
+each (`8e91ddf` … `2d78d71`). After the last commit: `test:m1` 7/7,
+`test:m2` 8/8, `test:m4` 7/7, `test:m5` 12/12, `pnpm test:e2e` 39/39 (local
+stack; Chromium's libraries from the documented `LD_LIBRARY_PATH` prefix),
+Lighthouse landing 100/96/100, account accessibility 96; unit suites of every
+workspace package (API 433, bot 97, web 70, worker 39, logger 5, the others
+unchanged), build, lint, format, typecheck, typecheck:e2e, i18n-check (2312);
+`pnpm test` 62/63 — the one failure is the known local-only docs-link test
+reading the untracked review files (package 12). The app image was built and
+ran the shell recovery against PostgreSQL 18 and Valkey 9.1 and loaded the
+api, worker and bot loggers; the web and proxy images were not rebuilt as
+images (their files ran in `next build`, `m5.proxy` and the e2e stack). Not
+yet verified: the CI run on GitHub; the stand (log contents after the
+rotation, IPv4-only ports, the bot's link and its confirmation page, group
+chats); a host with a global IPv6 address; the Caddy profile on a stand.
+
+Recorded deviations from the specification made by this package, all by
+owner decisions: 9.1 webhook limit per provider **and address** (О-16, P-2);
+the web container's own requests outside the anonymous limit (P-9); 9.2
+password locks per email and address (R81); 9.2 no Bearer and the link
+exchange as a confirmed POST (О-9, L-3); 21.8 no `AAAA` and 21.3 no `[::]`
+listeners (О-1); 21.4/20.2 Caddy admin on localhost, metrics on `:2020`
+(О-14); 21.7's `127.0.0.1/32` example not followed in the docs (R25).
+
+Found while closing the package: `m4.support` failed once under the load of
+the full `test:m4` run (`6n !== 2n` for the second ticket's number) and passed
+3/3 alone and in the repeated `test:m4`; neither the support module nor the
+database changed in this package. Cause: ticket numbers come from a sequence,
+and the four losing inserts of five concurrent `openOrLive` calls spend
+values when they get past the `live()` check, so numbers can skip under load —
+a product defect as well as a flaky test. Queued in package 9.
+
+VPS actions after deploying package 2: rotate `RR_INTERNAL_TOKEN`, change the
+bot webhook secret path and token, delete `rr:asess:*` and clear the old
+container logs (R4/R113/R82); check `ss -tlnp` shows 80/443 on `0.0.0.0`
+only and remove any `AAAA` record (R13); if a dump or backup may have leaked,
+change Robokassa's Password1/2 (R28); open «Личный кабинет» from the bot,
+confirm, and check the same link is refused the second time (R79/L-3).
+
+**Exact next:** package 4 (owner decision О-18: 0 → 1 → 2 → 4 → 3 …),
+starting with P-6 — one sign convention for `ledger.math`/`audit()` matching
+the real postings, proven by an audit with zero mismatches after the m2/m4
+scenarios. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
