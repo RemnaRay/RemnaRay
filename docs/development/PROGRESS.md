@@ -483,9 +483,33 @@ list above:
   writes `{"level":50,…,"service":"bot",…}`), lint, format, typecheck,
   i18n-check (2294). VPS action: none.
 
-**Exact next:** package 2 — R28 (masks for `payment_events.raw`/`headers`),
-then R84, P-2, P-9 + R26, R13 + L-34, R24, R25, R137, R27, R78, R81,
-R79 + L-3, L-6, R101.
+- **R28 Done (local) — provider callbacks were stored with their signatures
+  and every request header.** Cause: `receiveWebhook` wrote the parsed body and
+  the full `@Headers()` map to `payment_events.raw`/`headers` (19.1 requires
+  the provider's `secret`, `token`, `password`, `Signature*`, `X-Secret`
+  fields masked): Robokassa's `SignatureValue` (`md5(OutSum:InvId:Password2…)`,
+  unsalted) sat in the database and every backup, and `headers` kept cookies,
+  authorization and the Lava/CryptoBot signature headers — for unverified
+  events, whatever a sender chose to post. Only the console masked `raw` on
+  display. Repair: `payments/payment-event-mask.ts` — `maskEventRaw` replaces
+  any body field whose name contains `secret`, `token`, `password` or
+  `signature` with `***` (nested, arrays included), and `eventHeaders` keeps
+  `content-type`, `user-agent`, `x-request-id` and the source `ip` (19.5);
+  both run after the signature was checked on the unmasked body and before
+  `insertEvent`. The deduplication key and `applyEvent`'s fields
+  (`paidAmountMinorRub`, added after masking) are untouched. No data fix
+  (О-20). `docs/payments/README.md` describes it. Invariants: duplicate events
+  still dedupe on the provider's id or the raw body's hash; the ledger path is
+  unchanged. Evidence: `payments.service.test.ts` «stores a Robokassa event
+  without its signature or the request's secrets» (a verified ResultURL with
+  `SignatureValue`, a body `token`, and cookie/authorization/signature/
+  `x-secret` headers) red (`SignatureValue` in `raw`) → green. Checks: API
+  405, `test:m2` 8/8, lint, format, typecheck. VPS action: none for the code
+  (the stand is recreated, О-20); if a database dump or backup may have
+  leaked, change Robokassa's Password1/Password2.
+
+**Exact next:** package 2 — R84 (recipient URLs out of the outbox), then P-2,
+P-9 + R26, R13 + L-34, R24, R25, R137, R27, R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

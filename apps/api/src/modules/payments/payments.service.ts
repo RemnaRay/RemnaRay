@@ -7,6 +7,7 @@ import { Infrastructure } from '../../infra/infra.module';
 import { decryptSetting } from '../settings/settings.crypto';
 import type { SettingsService } from '../settings/settings.service';
 import { PaymentError } from './payments.errors';
+import { eventHeaders, maskEventRaw } from './payment-event-mask';
 import { PaymentsRepository } from './payments.repository';
 import { PaymentProviderRegistry } from './payments.registry';
 import type { ProviderEvent } from './payments.types';
@@ -235,14 +236,14 @@ export class PaymentsService {
     } catch {
       parsedRaw = Object.fromEntries(new URLSearchParams(raw.toString('utf8')).entries());
     }
-    const normalizedRaw = { ...parsedRaw, ...paidInRoubles(event) };
+    const normalizedRaw = { ...(maskEventRaw(parsedRaw) as object), ...paidInRoubles(event) };
     const stored = await this.repository.insertEvent({
       provider: providerCode,
       externalId,
       ...(invoice?.id ? { invoiceId: invoice.id } : {}),
       event,
       raw: normalizedRaw,
-      headers,
+      headers: eventHeaders(headers, ip),
       signatureOk: verification.ok,
     });
     if (!verification.ok)

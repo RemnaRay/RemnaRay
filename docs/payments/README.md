@@ -3,7 +3,11 @@
 RemnaRay treats the database invoice and `payment_events` row as the source of
 truth. A provider callback is authenticated, normalized to `ProviderEvent`,
 stored before processing, and applied idempotently. Provider secrets are stored
-in encrypted `payment_providers.config_enc` values.
+in encrypted `payment_providers.config_enc` values. The stored copy of a
+callback is masked after its signature is checked (section 19.1): a body field
+named like `secret`, `token`, `password` or `signature` (Robokassa's
+`SignatureValue`) is kept as `***`, and of the request headers only
+`content-type`, `user-agent`, `x-request-id` and the source `ip` are kept.
 
 The provider adapters follow the current provider contracts:
 

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Infrastructure } from '../../infra/infra.module';
@@ -63,6 +63,55 @@ describe('PaymentsService.receiveWebhook (sections 9.7, 11.3.6)', () => {
       ).rejects.toMatchObject({ code: 'WEBHOOK_NOT_SUPPORTED' });
       expect(repository.insertEvent).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('PaymentsService.receiveWebhook storage masks (section 19.1, R28)', () => {
+  it('stores a Robokassa event without its signature or the request`s secrets', async () => {
+    const { db, repository, service } = harness();
+    db.paymentProvider.findUnique.mockResolvedValue({
+      code: 'robokassa',
+      enabled: true,
+      configEnc: null,
+    });
+    repository.applyEvent.mockResolvedValue(undefined);
+    // An unconfigured Password2 is empty, so this signature verifies.
+    const signature = createHash('md5').update('299.00:17::Shp_user=u1').digest('hex');
+    const body = Buffer.from(
+      `OutSum=299.00&InvId=17&Shp_user=u1&SignatureValue=${signature}&token=bodytoken`,
+    );
+
+    await service.receiveWebhook(
+      'robokassa',
+      body,
+      {
+        'content-type': 'application/x-www-form-urlencoded',
+        'user-agent': 'Robokassa',
+        'x-request-id': 'req-1',
+        cookie: 'rr_sid=session',
+        authorization: 'Bearer secret',
+        signature: 'lava-signature',
+        'crypto-pay-api-signature': 'cryptobot-signature',
+        'x-secret': 'shared-secret',
+      },
+      '185.59.216.65',
+    );
+
+    const stored = repository.insertEvent.mock.calls[0]?.[0] as {
+      raw: Record<string, unknown>;
+      headers: Record<string, unknown>;
+      signatureOk: boolean;
+    };
+    expect(stored.signatureOk).toBe(true);
+    expect(stored.raw).toMatchObject({ OutSum: '299.00', InvId: '17', Shp_user: 'u1' });
+    expect(JSON.stringify(stored.raw)).not.toContain(signature);
+    expect(JSON.stringify(stored.raw)).not.toContain('bodytoken');
+    expect(stored.headers).toEqual({
+      'content-type': 'application/x-www-form-urlencoded',
+      'user-agent': 'Robokassa',
+      'x-request-id': 'req-1',
+      ip: '185.59.216.65',
+    });
   });
 });
 
