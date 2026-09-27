@@ -147,6 +147,17 @@ One commit each:
   profiles); locally on the direct stack the test passes with the strict
   branch; the smoke profile is confirmed by the next CI run.
 
+- **Done — the smoke stand had no promo code for the account spec.** The
+  test added with `d2dc6e0` (2026-09-26) previews `e2e10`, which
+  `e2e/setup/stack.mjs` creates for the local stack; the smoke stand is seeded
+  with the section 22.3 fixture (`seed-dev`), which has no promo codes, so the
+  preview never showed 269,10 ₽. `proxy-smoke.sh` now creates `E2E10` right
+  after the fixture (the fixture itself stays as 22.3 defines it). Evidence:
+  `test/proxy-smoke.test.mjs` «both stands the browser suite runs on create the
+  promo codes it types» red (the smoke script did not) → green; the `INSERT`
+  checked on PostgreSQL 18 after all migrations; locally the spec passes on
+  the direct stack; the smoke profile is confirmed by the next CI run.
+
 **Exact next:** the P-5 remainder (`VAQYBIN/remnaray-astra` →
 `RemnaRay/RemnaRay` in `docs/install.md` cosign identity, READMEs,
 `update-check.ts`, `.env.example`); then package 1.

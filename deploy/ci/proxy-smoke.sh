@@ -148,6 +148,13 @@ ENV
   compose run --rm -T migrate node /app/dist/tools/migrate.js > /dev/null
   compose run --rm -T --no-deps api node /app/dist/tools/seed-dev.js > deploy/ci/.stand.json
   ok "seeded the section 22.3 fixture"
+  # Step 10's account spec previews a promo code, which the section 22.3
+  # fixture has none of; `e2e/setup/stack.mjs` creates the same one locally.
+  compose exec -T postgres psql -v ON_ERROR_STOP=1 \
+    -U "$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2-)" \
+    -d "$(grep -E '^POSTGRES_DB=' .env | cut -d= -f2-)" -qc \
+    "INSERT INTO promocodes (code, type, value, max_uses) VALUES ('E2E10', 'discount_percent', 10, 100)"
+  ok "created the browser suite's promo code"
 
   compose up -d --wait
 fi

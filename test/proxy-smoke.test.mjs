@@ -81,3 +81,22 @@ test('CI runs the smoke against both profiles, and builds every image', () => {
   for (const image of ['app', 'web', 'nginx', 'caddy', 'backup'])
     assert.match(workflow, new RegExp(`- image: ${image}\\n`, 'u'), `${image} is never built`);
 });
+
+test('both stands the browser suite runs on create the promo codes it types', async () => {
+  const specs = await Promise.all(
+    ['e2e/specs/account.spec.ts', 'e2e/specs/site.spec.ts'].map((file) => readFile(file, 'utf8')),
+  );
+  const codes = specs.flatMap((spec) =>
+    [...spec.matchAll(/getByLabel\('Промокод'\)\.fill\('(?<code>[^']+)'\)/gu)].map(
+      (match) => match.groups.code,
+    ),
+  );
+  assert.ok(codes.length > 0, 'no spec types a promo code any more; drop this test');
+  const local = await readFile('e2e/setup/stack.mjs', 'utf8');
+  const smoke = await readFile('deploy/ci/proxy-smoke.sh', 'utf8');
+  for (const code of codes) {
+    const created = new RegExp(`code: '${code}'|VALUES \\('${code}'`, 'iu');
+    assert.match(local, created, `e2e/setup/stack.mjs does not create ${code}`);
+    assert.match(smoke, created, `deploy/ci/proxy-smoke.sh does not create ${code}`);
+  }
+});
