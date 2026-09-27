@@ -361,8 +361,30 @@ processed_at IS NULL AND signature_ok` (reversible); repository
   format, typecheck, i18n-check (2294), `test:m1` 7/7. VPS action: migration
   0011 applies at start.
 
-**Exact next:** package 1 — its integration suites (`test:m2`, `test:m4`) and
-the package summary.
+**Package 1 status (2026-09-28): repairs done and verified locally; NOT
+VERIFIED on CI, live Telegram or the VPS.** All seven items are committed one
+per repair (plus one test-only follow-up). After the last commit: `test:m1`
+7/7, `test:m2` 8/8 (with the new `m2.payment-recovery`), `test:m4` 7/7,
+API 399, bot 91, worker 38, db 7, build, lint, format, typecheck,
+i18n-check (2294). `pnpm test` 59/60: the one failure is the known local-only
+docs-link test reading the untracked review files (package 12), not this
+package. `test:m5` was not run: nothing in proxy, backup or Grafana changed.
+Not yet verified: the CI run on GitHub (after the next push); a real Stars
+payment through the ingress and `payment.stars_stuck` delivery (no live
+Telegram here); migration 0011 and the new cron on the stand. Specification
+extensions made by this package, all named by the repair queue: alert types
+`payment.stars_stuck`, `payment.plan_unavailable`, `payment.unapplied`
+(16.x list) and the job `payments.reapply-events` (7.3 table). M5 stays NOT
+VERIFIED; TASK-M5-004 is unchanged.
+
+VPS actions after deploying package 1: compare the bot's
+`getStarTransactions` with the `stars` rows of `payment_events` (R1); clear
+the failed jobs of the `payments` queue (R49); confirm migration 0011 applied
+at start; check `XLEN tg:updates:dead` (R102).
+
+**Exact next:** package 2 — R4 (pino redact/serializers in api and worker,
+`edge.conf` log format without query; with R113 and R82), then R28/R84, P-2,
+P-9 + R26, R13 (+ R24, R25, L-34), R137, R27, R78/R81, R79 + L-3 + L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 
