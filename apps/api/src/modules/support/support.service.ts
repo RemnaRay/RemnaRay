@@ -470,6 +470,10 @@ export class SupportService {
       await this.template(command.args, customer, input, destination);
       return;
     }
+    if (command.name === 'reopen') {
+      await this.reopen(customer, input, destination);
+      return;
+    }
     if (command.name === 'card') {
       const latest =
         ticket ??
@@ -544,6 +548,56 @@ export class SupportService {
       case 'link':
         return t('bot.support.act.done.link', { name });
     }
+  }
+
+  /**
+   * `/reopen`: the customer's last ticket, closed, opens again under its own
+   * number and is taken by the operator, who may then write to the customer.
+   */
+  private async reopen(
+    customer: Customer,
+    input: OperatorMessageInput,
+    destination: Destination,
+  ): Promise<void> {
+    const t = await this.operatorTranslate();
+    const live = await this.tickets.live(customer.id);
+    if (live) {
+      await this.reply(
+        input,
+        destination,
+        t('bot.support.op.alreadyOpen', { number: Number(live.number) }),
+      );
+      return;
+    }
+    const last = await this.lastTicket(customer.id);
+    const reopened = last ? await this.tickets.reopen(last.id, input.from) : null;
+    if (!last || !reopened) {
+      await this.reply(input, destination, t('bot.support.op.noTicket'));
+      return;
+    }
+    if (reopened.channel === 'shop')
+      await this.infra.redis.set(
+        openKey(customer.telegramId.toString()),
+        'active',
+        'EX',
+        CONVERSATION_TTL_SECONDS,
+      );
+    await this.bestEffort(async () => {
+      await this.postSystem(
+        reopened,
+        destination,
+        t('bot.support.op.reopened', { number: Number(reopened.number), name: input.from.name }),
+      );
+      await this.refreshCard(reopened);
+      await this.renameTopic(reopened, customer, destination);
+    });
+  }
+
+  private lastTicket(userId: string): Promise<Ticket | null> {
+    return this.infra.db.supportTicket.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   /** `//text`: a note on the customer's ticket (the live one, or the last). */
@@ -628,8 +682,21 @@ export class SupportService {
     destination: Destination,
     text?: string,
   ): Promise<void> {
-    const opened = await this.tickets.openOrLive(customer.id, input.via, 'operator');
-    let ticket = opened.ticket;
+    // Owner decision (2026-09-27): an operator's message never opens a
+    // ticket. Without a live one it is not sent; /reopen opens the last again.
+    let ticket = await this.tickets.live(customer.id);
+    if (!ticket) {
+      const t = await this.operatorTranslate();
+      const last = await this.lastTicket(customer.id);
+      await this.reply(
+        input,
+        destination,
+        last
+          ? t('bot.support.op.closedNotSent', { number: Number(last.number) })
+          : t('bot.support.op.noTicketNotSent'),
+      );
+      return;
+    }
     if (ticket.cardMessageId === null) ticket = await this.announce(ticket, customer, destination);
     try {
       await this.deliver(customer, input, destination, text);

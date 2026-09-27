@@ -683,7 +683,17 @@ RATE_LIMITED`, which `MeService.checkInvoice` did not map, so the API
    a support bot (F35: its token in «Настройки» → «Поддержка», the support
    bot an administrator of the operators' forum with «Управление темами»).
    Then the M5-004 gates.
-5. Done on the stand (third walk, 2026-09-27): sign-in, «Проверить оплату»,
+5. F36 walk on the stand (2026-09-27): the owner found that an operator's
+   message in a closed ticket's topic opened a new ticket and decided
+   (AskUserQuestion): such a message is not sent, the bot says so, and
+   `/reopen` opens the last ticket again under its number (taken by the
+   operator, rating cleared); an operator never opens a ticket. Done:
+   `SupportService.answer` refuses without a live ticket
+   (`bot.support.op.closedNotSent`), `TicketsRepository.reopen`
+   (conditional on `closed`, the live-ticket index refuses a second live
+   one). Evidence: service test (not sent, /reopen, answer goes, second
+   /reopen), `m4.support` reopen on PostgreSQL.
+6. Done on the stand (third walk, 2026-09-27): sign-in, «Проверить оплату»,
    the dashboard and the separate support bot. F36 (support tickets) is
    implemented and reviewed (`2097aef`…`8b5b7a9`). Next: push, rebuild the
    `:dev` images, `git pull` and `./scripts/rr up` on the stand (migration

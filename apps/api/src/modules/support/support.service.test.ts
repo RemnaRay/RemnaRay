@@ -99,6 +99,22 @@ function memoryTickets() {
       Object.assign(ticket, data);
       return Promise.resolve({ ...ticket });
     },
+    reopen: (id: string, operator: { id: number; name: string }) => {
+      const ticket = find(id);
+      if (!ticket || ticket.status !== 'closed') return Promise.resolve(null);
+      Object.assign(ticket, {
+        status: 'in_progress',
+        takenAt: new Date(),
+        assigneeTelegramId: BigInt(operator.id),
+        assigneeName: operator.name,
+        closedAt: null,
+        closedBy: null,
+        closedSilently: false,
+        rating: null,
+        ratedAt: null,
+      });
+      return Promise.resolve({ ...ticket });
+    },
     closeIfLive: (id: string, closedBy: Ticket['closedBy'], closedSilently: boolean) => {
       const ticket = find(id);
       if (!ticket || ticket.status === 'closed') return Promise.resolve(null);
@@ -135,7 +151,14 @@ function memoryTickets() {
   return { repo, tickets, messages, topics };
 }
 
+/** The harness's tickets, for the db mock declared before them. */
+const memoryRef: { tickets: Ticket[] } = { tickets: [] };
+
 const catalog: Record<string, string> = {
+  'bot.support.op.closedNotSent': 'Closed, not sent #{number}',
+  'bot.support.op.noTicketNotSent': 'No open ticket, not sent',
+  'bot.support.op.alreadyOpen': 'Already open #{number}',
+  'bot.support.op.reopened': 'Reopened #{number} by {name}',
   'bot.support.op.opened': 'Opened #{number} {name} {username}',
   'bot.support.op.denied': 'Denied',
   'bot.support.op.alreadyClosed': 'Already closed #{number}',
@@ -265,7 +288,14 @@ function harness(
         Promise.resolve(where.id === 'u1' || where.telegramId === 42n ? customer : null),
       ),
     },
-    supportTicket: { findFirst: vi.fn().mockResolvedValue(null) },
+    supportTicket: {
+      // The customer's last ticket, from the in-memory tickets.
+      findFirst: vi.fn(({ where }: { where: { userId: string } }) =>
+        Promise.resolve(
+          [...memoryRef.tickets].reverse().find((ticket) => ticket.userId === where.userId) ?? null,
+        ),
+      ),
+    },
     supportFaq: {
       findMany: vi.fn().mockResolvedValue([
         {
@@ -294,6 +324,7 @@ function harness(
     },
   };
   const memory = memoryTickets();
+  memoryRef.tickets = memory.tickets;
   Object.assign(db, {
     // The sweep's SQL for idle tickets, over the in-memory tickets.
     $queryRaw: vi.fn(() => {
@@ -539,19 +570,47 @@ describe('SupportService tickets (FR-124, F36)', () => {
     });
   });
 
-  it('opens a ticket when an operator writes to a customer who has none', async () => {
+  it('does not send an answer to a closed ticket, and /reopen opens it again (owner, 2026-09-27)', async () => {
     const { service, memory, operator, calls } = harness({ forum: true });
     await service.forward('42', 5);
-    const [first] = memory.tickets;
-    await memory.repo.closeIfLive(first?.id ?? '', 'operator', true);
+    const id = memory.tickets[0]?.id ?? '';
+    await memory.repo.closeIfLive(id, 'operator', false);
+    await memory.repo.update(id, { rating: 3 });
     calls.length = 0;
 
     await operator({ threadId: 71 });
+    expect(memory.tickets).toHaveLength(1);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        method: 'sendMessage',
+        body: expect.objectContaining({
+          chat_id: -100500,
+          text: 'Closed, not sent #1',
+          reply_parameters: { message_id: 900, allow_sending_without_reply: true },
+        }) as object,
+      }),
+    ]);
 
-    expect(memory.tickets).toHaveLength(2);
-    expect(memory.tickets[1]).toMatchObject({ openedBy: 'operator', threadId: 71 });
-    expect(methods(calls).slice(0, 3)).toEqual(['editForumTopic', 'sendMessage', 'sendMessage']);
-    expect(calls[3]).toMatchObject({ method: 'sendMessage', body: { chat_id: 42 } });
+    calls.length = 0;
+    await operator({ threadId: 71, messageId: 901, message: { kind: 'text', text: '/reopen' } });
+    expect(memory.tickets).toHaveLength(1);
+    expect(memory.tickets[0]).toMatchObject({
+      status: 'in_progress',
+      assigneeName: 'Olga',
+      closedAt: null,
+      rating: null,
+    });
+    expect(calls[0]?.body).toMatchObject({ text: 'Reopened #1 by Olga', message_thread_id: 71 });
+    expect(calls.some((call) => call.body['chat_id'] === 42)).toBe(false);
+
+    calls.length = 0;
+    await operator({ threadId: 71, messageId: 902 });
+    expect(calls[0]).toMatchObject({ method: 'sendMessage', body: { chat_id: 42 } });
+
+    // A second /reopen while it is open says so.
+    calls.length = 0;
+    await operator({ threadId: 71, messageId: 903, message: { kind: 'text', text: '/reopen' } });
+    expect(calls[0]?.body).toMatchObject({ text: 'Already open #1' });
   });
 
   it('takes, closes and silently closes from the card, telling the customer only when meant', async () => {

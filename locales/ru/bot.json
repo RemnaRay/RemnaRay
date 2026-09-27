@@ -212,7 +212,7 @@
   "bot.support.op.closedSilentlyBy": "🤫 Тикет #{number} закрыт тихо · {name}",
   "bot.support.op.customerClosed": "✅ Пользователь закрыл тикет #{number}",
   "bot.support.op.noLiveTicket": "У пользователя нет открытого тикета.",
-  "bot.support.op.unknownCommand": "Неизвестная команда. Доступны: /t, /close, /silent, /card, /extend, /credit; заметка — сообщение с //.",
+  "bot.support.op.unknownCommand": "Неизвестная команда. Доступны: /t, /close, /silent, /reopen, /card, /extend, /credit; заметка — сообщение с //.",
   "bot.support.ticket.created": "🎫 Обращение #{number} создано. Оператор ответит здесь — можно дописать ещё.",
   "bot.support.ticket.taken": "👷 Оператор подключился к обращению #{number}.",
   "bot.support.ticket.closed": "✅ Обращение #{number} закрыто. Если вопрос остался — напишите в поддержку снова.",
@@ -255,5 +255,9 @@
   "bot.support.write": "Напишите ваш вопрос — можно несколькими сообщениями, с фото, файлами и голосовыми. Операторы ответят здесь.",
   "bot.support.noSubscription": "У вас пока нет подписки. Оформить её можно в основном боте магазина.",
   "bot.screen.support.intro": "🆘 Поддержка. Возможно, ответ на ваш вопрос уже есть ниже. Если нет — нажмите «Написать оператору».",
-  "bot.screen.support.faqGone": "Этот ответ больше недоступен."
+  "bot.screen.support.faqGone": "Этот ответ больше недоступен.",
+  "bot.support.op.closedNotSent": "Тикет #{number} закрыт — сообщение пользователю не отправлено. /reopen — открыть тикет снова.",
+  "bot.support.op.noTicketNotSent": "У пользователя нет открытого тикета — сообщение не отправлено.",
+  "bot.support.op.alreadyOpen": "У пользователя уже открыт тикет #{number}.",
+  "bot.support.op.reopened": "🔄 Тикет #{number} снова открыт · {name}"
 }

@@ -196,6 +196,14 @@ test(
       );
       assert.equal(history.user.telegramId, '42');
 
+      // /reopen (owner, 2026-09-27): a closed ticket opens again under its
+      // number; a second live ticket of the same customer is refused by the index.
+      const reopened = await tickets.reopen(first.id, { id: 7, name: 'Olga' });
+      assert.equal(reopened?.status, 'in_progress');
+      assert.equal(reopened?.closedAt, null);
+      assert.equal(await tickets.reopen(second.ticket.id, { id: 7, name: 'Olga' }), null);
+      assert.equal(await tickets.reopen(first.id, { id: 7, name: 'Olga' }), null);
+
       // The minute sweep's SQL (F36): a ticket the customer left after the
       // operators' answer closes; one where the customer spoke last does not.
       const idle = await prisma.supportTicket.findFirstOrThrow({ where: { userId: other.id } });

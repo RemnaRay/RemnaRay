@@ -212,7 +212,7 @@
   "bot.support.op.closedSilentlyBy": "🤫 Ticket #{number} closed silently · {name}",
   "bot.support.op.customerClosed": "✅ The customer closed ticket #{number}",
   "bot.support.op.noLiveTicket": "The customer has no open ticket.",
-  "bot.support.op.unknownCommand": "Unknown command. Available: /t, /close, /silent, /card, /extend, /credit; a note is a message starting with //.",
+  "bot.support.op.unknownCommand": "Unknown command. Available: /t, /close, /silent, /reopen, /card, /extend, /credit; a note is a message starting with //.",
   "bot.support.ticket.created": "🎫 Request #{number} created. An operator will answer here — you can add more.",
   "bot.support.ticket.taken": "👷 An operator has joined request #{number}.",
   "bot.support.ticket.closed": "✅ Request #{number} is closed. If anything is left, write to support again.",
@@ -255,5 +255,9 @@
   "bot.support.write": "Write your question — in several messages, with photos, files and voice messages if you like. The operators will answer here.",
   "bot.support.noSubscription": "You have no subscription yet. You can get one in the shop's main bot.",
   "bot.screen.support.intro": "🆘 Support. The answer to your question may already be below. If not, press «Write to an operator».",
-  "bot.screen.support.faqGone": "This answer is no longer available."
+  "bot.screen.support.faqGone": "This answer is no longer available.",
+  "bot.support.op.closedNotSent": "Ticket #{number} is closed — the message was not sent to the customer. /reopen opens the ticket again.",
+  "bot.support.op.noTicketNotSent": "The customer has no open ticket — the message was not sent.",
+  "bot.support.op.alreadyOpen": "The customer already has ticket #{number} open.",
+  "bot.support.op.reopened": "🔄 Ticket #{number} reopened · {name}"
 }

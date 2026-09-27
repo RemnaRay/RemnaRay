@@ -79,6 +79,34 @@ export class TicketsRepository {
     return count === 0 ? null : this.byId(id);
   }
 
+  /**
+   * Opens a closed ticket again, taken by `operator`; its rating is cleared so
+   * the customer can rate the new close. Null when it is not closed, or when
+   * the customer opened another ticket meanwhile (one live ticket each).
+   */
+  async reopen(id: string, operator: { id: number; name: string }): Promise<Ticket | null> {
+    try {
+      const { count } = await this.infra.db.supportTicket.updateMany({
+        where: { id, status: 'closed' },
+        data: {
+          status: 'in_progress',
+          takenAt: new Date(),
+          assigneeTelegramId: BigInt(operator.id),
+          assigneeName: operator.name,
+          closedAt: null,
+          closedBy: null,
+          closedSilently: false,
+          rating: null,
+          ratedAt: null,
+        },
+      });
+      return count === 0 ? null : await this.byId(id);
+    } catch (error) {
+      if (uniqueViolation(error)) return null;
+      throw error;
+    }
+  }
+
   /** Closes a live ticket; null when it was already closed (by someone else). */
   async closeIfLive(
     id: string,

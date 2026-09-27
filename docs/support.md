@@ -50,7 +50,10 @@ Its buttons: **«Взять в работу»** (the customer is told an operato
 page in the console). Any member of the operators' chat may use them; the
 buttons work only in that chat. The first answer takes a ticket nobody took.
 In the topic, `/close`, `/silent` and `/card` do the same as the buttons. An
-operator writing to a customer without an open ticket opens one.
+operator's message never opens a ticket (owner decision of 2026-09-27): in a
+topic whose ticket is closed it is not sent, and the bot says so; `/reopen`
+opens the customer's last ticket again under its number, taken by that
+operator (its rating is cleared), and then the answers go through.
 
 **Actions on the customer.** A live ticket's card also has «+7 дней», «+30
 дней», «Сбросить трафик» and «Отправить ссылку»; in the topic `/extend <days>
