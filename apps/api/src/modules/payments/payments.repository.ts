@@ -246,6 +246,25 @@ export class PaymentsRepository {
     }
   }
 
+  /**
+   * Signed events still unprocessed that arrived before `before`, oldest
+   * first (the backstop's read of `ix_payment_events_unapplied_p`).
+   */
+  async unappliedEvents(before: Date, limit: number): Promise<Array<{ id: string }>> {
+    return this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT id FROM payment_events
+      WHERE processed_at IS NULL AND signature_ok AND received_at < ${before}
+      ORDER BY received_at LIMIT ${limit}
+    `);
+  }
+
+  /** Why an apply failed; the event stays unprocessed for the next attempt. */
+  async markEventError(id: string, processError: string): Promise<void> {
+    await this.prisma.$executeRaw(Prisma.sql`
+      UPDATE payment_events SET process_error = ${processError} WHERE id = ${id}::uuid
+    `);
+  }
+
   async markEvent(id: string, processedAt: Date, processError?: string): Promise<void> {
     await this.prisma.$executeRaw(Prisma.sql`
       UPDATE payment_events SET processed_at = ${processedAt}, process_error = ${processError ?? null}

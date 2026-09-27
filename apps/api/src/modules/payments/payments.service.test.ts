@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Infrastructure } from '../../infra/infra.module';
 import { encryptSetting } from '../settings/settings.crypto';
+import { PaymentError } from './payments.errors';
 import type { PaymentsRepository } from './payments.repository';
 import { createPaymentProviderRegistry } from './payments.registry';
 import { PaymentsService } from './payments.service';
@@ -653,5 +654,64 @@ describe('PaymentsService.applyEvent for the payments.apply-event job (R49)', ()
     repository.applyEvent.mockResolvedValue(undefined);
     await expect(service.applyEvent('event-1')).resolves.toEqual({ applied: true });
     expect(repository.applyEvent).toHaveBeenCalledWith('event-1');
+  });
+});
+
+describe('PaymentsService.reapplyUnapplied, the payments.reapply-events backstop', () => {
+  const now = new Date('2026-09-28T10:00:00Z');
+
+  function backstop(stuck: Array<{ id: string }>, alerted: object | null = null) {
+    const { db, repository, service } = harness();
+    const unapplied = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: 'event-1' }, { id: 'event-2' }])
+      .mockResolvedValueOnce(stuck);
+    const markEventError = vi.fn();
+    Object.assign(repository, { unappliedEvents: unapplied, markEventError });
+    Object.assign(db.outboxJob, { findFirst: vi.fn().mockResolvedValue(alerted) });
+    repository.applyEvent
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new PaymentError('PLAN_UNAVAILABLE'));
+    return { db, repository, service, unapplied, markEventError };
+  }
+
+  it('applies every event older than two minutes and records why one failed', async () => {
+    const { repository, service, unapplied, markEventError } = backstop([]);
+
+    await expect(service.reapplyUnapplied(now)).resolves.toEqual({
+      reapplied: 1,
+      failed: 1,
+      stuck: 0,
+    });
+
+    expect(unapplied).toHaveBeenNthCalledWith(1, new Date('2026-09-28T09:58:00Z'), 100);
+    expect(repository.applyEvent).toHaveBeenCalledWith('event-1');
+    expect(repository.applyEvent).toHaveBeenCalledWith('event-2');
+    expect(markEventError).toHaveBeenCalledTimes(1);
+    expect(markEventError).toHaveBeenCalledWith('event-2', 'PLAN_UNAVAILABLE');
+  });
+
+  it('alerts the administrators once for an event still unapplied after fifteen minutes', async () => {
+    const { db, service, unapplied } = backstop([{ id: 'event-2' }]);
+
+    await expect(service.reapplyUnapplied(now)).resolves.toMatchObject({ stuck: 1 });
+
+    expect(unapplied).toHaveBeenNthCalledWith(2, new Date('2026-09-28T09:45:00Z'), 100);
+    expect(db.outboxJob.create).toHaveBeenCalledWith({
+      data: {
+        queue: 'notify',
+        name: 'notify.alert',
+        payload: { type: 'payment.unapplied', details: 'payment event event-2' },
+        jobId: 'alert:payment.unapplied:event-2',
+      },
+    });
+  });
+
+  it('does not queue a second alert for the same event', async () => {
+    const { db, service } = backstop([{ id: 'event-2' }], { id: 'outbox-1' });
+
+    await service.reapplyUnapplied(now);
+
+    expect(db.outboxJob.create).not.toHaveBeenCalled();
   });
 });

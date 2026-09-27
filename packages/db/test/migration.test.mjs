@@ -85,3 +85,15 @@ test('support tickets keep one live ticket per customer (owner decision F36)', a
   );
   assert.match(schema, /model SupportTicket \{/);
 });
+
+test('unapplied payment events are found through a partial index (repair queue backstop)', async () => {
+  const unapplied = await readFile(
+    'prisma/migrations/0011_payment_events_unapplied/migration.sql',
+    'utf8',
+  );
+  assert.match(unapplied, /-- reversible: yes/);
+  assert.match(
+    unapplied,
+    /CREATE INDEX ix_payment_events_unapplied_p ON payment_events \(received_at\) WHERE processed_at IS NULL AND signature_ok;/,
+  );
+});

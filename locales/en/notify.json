@@ -31,6 +31,7 @@
   "alerts.payment.after_cancel": "A payment arrived for a canceled invoice and was credited to the balance.",
   "alerts.payment.duplicate": "A second payment for an already paid invoice was credited to the balance.",
   "alerts.payment.underpaid": "An underpayment was received.",
+  "alerts.payment.unapplied": "A payment event has failed to apply for over 15 minutes; the money was received but not credited.",
   "alerts.payment.plan_unavailable": "A payment arrived for a plan taken off sale and was credited to the balance.",
   "alerts.payment.stars_stuck": "A Telegram Stars payment is still unrecorded after several attempts; the bot keeps retrying.",
   "alerts.payment.provider_refund": "The provider reported a refund.",

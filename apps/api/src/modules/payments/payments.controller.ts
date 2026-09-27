@@ -72,6 +72,11 @@ export class PaymentsInternalController {
   poll() {
     return this.payments.pollPending();
   }
+
+  @Post('reapply-events')
+  reapply() {
+    return this.payments.reapplyUnapplied();
+  }
 }
 
 /** Section 9.5: the bot hands Telegram Stars payment updates to the shop here. */

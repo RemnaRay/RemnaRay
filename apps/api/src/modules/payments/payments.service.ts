@@ -360,6 +360,54 @@ export class PaymentsService {
     }
     return invoices.length;
   }
+  /**
+   * Cron `payments.reapply-events`, every five minutes (repair queue R1, P-1,
+   * R74): a signed event nobody finished applying — the API stopped between
+   * storing and applying it, every retry of its job failed, or a Stars
+   * update's apply failed after the insert — is applied again once it is two
+   * minutes old, the error of a failed attempt is kept on the event, and an
+   * event still unapplied after fifteen minutes is reported to the
+   * administrators once (`payment.unapplied`).
+   */
+  async reapplyUnapplied(
+    now = new Date(),
+  ): Promise<{ reapplied: number; failed: number; stuck: number }> {
+    const due = await this.repository.unappliedEvents(new Date(now.getTime() - 2 * 60_000), 100);
+    let reapplied = 0;
+    let failed = 0;
+    for (const event of due) {
+      try {
+        await this.repository.applyEvent(event.id);
+        reapplied += 1;
+      } catch (error) {
+        failed += 1;
+        const reason =
+          error instanceof PaymentError
+            ? error.code
+            : error instanceof Error
+              ? `${error.name}: ${error.message}`
+              : 'unknown';
+        await this.repository.markEventError(event.id, reason.slice(0, 500));
+        this.logger.warn(`payment event ${event.id} still unapplied: ${reason.slice(0, 200)}`);
+      }
+    }
+    const stuck = await this.repository.unappliedEvents(new Date(now.getTime() - 15 * 60_000), 100);
+    for (const event of stuck) {
+      const jobId = `alert:payment.unapplied:${event.id}`;
+      if (await this.infra.db.outboxJob.findFirst({ where: { jobId }, select: { id: true } }))
+        continue;
+      await this.infra.db.outboxJob.create({
+        data: {
+          queue: 'notify',
+          name: 'notify.alert',
+          payload: { type: 'payment.unapplied', details: `payment event ${event.id}` },
+          jobId,
+        },
+      });
+    }
+    return { reapplied, failed, stuck: stuck.length };
+  }
+
   /** The worker's `payments.apply-event` job (7.3); it expects a JSON body back (R49). */
   async applyEvent(eventId: string) {
     await this.repository.applyEvent(eventId);

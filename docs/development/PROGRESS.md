@@ -328,9 +328,41 @@ detected`) → green. Checks: API 396, `m2.payment`, `m2.stars`,
   `m4.rewards`, `m4.admin` 4/4, build, lint, format, typecheck. VPS action:
   none.
 
-**Exact next:** package 1 — the re-apply backstop (migration 0011,
-`reapplyUnapplied`, `payments.reapply-events`), then the package's integration
-suites and summary.
+- **Backstop Done (local) — nothing re-applied a stored payment event whose
+  apply never finished** (closes the tails of R1, P-1 and R74). Cause: an
+  event is applied inline and by its `payments.apply-event` job (5 attempts
+  in ~30 s); if the API stopped between the insert and the job, every attempt
+  failed, or a Stars apply failed after its insert (Stars queue no job and
+  are not polled), the row stayed `processed_at IS NULL` forever with no
+  `process_error` and no alert. Repair: migration
+  `0011_payment_events_unapplied` — partial index
+  `ix_payment_events_unapplied_p ON payment_events (received_at) WHERE
+processed_at IS NULL AND signature_ok` (reversible); repository
+  `unappliedEvents(before, limit)` and `markEventError` (only
+  `process_error`, which the 0002 guard allows); `PaymentsService.reapplyUnapplied`
+  applies up to 100 signed unprocessed events older than two minutes, oldest
+  first, keeps a failure's code or error on the event and goes on, and queues
+  one `payment.unapplied` alert per event still unapplied after fifteen
+  minutes (`jobId alert:payment.unapplied:<eventId>`, not queued twice);
+  `POST /api/internal/v1/payments/reapply-events`; the worker's `cronJobs`
+  adds `payments.reapply-events` every five minutes
+  (`payments:reapply-events:<slot>`), and `paymentCall` is a `switch` with an
+  explicit case (its fallback to `expire` stays for R106, package 10).
+  Applying twice is safe: `applyEvent` locks the event row and returns once
+  `processed_at` is set. The job extends the 7.3 table and the alert the 16.x
+  list. `docs/payments/README.md` describes it. Evidence:
+  `payments.service.test.ts` (three cases: re-apply and record, alert after
+  15 min, no second alert) red → green; `schedule.test.ts` five-minute slot
+  and new `payment-call.test.ts` red → green; `packages/db` migration test red
+  → green; `m2.payment-recovery` «an event whose apply never finished is
+  applied later» (lost event applied and credited, broken one keeps
+  `SyntaxError` in `process_error` and one alert, a fresh one untouched,
+  index present) red → green. Checks: API 399, worker 38, db 7, build, lint,
+  format, typecheck, i18n-check (2294), `test:m1` 7/7. VPS action: migration
+  0011 applies at start.
+
+**Exact next:** package 1 — its integration suites (`test:m2`, `test:m4`) and
+the package summary.
 
 ## VPS acceptance run — 2026-09-26
 

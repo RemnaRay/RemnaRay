@@ -24,6 +24,18 @@ describe('section 7.3 cron jobs', () => {
     });
   });
 
+  it('re-applies unapplied payment events once per five minutes (repair queue R1/P-1/R74)', () => {
+    const reapply = (at: string) =>
+      cronJobs(new Date(at)).find((job) => job.name === 'payments.reapply-events');
+
+    expect(reapply('2026-09-25T07:04:59Z')).toEqual({
+      queue: 'payments',
+      name: 'payments.reapply-events',
+      jobId: 'payments:reapply-events:202609250700',
+    });
+    expect(reapply('2026-09-25T07:05:00Z')?.jobId).toBe('payments:reapply-events:202609250705');
+  });
+
   it('reconciles the panel once per quarter hour under jobId reconcile:<yyyymmddHHMM>', () => {
     const reconcile = (at: string) =>
       cronJobs(new Date(at)).find((job) => job.name === 'panel.reconcile-all');

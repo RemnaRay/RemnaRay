@@ -33,6 +33,14 @@ was issued is credited to the balance in the same way, and administrators get
 the `payment.plan_unavailable` alert (owner decision О-19): nothing is
 activated, and the customer may buy another plan from the balance.
 
+A stored event is applied inline and by its queued `payments.apply-event`
+job. As a backstop, the worker's `payments.reapply-events` cron (every five
+minutes) applies again every signed event still unprocessed two minutes after
+it arrived — for instance when the API stopped between storing and applying
+it, or a Telegram Stars apply failed after the insert. A failed attempt keeps
+its error in `payment_events.process_error`; an event still unapplied after
+fifteen minutes raises the `payment.unapplied` alert once.
+
 Provider configuration is deliberately incomplete until an administrator
 enables the provider and records a successful health check. `POST
 /me/invoices` applies the same rule as `GET /me/payment-methods` (AC-061): an

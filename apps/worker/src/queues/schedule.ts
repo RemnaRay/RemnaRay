@@ -10,13 +10,16 @@ export function minuteStamp(at: Date): string {
 }
 
 /**
- * The every-minute and quarter-hour crons of section 7.3, for the minute
- * `at` falls in. The job id names the cron slot rather than the tick, so the
- * slot runs once however many ticks, restarts or workers add it.
+ * The every-minute and quarter-hour crons of section 7.3 and the repair
+ * queue's five-minute re-apply backstop, for the minute `at` falls in. The
+ * job id names the cron slot rather than the tick, so the slot runs once
+ * however many ticks, restarts or workers add it.
  */
 export function cronJobs(at: Date): CronJob[] {
   const slot = new Date(at);
   slot.setUTCMinutes(slot.getUTCMinutes() - (slot.getUTCMinutes() % 15), 0, 0);
+  const fiveMinutes = new Date(at);
+  fiveMinutes.setUTCMinutes(fiveMinutes.getUTCMinutes() - (fiveMinutes.getUTCMinutes() % 5), 0, 0);
   return [
     // FR-024: `active` past `expires_at` becomes `grace` or `expired`.
     {
@@ -29,6 +32,13 @@ export function cronJobs(at: Date): CronJob[] {
       queue: 'maintenance',
       name: 'maintenance.support-sweep',
       jobId: `maintenance:support-sweep:${minuteStamp(at)}`,
+    },
+    // Repair queue R1/P-1/R74: payment events whose apply never finished,
+    // every five minutes.
+    {
+      queue: 'payments',
+      name: 'payments.reapply-events',
+      jobId: `payments:reapply-events:${minuteStamp(fiveMinutes)}`,
     },
     // Section 10.5, cron `*/15 * * * *`.
     { queue: 'panel', name: 'panel.reconcile-all', jobId: `reconcile:${minuteStamp(slot)}` },

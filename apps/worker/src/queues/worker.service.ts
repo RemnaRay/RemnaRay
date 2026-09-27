@@ -205,7 +205,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     // Section 7.3 minute and quarter-hour crons. A finished job is kept past
     // its fifteen-minute slot: BullMQ ignores an id only while the job
     // exists, and the kept id is what makes the slot run once.
-    const byName: Partial<Record<QueueName, Queue>> = { maintenance, panel };
+    const byName: Partial<Record<QueueName, Queue>> = { maintenance, panel, payments };
     const queueCron = () => {
       for (const job of cronJobs(new Date()))
         void byName[job.queue]
@@ -394,12 +394,18 @@ export async function skipWhileSetup<T>(
   }
 }
 
-function paymentCall(job: Job<{ eventId?: string }>): InternalCall {
-  if (job.name === 'payments.apply-event' && job.data.eventId)
-    return { path: `/api/internal/v1/payments/events/${job.data.eventId}/apply` };
-  if (job.name === 'payments.poll-pending')
-    return { path: '/api/internal/v1/payments/poll-pending' };
-  return { path: '/api/internal/v1/payments/expire' };
+export function paymentCall(job: Pick<Job<{ eventId?: string }>, 'name' | 'data'>): InternalCall {
+  switch (job.name) {
+    case 'payments.poll-pending':
+      return { path: '/api/internal/v1/payments/poll-pending' };
+    case 'payments.reapply-events':
+      return { path: '/api/internal/v1/payments/reapply-events' };
+    default:
+      if (job.name === 'payments.apply-event' && job.data.eventId)
+        return { path: `/api/internal/v1/payments/events/${job.data.eventId}/apply` };
+      // Package 10 (R106) replaces this fallback with a throw.
+      return { path: '/api/internal/v1/payments/expire' };
+  }
 }
 
 function notifyCall(job: Job<Record<string, unknown>>): InternalCall {

@@ -297,6 +297,102 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
       assert.equal(await balanceOf(referrer.id), 1000n);
     });
 
+    await t.test('backstop: an event whose apply never finished is applied later', async () => {
+      const [index] = await prisma.$queryRaw`
+        SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_payment_events_unapplied_p'`;
+      assert.match(index.indexdef, /WHERE \(\(processed_at IS NULL\) AND signature_ok\)/);
+
+      const user = await customer();
+      const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000);
+      const invoiceFor = (key) =>
+        prisma.invoice.create({
+          data: {
+            userId: user.id,
+            kind: 'topup',
+            provider: 'mock',
+            status: 'pending',
+            amountMinor: 3000n,
+            currency: 'RUB',
+            idempotencyKey: key,
+            providerInvoiceId: key,
+            expiresAt: new Date(Date.now() + 30 * 60_000),
+          },
+        });
+      // Stored, never applied: the API died between the insert and the
+      // apply, or every apply failed and the job gave up.
+      const lost = await invoiceFor('m2-rec-lost');
+      const lostEvent = await prisma.paymentEvent.create({
+        data: {
+          provider: 'mock',
+          externalId: 'm2-rec-lost',
+          invoiceId: lost.id,
+          type: 'paid',
+          raw: { providerInvoiceId: lost.providerInvoiceId, paidAmountMinorRub: '3000' },
+          headers: {},
+          signatureOk: true,
+          receivedAt: minutesAgo(3),
+        },
+      });
+      // Its apply keeps failing, and it has been failing for twenty minutes.
+      const broken = await invoiceFor('m2-rec-broken');
+      const brokenEvent = await prisma.paymentEvent.create({
+        data: {
+          provider: 'mock',
+          externalId: 'm2-rec-broken',
+          invoiceId: broken.id,
+          type: 'paid',
+          raw: { providerInvoiceId: broken.providerInvoiceId, paidAmountMinorRub: 'not-a-number' },
+          headers: {},
+          signatureOk: true,
+          receivedAt: minutesAgo(20),
+        },
+      });
+      // Too fresh: the inline apply or its queued job may still be at it.
+      const fresh = await invoiceFor('m2-rec-fresh');
+      const freshEvent = await prisma.paymentEvent.create({
+        data: {
+          provider: 'mock',
+          externalId: 'm2-rec-fresh',
+          invoiceId: fresh.id,
+          type: 'paid',
+          raw: { providerInvoiceId: fresh.providerInvoiceId, paidAmountMinorRub: '3000' },
+          headers: {},
+          signatureOk: true,
+        },
+      });
+
+      const result = await service.reapplyUnapplied();
+
+      assert.deepEqual(result, { reapplied: 1, failed: 1, stuck: 1 });
+      assert.equal((await prisma.invoice.findUnique({ where: { id: lost.id } })).status, 'paid');
+      assert.ok(
+        (await prisma.paymentEvent.findUnique({ where: { id: lostEvent.id } })).processedAt,
+      );
+      assert.equal(await balanceOf(user.id), 3000n);
+      const stillBroken = await prisma.paymentEvent.findUnique({ where: { id: brokenEvent.id } });
+      assert.equal(stillBroken.processedAt, null);
+      assert.match(stillBroken.processError, /SyntaxError/);
+      assert.equal(
+        await prisma.outboxJob.count({
+          where: { jobId: `alert:payment.unapplied:${brokenEvent.id}` },
+        }),
+        1,
+      );
+      assert.equal(
+        (await prisma.paymentEvent.findUnique({ where: { id: freshEvent.id } })).processedAt,
+        null,
+      );
+
+      // The next run alerts no more for the same event.
+      await service.reapplyUnapplied();
+      assert.equal(
+        await prisma.outboxJob.count({
+          where: { jobId: `alert:payment.unapplied:${brokenEvent.id}` },
+        }),
+        1,
+      );
+    });
+
     await prisma.$disconnect();
   } finally {
     await postgres.stop();
