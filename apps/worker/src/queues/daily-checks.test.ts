@@ -176,7 +176,7 @@ describe('the section 19.2 and 20.3 daily checks in the worker', () => {
     await on.onModuleInit();
     await settle();
     expect(github).toEqual([
-      'https://api.github.com/repos/VAQYBIN/remnaray-astra/releases?per_page=100',
+      'https://api.github.com/repos/RemnaRay/RemnaRay/releases?per_page=100',
     ]);
     expect(updates).toEqual([
       {

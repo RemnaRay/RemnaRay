@@ -9,7 +9,7 @@
  * minor published later would win; the API picks the highest version from
  * this list instead.
  */
-export const UPDATE_REPOSITORY = 'VAQYBIN/remnaray-astra';
+export const UPDATE_REPOSITORY = 'RemnaRay/RemnaRay';
 
 export type PublishedRelease = {
   version: string;

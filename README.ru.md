@@ -1,7 +1,7 @@
 # RemnaRay
 
-[![CI](https://github.com/VAQYBIN/remnaray-astra/actions/workflows/ci.yml/badge.svg)](https://github.com/VAQYBIN/remnaray-astra/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/VAQYBIN/remnaray-astra?include_prereleases&sort=semver)](https://github.com/VAQYBIN/remnaray-astra/releases)
+[![CI](https://github.com/RemnaRay/RemnaRay/actions/workflows/ci.yml/badge.svg)](https://github.com/RemnaRay/RemnaRay/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/RemnaRay/RemnaRay?include_prereleases&sort=semver)](https://github.com/RemnaRay/RemnaRay/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Open-source commerce platform for Remnawave.**
@@ -29,7 +29,7 @@ Telegram-бот и сайт с лендингом и личным кабинет
 ## Быстрый старт
 
 ```sh
-git clone https://github.com/VAQYBIN/remnaray-astra && cd remnaray-astra
+git clone https://github.com/RemnaRay/RemnaRay && cd RemnaRay
 ./scripts/init-env.sh          # спросит домен, email и пароль базы
 ./scripts/rr up                # поднимет профиль, указанный в .env
 docker compose ps              # всё healthy, `migrate` завершился с 0

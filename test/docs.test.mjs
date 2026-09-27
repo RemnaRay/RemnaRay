@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { execFileSync } from 'node:child_process';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import test from 'node:test';
@@ -173,4 +175,34 @@ test('compose follows the major line, as section 24.4 requires', async () => {
       compose.includes(`\${RR_REGISTRY:-ghcr.io/remnaray}/${image}:\${RR_VERSION:-1}`),
       `the ${image} image does not follow RR_REGISTRY and RR_VERSION`,
     );
+});
+
+// The repository moved to the RemnaRay organisation (owner decision О-2,
+// 2026-09-27): the images, the signatures and the update check follow it.
+test('the delivery names the repository RemnaRay/RemnaRay', async () => {
+  const install = await readFile('docs/install.md', 'utf8');
+  assert.match(
+    install,
+    /--certificate-identity-regexp '\^https:\/\/github\\\.com\/RemnaRay\/RemnaRay\/\\\.github\/workflows\/\(release\|rebuild\)\\\.yml@'/u,
+  );
+  for (const file of ['README.md', 'README.ru.md', 'docs/install.md'])
+    assert.match(
+      await readFile(file, 'utf8'),
+      /git clone https:\/\/github\.com\/RemnaRay\/RemnaRay && cd RemnaRay/u,
+      file,
+    );
+  assert.match(
+    await readFile('apps/worker/src/queues/update-check.ts', 'utf8'),
+    /UPDATE_REPOSITORY = 'RemnaRay\/RemnaRay'/u,
+  );
+  // Tracked files only; PROGRESS.md is history and keeps the old name.
+  const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
+    .split('\0')
+    .filter((file) => file !== '' && file !== 'docs/development/PROGRESS.md');
+  const stale = [];
+  for (const file of tracked) {
+    const content = await readFile(file).catch(() => Buffer.alloc(0));
+    if (/VAQYBIN\/remnaray-astra/iu.test(content.toString('utf8'))) stale.push(file);
+  }
+  assert.deepEqual(stale, []);
 });

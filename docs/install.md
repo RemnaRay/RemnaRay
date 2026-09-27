@@ -19,7 +19,7 @@ You also need a Telegram bot token from [@BotFather](https://t.me/BotFather).
 ## Install
 
 ```sh
-git clone https://github.com/VAQYBIN/remnaray-astra && cd remnaray-astra
+git clone https://github.com/RemnaRay/RemnaRay && cd RemnaRay
 ./scripts/init-env.sh
 ./scripts/rr up
 ```
@@ -48,7 +48,7 @@ run it:
 
 ```sh
 cosign verify ghcr.io/remnaray/app:1 \
-  --certificate-identity-regexp '^https://github\.com/VAQYBIN/remnaray-astra/\.github/workflows/(release|rebuild)\.yml@' \
+  --certificate-identity-regexp '^https://github\.com/RemnaRay/RemnaRay/\.github/workflows/(release|rebuild)\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

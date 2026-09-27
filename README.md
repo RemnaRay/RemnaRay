@@ -1,7 +1,7 @@
 # RemnaRay
 
-[![CI](https://github.com/VAQYBIN/remnaray-astra/actions/workflows/ci.yml/badge.svg)](https://github.com/VAQYBIN/remnaray-astra/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/VAQYBIN/remnaray-astra?include_prereleases&sort=semver)](https://github.com/VAQYBIN/remnaray-astra/releases)
+[![CI](https://github.com/RemnaRay/RemnaRay/actions/workflows/ci.yml/badge.svg)](https://github.com/RemnaRay/RemnaRay/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/RemnaRay/RemnaRay?include_prereleases&sort=semver)](https://github.com/RemnaRay/RemnaRay/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Open-source commerce platform for Remnawave.**
@@ -30,7 +30,7 @@ request.
 ## Quick start
 
 ```sh
-git clone https://github.com/VAQYBIN/remnaray-astra && cd remnaray-astra
+git clone https://github.com/RemnaRay/RemnaRay && cd RemnaRay
 ./scripts/init-env.sh          # asks for the domain, the email and a password
 ./scripts/rr up                # starts the profile named in .env
 docker compose ps              # everything healthy, `migrate` exited 0

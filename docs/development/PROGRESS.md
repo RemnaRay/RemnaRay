@@ -158,9 +158,30 @@ One commit each:
   checked on PostgreSQL 18 after all migrations; locally the spec passes on
   the direct stack; the smoke profile is confirmed by the next CI run.
 
-**Exact next:** the P-5 remainder (`VAQYBIN/remnaray-astra` →
-`RemnaRay/RemnaRay` in `docs/install.md` cosign identity, READMEs,
-`update-check.ts`, `.env.example`); then package 1.
+### P-5 remainder (after the repository moved)
+
+- **P-5 Done (local) — the delivery still named `VAQYBIN/remnaray-astra`.**
+  After the move to `RemnaRay/RemnaRay` (О-2) the cosign identity in
+  `docs/install.md` would have refused every signature of the organisation's
+  releases, the clone commands and badges pointed at the old name, and the
+  daily update check (`UPDATE_REPOSITORY`) only worked through GitHub's
+  redirect. Repair: `RemnaRay/RemnaRay` in `docs/install.md` (clone and
+  `--certificate-identity-regexp '^https://github\.com/RemnaRay/RemnaRay/\.github/workflows/(release|rebuild)\.yml@'`,
+  identity format checked against the Sigstore cosign documentation),
+  both READMEs, `update-check.ts` and `.env.example`; `CODEOWNERS @VAQYBIN`
+  stays (the account is the owner). The image namespace needed no change:
+  the workflows derive it from the repository owner and compose already
+  defaults to `ghcr.io/remnaray`. Evidence: `daily-checks.test.ts` expects
+  `api.github.com/repos/RemnaRay/RemnaRay/releases` (red → green);
+  `test/docs.test.mjs` «the delivery names the repository RemnaRay/RemnaRay»
+  (identity, clone commands, the constant, no tracked file but this history
+  with the old name) red → green; docs tests 7/7 on a clean worktree, worker
+  30, lint, format, typecheck. **Not yet verified:** `cosign verify` against
+  a release signed from the new repository (no release exists yet).
+
+**Exact next:** package 1 — R49 (the worker's `call()` and an empty body),
+then R1, R102, P-1, P-1 part 2, R74 and the re-apply backstop, one commit
+each.
 
 ## VPS acceptance run — 2026-09-26
 
