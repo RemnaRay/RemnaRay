@@ -130,8 +130,13 @@ export class PlansRepository implements PlansRepositoryPort {
   }
 
   async remove(id: string): Promise<void> {
-    const sales = await this.prisma.transaction.count({ where: { planId: id } });
-    if (sales > 0) throw new PlanHasSalesError();
+    // P-1: a payment names its invoice, not the plan, so a sale is a paid
+    // invoice for the plan; transactions naming it directly count as well.
+    const [invoices, transactions] = await Promise.all([
+      this.prisma.invoice.count({ where: { planId: id, status: 'paid' } }),
+      this.prisma.transaction.count({ where: { planId: id } }),
+    ]);
+    if (invoices + transactions > 0) throw new PlanHasSalesError();
     await this.prisma.plan.update({
       where: { id },
       data: { deletedAt: new Date(), isActive: false },

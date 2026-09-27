@@ -291,8 +291,18 @@ times delivered]`; `XAUTOCLAIM` without `JUSTID` increments the count),
   Checks: API 394, `m2.payment` + `m2.stars` 2/2, build, lint, format,
   typecheck, i18n-check (2292); `docs/payments/README.md`. VPS action: none.
 
-**Exact next:** package 1 — P-1 part 2 (`plans.remove` counts paid invoices),
-then R74 and the re-apply backstop, one commit each.
+- **P-1 part 2 Done (local) — a plan that had been sold could be deleted.**
+  Cause: `PlansRepository.remove` refused only when `transactions.plan_id`
+  named the plan, and payment transactions carry `invoice_id` instead, so
+  `PLAN_HAS_SALES` never fired for real sales. Repair: a sale is a `paid`
+  invoice for the plan (or, as before, a transaction naming it); both counts
+  are read before the soft delete. Evidence: `plans.repository.test.ts`
+  «refuses a plan with a paid invoice, though no transaction names it» red
+  (resolved, plan deleted) → green; «deletes a plan nobody paid for» green.
+  Checks: API 396, build, lint, format, typecheck. VPS action: none.
+
+**Exact next:** package 1 — R74 (one ordered lock of every account a payment
+touches), then the re-apply backstop, one commit each.
 
 ## VPS acceptance run — 2026-09-26
 

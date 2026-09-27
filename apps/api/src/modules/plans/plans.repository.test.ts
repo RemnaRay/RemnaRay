@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PlansRepository } from './plans.repository';
+import { PlanHasSalesError, PlansRepository } from './plans.repository';
 
 const row = {
   id: 'plan-1',
@@ -33,5 +33,42 @@ describe('PlansRepository views (section 9.4 PlanPublic)', () => {
     // locales and refused the whole list without them.
     expect(plan?.description).toEqual({ ru: '', en: '' });
     expect(plan?.name).toEqual({ ru: 'Месяц', en: 'Месяц' });
+  });
+});
+
+describe('PlansRepository.remove (P-1)', () => {
+  it('refuses a plan with a paid invoice, though no transaction names it', async () => {
+    // Payment transactions carry `invoice_id`, not `plan_id`: counting only
+    // `transactions.planId` let every plan that was actually sold be deleted.
+    const prisma = {
+      invoice: { count: vi.fn().mockResolvedValue(1) },
+      transaction: { count: vi.fn().mockResolvedValue(0) },
+      plan: { update: vi.fn() },
+    };
+    const redis = { del: vi.fn() };
+    const repository = new PlansRepository(prisma as never, redis as never);
+
+    await expect(repository.remove('plan-1')).rejects.toBeInstanceOf(PlanHasSalesError);
+
+    expect(prisma.invoice.count).toHaveBeenCalledWith({
+      where: { planId: 'plan-1', status: 'paid' },
+    });
+    expect(prisma.plan.update).not.toHaveBeenCalled();
+  });
+
+  it('deletes a plan nobody paid for', async () => {
+    const prisma = {
+      invoice: { count: vi.fn().mockResolvedValue(0) },
+      transaction: { count: vi.fn().mockResolvedValue(0) },
+      plan: { update: vi.fn().mockResolvedValue(row) },
+    };
+    const repository = new PlansRepository(prisma as never, { del: vi.fn() } as never);
+
+    await repository.remove('plan-1');
+
+    expect(prisma.plan.update).toHaveBeenCalledWith({
+      where: { id: 'plan-1' },
+      data: { deletedAt: expect.any(Date) as Date, isActive: false },
+    });
   });
 });
