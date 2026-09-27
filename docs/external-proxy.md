@@ -7,12 +7,13 @@
 one address instead of having to route between `api` and `web` itself.
 
 ```
-your proxy ──► 127.0.0.1:8080 (edge) ──┬─► api:3000   /api, /webhooks, /tg, /metrics
+your proxy ──► 127.0.0.1:8080 (edge) ──┬─► api:3000   /api, /webhooks, /tg
                                        └─► web:3001   everything else
 ```
 
-`/api/internal/*` is answered by `edge` itself with `404`: the bot and the
-worker reach the API on the compose network, never through your proxy.
+`/api/internal/*` and `/metrics` are answered by `edge` itself with `404`: the
+bot and the worker reach the API on the compose network, and Prometheus
+scrapes `api:3000/metrics` there too, never through your proxy.
 
 `RR_TLS_MODE` must be `none`, and the environment validation enforces that both
 ways: `none` is refused with any other profile, and any other mode is refused

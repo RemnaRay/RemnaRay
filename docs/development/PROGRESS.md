@@ -614,8 +614,24 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   deploy, `ss -tlnp | grep -E ':(80|443) '` shows only `0.0.0.0`; remove the
   domain's `AAAA` record if there is one.
 
-**Exact next:** package 2 — R24 (the external edge answers `/metrics` with
-404), then R25, R137, R27, R78, R81, R79 + L-3, L-6, R101.
+- **R24 Done (local) — the external profile served `/metrics` to the
+  Internet.** Cause: `edge.conf` forwarded `location ^~ /metrics` to the API,
+  and the API checks only its socket's address — behind the edge that is the
+  edge's own compose address, inside `RR_TRUSTED_INTERNAL_CIDR` — so
+  `https://shop/metrics` through the owner's proxy returned revenue, invoice
+  and queue counters (19.7: `/metrics` only from the compose network; 21.7
+  routes only `/api`, `/webhooks`, `/tg` to the API). Repair: the edge
+  answers `location ^~ /metrics` itself with 404, like `/api/internal/`;
+  Prometheus scrapes `api:3000` directly; `docs/external-proxy.md` no longer
+  draws `/metrics` through the edge. Evidence: `proxy-render.test.ts` «the
+  external edge and /metrics» red (proxied) → green; the real
+  `nginx:1.30-alpine` with the edge config passes `nginx -t` and answers
+  `/metrics`, `/metricsx` and `/api/internal/…` with 404. Checks: API
+  proxy-render 38, lint, format; `pnpm test` 60/61 (the known local
+  docs-link failure). VPS action: none (the stand runs the nginx profile).
+
+**Exact next:** package 2 — R25 (the external profile's trusted proxies in
+the docs), then R137, R27, R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -474,3 +474,14 @@ describe('IPv4 listeners (R13, L-34)', () => {
     expect(edge).not.toMatch(/listen \[::\]/u);
   });
 });
+
+describe('the external edge and /metrics (R24)', () => {
+  // The API checks only its socket's address, and behind the edge that is
+  // the edge's own compose address, so a forwarded /metrics would answer the
+  // Internet. Prometheus scrapes api:3000 directly on the compose network.
+  it('answers /metrics itself and never forwards it', () => {
+    const edge = readFileSync(resolve(proxyRoot, 'external/edge.conf'), 'utf8');
+    expect(edge).toMatch(/location \^~ \/metrics \{ return 404; \}/u);
+    expect(edge).not.toMatch(/location[^{]*\/metrics[^{]*\{[^}]*proxy_pass/u);
+  });
+});
