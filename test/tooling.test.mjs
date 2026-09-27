@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { glob, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, glob, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
@@ -373,6 +373,47 @@ test('the CI workflow covers required quality and image gates', async () => {
   assert.match(workflow, /deploy\/docker\/app\.Dockerfile/);
   assert.match(workflow, /deploy\/docker\/web\.Dockerfile/);
   assert.match(workflow, /push: false/);
+});
+
+const tsx = resolve('node_modules/.bin/tsx');
+const i18nCheck = resolve('tools/i18n-check.ts');
+
+/** Runs the locale check against the `locales` directory of `cwd`. */
+function runI18nCheck(cwd) {
+  try {
+    return {
+      ok: true,
+      output: execFileSync(tsx, [i18nCheck], { cwd, encoding: 'utf8', stdio: 'pipe' }),
+    };
+  } catch (error) {
+    return { ok: false, output: `${error.stdout ?? ''}${error.stderr ?? ''}` };
+  }
+}
+
+test('the locale check passes on the committed catalogs (CI quality gate)', () => {
+  const { ok, output } = runI18nCheck(process.cwd());
+  assert.ok(ok, output);
+});
+
+test('the locale check still flags English copy in ru, key by key', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'rr-i18n-'));
+  try {
+    await cp('locales', join(dir, 'locales'), { recursive: true });
+    const file = join(dir, 'locales/ru/admin.json');
+    const catalog = JSON.parse(await readFile(file, 'utf8'));
+    // A brand only passes under its own key, not because its neighbours are brands.
+    catalog['admin.providers.name.yookassa'] = 'YooKassa';
+    catalog['admin.title'] = 'Admin console';
+    await writeFile(file, `${JSON.stringify(catalog, null, 2)}\n`);
+
+    const { ok, output } = runI18nCheck(dir);
+    assert.equal(ok, false);
+    assert.match(output, /admin\.providers\.name\.yookassa still reads as English copy/u);
+    assert.match(output, /admin\.title still reads as English copy/u);
+    assert.match(output, /failed with 2 problem\(s\)/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('the API OpenAPI document is generated from shared Zod contracts', async () => {

@@ -31,8 +31,39 @@ const nonCyrillicRussianKeys = new Set([
   'admin.admins.totp',
   'admin.providers.health',
   'setup.admin.email',
+  // Payment brands, operating systems and the English path of CryptoBot's own menus.
+  'admin.providers.name.robokassa',
+  'admin.providers.name.lava',
+  'admin.providers.name.platega',
+  'admin.providers.name.cryptobot',
+  'admin.providers.name.stars',
+  'admin.providers.name.mock',
+  'admin.providers.hint.token',
+  'setup.payments.providerName.robokassa',
+  'setup.payments.providerName.lava',
+  'setup.payments.providerName.platega',
+  'setup.payments.providerName.cryptobot',
+  'setup.payments.providerName.stars',
+  'setup.payments.providerName.mock',
+  'setup.payments.hint.token',
+  'bot.btn.guide.android',
+  'bot.btn.guide.windows',
+  'bot.btn.guide.macos',
+  'bot.btn.guide.linux',
 ]);
 const cyrillic = /[\u0400-\u04FF]/u;
+
+/**
+ * The words a reader sees: HTML tags, entities and ICU argument names are
+ * markup, so `<code>{code}</code>` is not English copy.
+ */
+function visibleText(template: string): string {
+  return template
+    .replaceAll(/<[^>]*>/gu, ' ')
+    .replaceAll(/&(?:[a-z]+|#\d+);/giu, ' ')
+    .replaceAll(/\{\s*[A-Za-z_]\w*\s*(?:,\s*[a-z]+\s*,?)?\s*\}?/gu, ' ');
+}
+
 const failures: string[] = [];
 
 /** Flattens the JSON namespace file, expanding arrays and objects into leaf keys. */
@@ -98,9 +129,9 @@ for (const namespace of namespaces) {
 for (const namespace of namespaces) {
   for (const [key, template] of read('ru', namespace)) {
     if (nonCyrillicRussianKeys.has(key)) continue;
-    if (!/[A-Za-z]{4}/u.test(template)) continue;
-    if (!cyrillic.test(template))
-      failures.push(`ru/${namespace}: ${key} still reads as English copy`);
+    const text = visibleText(template);
+    if (!/[A-Za-z]{4}/u.test(text)) continue;
+    if (!cyrillic.test(text)) failures.push(`ru/${namespace}: ${key} still reads as English copy`);
   }
 }
 

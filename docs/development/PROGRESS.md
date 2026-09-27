@@ -1,6 +1,110 @@
 # RemnaRay Development Progress
 
-## VPS acceptance run — 2026-09-26 (next work starts here)
+## Code review repair queue — 2026-09-27 (next work starts here)
+
+Current milestone remains M5 (NOT VERIFIED); TASK-M5-004 remains the sole
+milestone task and its gates wait for this queue (owner decision О-18 below).
+A full read-only review of `dev@64ecadd` (findings R1–R138) and an independent
+re-verification (none refuted; new findings P-1…P-21 and Lows numbered L-1…L-36)
+are kept locally, **not tracked** (`docs/development/*` is ignored):
+`docs/development/reviews/2026-09-27-full-review.md`,
+`verification-2026-09-27.md` and the working queue `repair-queue-2026-09-27.md`.
+This section is the tracked record of that queue.
+
+Rules: one repair — one Conventional Commit naming its IDs, with a regression
+test shown red on the old code first; fast gates before each push (`pnpm lint`,
+`pnpm format`, `pnpm typecheck`, tests of the touched packages,
+`pnpm i18n-check`); the integration suites of the touched area after each
+package; VPS actions are collected, not executed; a repair that departs from
+the specification or needs an unrecorded decision stops for the owner.
+
+Order (О-18): package 0 (CI green) → P-5 remainder and the `ci-ok` check →
+1 (money loss: R49, R1, R102, P-1, R74, re-apply backstop) → 2 (security,
+limits) → 4 (ledger and balance) → 3 (install, release, rollback) → F37 →
+5 (promocodes and prices) → 6 (Remnawave) → 7 (anonymisation) → 8 (bot) →
+9 (support) → 10 (worker, notifications, broadcasts) → 11 (web, themes, i18n);
+all of it before the M5-004 gates; package 12 (remaining Lows) before the M5
+Definition of Done. The unimplemented requirements among the findings (R18,
+R19, R29, R41, R46, R48, R55, R68, R119, R124–R126) belong to M1–M4 tasks and
+are repaired here, not moved to M6.
+
+**Owner decisions (2026-09-27):**
+
+- О-1 R13 — publish 80/443 on IPv4 only and document "no `AAAA`"; recorded
+  deviation from 21.8.
+- О-2 P-5 — images `ghcr.io/remnaray/*`. The repository moved to the
+  organisation: `https://github.com/RemnaRay/RemnaRay` (local `origin`
+  updated). The workflows derive the namespace from `github.repository_owner`;
+  `images.yml` has published `:dev` there and the stand's `.env` now reads
+  `RR_REGISTRY=ghcr.io/remnaray`. Rulesets `dev` (no deletion, no force push)
+  and `releases` (tags `v*`: creation by repository admins only, no update or
+  deletion) exist; the `main` ruleset (PR, 0 approvals, merge commits only,
+  required check `ci-ok`) waits for the `ci-ok` job.
+- О-3 P-7 — FR-023 literally; a plan change to the same plan is refused.
+- О-4 P-10/R36 — grace as FR-012: no past `expireAt` to the panel, no
+  `disable`.
+- О-5 R20/R73 — EX-06 literally (the remainder is credited to the balance, the
+  new plan is bought at its full price).
+- О-6 R52 — reminder dedup key per period (`event:<subId>:<expiresAt>`).
+- О-7 P-13 — link an existing panel user (EX-11) but never shorten its term or
+  limits on the first sync; alert.
+- О-8 R77 — an operator sees only their own entries in a user's audit tab.
+- О-9 R79/L-3 — the account sign-in JWT is single-use and no Bearer token.
+- О-10 R92 — Prisma schema pulled from the DDL; CI `migrate diff --exit-code`.
+- О-11 R108 — outgoing webhook URLs: https only, no private addresses.
+- О-12 R135 — **F37, purchases only from the balance**: providers only top the
+  balance up (the missing amount, rounded up to the provider's minimum); the
+  customer buys as a second step (a «Купить» button with the credit notice);
+  referral rewards only on top-ups («first purchase» → «first top-up»,
+  `count_topups` goes); audience self-employed (НПД) or no status — one
+  receipt at the top-up, the ИП/ООО advance-and-offset scheme is out of scope.
+  A separate feature between packages 4 and 5; deviations from FR-020/021,
+  11.2, FR-062 and 15.1–15.2 to be recorded with it.
+- О-13 R136 — unban restores a subscription revoked by the ban if its term is
+  not over.
+- О-14 R137 — Caddy `admin localhost:2019`, metrics on a separate port.
+- О-15 R138 — legal texts revalidate within 5 s (AC-181).
+- О-16 P-2/P-9/R26 — webhook secret checked before the throttler, counted per
+  IP; the web container passes the client IP to the API.
+- О-17 P-21 — Valkey gets a password.
+- О-19 P-1 — a payment for a plan taken off sale after invoicing goes to the
+  balance with an alert.
+- О-20 — the stand is redeployed from scratch after the repairs; no data-fix
+  scripts.
+
+### Package 0 — CI green
+
+- **R65 Done (local) — `pnpm i18n-check` red since 2026-09-26, CI `quality`
+  failing before Build.** Cause: the "ru still reads as English copy" rule
+  (four Latin letters and no Cyrillic) flagged 20 ru values — payment brand
+  names (`admin.providers.name.*`, `setup.payments.providerName.*`), OS names
+  (`bot.btn.guide.*`), CryptoBot's English menu path (`*.hint.token`), and two
+  templates whose only Latin is markup (`<code>{code}</code> — {title}`,
+  `bot.support.card.user`); F12, F36 and the subscription screens never ran
+  the gate. Repair (`tools/i18n-check.ts`): the rule reads the visible text —
+  HTML tags, entities and ICU argument names are removed first — and the 18
+  brand/OS/path keys are allowlisted by exact key, so a new English value
+  under a neighbouring key still fails. Evidence: `test/tooling.test.mjs`
+  «the locale check passes on the committed catalogs» (red: 20 problems →
+  green) and «still flags English copy in ru, key by key» (a copy of the
+  catalogs with `admin.providers.name.yookassa`=`YooKassa` and `admin.title` in
+  English must fail with exactly those 2; red: 22 → green). Checks:
+  `pnpm i18n-check` (2286 messages), lint, format, typecheck, root tests 56/57 — the
+  one failure is local only and not R65: «every relative link in the
+  documentation resolves» walks the file system and reads the untracked
+  review file; on a clean worktree with this change it passes 6/6. No
+  integration suite covers the tool. **Not yet verified:** the CI `quality`
+  job on GitHub (runs on the next push). VPS action: none.
+- Found while repairing: `test/docs.test.mjs` scans ignored local files
+  (`docs/development/reviews/*`); queued in package 12 (list only tracked
+  files).
+
+**Exact next:** the P-5 remainder (`VAQYBIN/remnaray-astra` →
+`RemnaRay/RemnaRay` in `docs/install.md` cosign identity, READMEs,
+`update-check.ts`, `.env.example`) and the `ci-ok` aggregate check with CI on
+`dev` pushes; then package 1.
+
+## VPS acceptance run — 2026-09-26
 
 Current milestone remains M5 (NOT VERIFIED); TASK-M5-004 remains the sole
 milestone task. The owner redeployed the test VPS from scratch
