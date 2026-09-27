@@ -3,7 +3,7 @@ import { Injectable, Optional } from '@nestjs/common';
 import { RewardsService } from '../rewards/rewards.service';
 import { SettingsService } from '../settings/settings.service';
 import { parseStartPayload, userUpsertSchema } from './users.schemas';
-import type { UsersRepositoryPort, UserUpsertResult } from './users.repository';
+import type { UserSummary, UsersRepositoryPort, UserUpsertResult } from './users.repository';
 
 @Injectable()
 export class UsersService {
@@ -12,6 +12,11 @@ export class UsersService {
     private readonly settings: SettingsService,
     @Optional() private readonly rewards?: RewardsService,
   ) {}
+
+  /** The user by id; none for an unknown or anonymized one. */
+  summary(id: string): Promise<UserSummary | null> {
+    return this.repository.findSummary(id);
+  }
 
   async upsert(value: unknown): Promise<UserUpsertResult> {
     const input = userUpsertSchema.parse(value);

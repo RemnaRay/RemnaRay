@@ -143,5 +143,13 @@
   "account.referrals.termsPercentAll": "Вы получаете {percent}% от каждой оплаты приглашённого.",
   "account.referrals.bonusDays": "Приглашённый получает {days, plural, one {# день} few {# дня} many {# дней} other {# дня}} доступа.",
   "account.referrals.bonusBalance": "Приглашённый получает {amount} на баланс.",
-  "account.open.server": "Подписка с сервера {host}. Добавляйте только ссылки, которые пришли из бота магазина."
+  "account.open.server": "Подписка с сервера {host}. Добавляйте только ссылки, которые пришли из бота магазина.",
+  "account.botSignIn.title": "Вход в личный кабинет",
+  "account.botSignIn.as": "Войти как {name}?",
+  "account.botSignIn.asUnnamed": "Войти в аккаунт, для которого бот выдал эту ссылку?",
+  "account.botSignIn.hint": "Ссылку выдал бот магазина. Если это не ваш аккаунт, не входите и закройте страницу.",
+  "account.botSignIn.confirm": "Войти",
+  "account.botSignIn.invalid": "Ссылка недействительна или уже использована. Откройте кабинет из бота ещё раз.",
+  "account.botSignIn.failed": "Не удалось войти. Откройте кабинет из бота ещё раз.",
+  "account.botSignIn.home": "На главную"
 }

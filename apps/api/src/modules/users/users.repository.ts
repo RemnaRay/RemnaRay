@@ -28,6 +28,7 @@ export interface UsersRepositoryPort {
     payload: ParsedStartPayload,
     defaultLanguage: string,
   ): Promise<UserUpsertResult>;
+  findSummary(id: string): Promise<UserSummary | null>;
 }
 
 const REFERRAL_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -64,6 +65,11 @@ function summary(user: {
 
 export class UsersRepository implements UsersRepositoryPort {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async findSummary(id: string): Promise<UserSummary | null> {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    return user && !user.anonymizedAt ? summary(user) : null;
+  }
 
   async upsert(
     input: UserUpsertInput,

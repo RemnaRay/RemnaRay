@@ -143,5 +143,13 @@
   "account.referrals.termsPercentAll": "You get {percent}% of every payment of the invited customer.",
   "account.referrals.bonusDays": "The invited customer gets {days, plural, one {# day} other {# days}} of access.",
   "account.referrals.bonusBalance": "The invited customer gets {amount} on the balance.",
-  "account.open.server": "Subscription from {host}. Only add links that came from the shop's bot."
+  "account.open.server": "Subscription from {host}. Only add links that came from the shop's bot.",
+  "account.botSignIn.title": "Sign in to your account",
+  "account.botSignIn.as": "Sign in as {name}?",
+  "account.botSignIn.asUnnamed": "Sign in to the account the bot issued this link for?",
+  "account.botSignIn.hint": "The shop's bot issued this link. If this is not your account, do not sign in and close this page.",
+  "account.botSignIn.confirm": "Sign in",
+  "account.botSignIn.invalid": "This link is invalid or already used. Open the account from the bot again.",
+  "account.botSignIn.failed": "Could not sign in. Open the account from the bot again.",
+  "account.botSignIn.home": "Home"
 }

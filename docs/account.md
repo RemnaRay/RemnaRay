@@ -39,9 +39,14 @@ behaviour from FR-134.
   live login). The section 13.3 widget route `POST /api/v1/auth/telegram`
   remains for compatibility. Setup: `docs/setup.md`, «Site login through
   Telegram».
-- From the bot, «Открыть кабинет» opens `/auth/tg?token=<jwt>`. The route
-  handler exchanges the token through the API and forwards the `Set-Cookie`
-  before redirecting into `/<locale>/account`.
+- From the bot, «Открыть кабинет» opens `/auth/tg?token=<jwt>`, which
+  redirects to `/<locale>/auth/tg#<jwt>` — the token in the fragment, out of
+  every log and `Referer`. That page asks the API whose account the link opens
+  (`POST /api/v1/auth/tg/preview`) and shows «Войти как <name>?»; only the
+  button signs in (`POST /api/v1/auth/tg`, same-origin, then
+  `/<locale>/account`), so a link someone else hands over cannot sign a visitor
+  into their account unasked (L-3). A link opens one session and is spent
+  (R79); it is no `Authorization: Bearer` credential for `/api/v1/me`.
 - «Выйти» posts `POST /api/v1/auth/logout`, drops the cached resources and
   returns to the landing page.
 

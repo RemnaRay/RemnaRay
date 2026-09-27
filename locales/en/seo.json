@@ -6,5 +6,6 @@
   "seo.offerTitle": "Offer — {brand}",
   "seo.accountTitle": "Account — {brand}",
   "seo.payTitle": "Payment — {brand}",
-  "seo.openTitle": "Connect — {brand}"
+  "seo.openTitle": "Connect — {brand}",
+  "seo.botSignInTitle": "Sign in — {brand}"
 }

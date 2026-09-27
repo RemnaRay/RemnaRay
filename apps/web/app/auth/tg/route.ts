@@ -1,4 +1,3 @@
-import { INTERNAL_API_URL } from '../../../lib/api';
 import { routing } from '../../../i18n/routing';
 
 /**
@@ -6,37 +5,25 @@ import { routing } from '../../../i18n/routing';
  * Deriving an absolute URL from the request would leak the internal host when
  * the request arrives through the reverse proxy.
  */
-function redirect(location: string, cookie?: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { location, ...(cookie ? { 'set-cookie': cookie } : {}) },
-  });
+function redirect(location: string): Response {
+  return new Response(null, { status: 302, headers: { location } });
 }
 
 /**
- * Section 13.3: the bot sends the user to `/auth/tg?token=<jwt>`. The API
- * exchanges the token for a session cookie, which is forwarded to the browser
- * before the redirect into the account.
+ * Section 13.3: the bot sends the user to `/auth/tg?token=<jwt>`. The link
+ * signs nobody in by itself (L-3, owner decision 2026-09-28): it opens the
+ * confirmation page of the visitor's locale, which names the account and
+ * signs in only when the visitor confirms. The token travels in the fragment,
+ * which no server log and no `Referer` ever carries.
  */
-export async function GET(request: Request) {
+export function GET(request: Request): Response {
   const token = new URL(request.url).searchParams.get('token');
   const locale =
     localeFromCookie(request.headers.get('cookie')) ??
     localeFromAcceptLanguage(request.headers.get('accept-language')) ??
     routing.defaultLocale;
-  const login = `/${locale}?login=1`;
-  if (!token) return redirect(login);
-
-  try {
-    const response = await fetch(
-      `${INTERNAL_API_URL}/api/v1/auth/tg?token=${encodeURIComponent(token)}`,
-      { redirect: 'manual', signal: AbortSignal.timeout(10_000) },
-    );
-    const cookie = response.headers.get('set-cookie');
-    return cookie ? redirect(`/${locale}/account`, cookie) : redirect(login);
-  } catch {
-    return redirect(login);
-  }
+  if (!token) return redirect(`/${locale}?login=1`);
+  return redirect(`/${locale}/auth/tg#${encodeURIComponent(token)}`);
 }
 
 function localeFromCookie(header: string | null): (typeof routing.locales)[number] | undefined {

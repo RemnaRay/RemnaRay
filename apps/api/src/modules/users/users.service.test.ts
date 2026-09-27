@@ -6,6 +6,10 @@ import type { ParsedStartPayload } from './users.schemas';
 import type { UsersRepositoryPort, UserUpsertResult } from './users.repository';
 
 class MemoryUsersRepository implements UsersRepositoryPort {
+  findSummary() {
+    return Promise.resolve(null);
+  }
+
   calls: Array<{ defaultLanguage: string; payload: ParsedStartPayload }> = [];
 
   upsert(

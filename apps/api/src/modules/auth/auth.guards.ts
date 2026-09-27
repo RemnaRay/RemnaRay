@@ -10,7 +10,6 @@ import {
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { Infrastructure } from '../../infra/infra.module';
-import { verifyJwt } from './auth.crypto';
 
 export type AuthenticatedRequest = FastifyRequest & {
   user?: { id: string; sessionId?: string };
@@ -86,19 +85,15 @@ export class AuthGuard implements CanActivate {
       return true;
     }
     if (!path.startsWith('/api/v1/me') && path !== '/api/v1/auth/logout') return true;
-    const bearer = req.headers.authorization;
+    // The session cookie only: the bot's link token is no Bearer credential
+    // (R79, owner decision О-9).
     let id: string | undefined;
-    if (bearer) {
-      if (!bearer.startsWith('Bearer ')) throw new UnauthorizedException('UNAUTHENTICATED');
-      id = verifyJwt(bearer.slice(7), process.env.RR_APP_KEY ?? '').sub;
-    } else {
-      const sid = readCookie(req.headers.cookie, 'rr_sid');
-      const raw = sid ? await this.infra.redis.getex(`rr:sess:${sid}`, 'EX', 2592000) : null;
-      if (raw && sid) {
-        const session = JSON.parse(raw) as { userId?: string };
-        id = session.userId;
-        if (id) req.user = { id, sessionId: sid };
-      }
+    const sid = readCookie(req.headers.cookie, 'rr_sid');
+    const raw = sid ? await this.infra.redis.getex(`rr:sess:${sid}`, 'EX', 2592000) : null;
+    if (raw && sid) {
+      const session = JSON.parse(raw) as { userId?: string };
+      id = session.userId;
+      if (id) req.user = { id, sessionId: sid };
     }
     if (!id) throw new UnauthorizedException('UNAUTHENTICATED');
     const user = await this.infra.db.user.findUnique({ where: { id } });

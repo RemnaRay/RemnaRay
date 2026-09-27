@@ -1,4 +1,4 @@
-import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
+import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { HttpException } from '@nestjs/common';
 
 import type { TelegramWidgetInput } from './auth.schemas';
@@ -60,7 +60,11 @@ export function verifyTelegramWidget(
   }
 }
 
-export type JwtClaims = { sub: string; iat: number; exp: number };
+/**
+ * The bot's account link (section 9.2, 13.3). `jti` names this link, so the
+ * exchange can spend it once (R79, owner decision О-9).
+ */
+export type JwtClaims = { sub: string; iat: number; exp: number; jti: string };
 
 export function signJwt(
   subject: string,
@@ -69,7 +73,12 @@ export function signJwt(
 ): string {
   const header = base64Url(JSON.stringify({ alg: JWT_ALGORITHM, typ: 'JWT' }));
   const payload = base64Url(
-    JSON.stringify({ sub: subject, iat: nowSeconds, exp: nowSeconds + 3600 }),
+    JSON.stringify({
+      sub: subject,
+      iat: nowSeconds,
+      exp: nowSeconds + 3600,
+      jti: randomBytes(16).toString('base64url'),
+    }),
   );
   const content = `${header}.${payload}`;
   const signature = createHmac('sha256', keyFromAppKey(appKey)).update(content).digest();
@@ -98,6 +107,8 @@ export function verifyJwt(
     if (
       header.alg !== JWT_ALGORITHM ||
       typeof payload.sub !== 'string' ||
+      typeof payload.jti !== 'string' ||
+      !/^[A-Za-z0-9_-]{16,64}$/u.test(payload.jti) ||
       typeof payload.iat !== 'number' ||
       typeof payload.exp !== 'number' ||
       !Number.isSafeInteger(payload.exp) ||

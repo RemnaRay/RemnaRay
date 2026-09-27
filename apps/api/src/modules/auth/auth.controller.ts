@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { FastifyReply } from 'fastify';
 
@@ -71,11 +71,35 @@ export class AuthController {
     return { user: result.user };
   }
 
-  @Get('auth/tg')
-  async telegramRedirect(@Query('token') token: string, @Res() reply: FastifyReply) {
-    const sessionId = await this.auth.exchangeJwt(token);
+  /**
+   * The bot's account link (section 13.3) opens a confirmation page, which
+   * shows whose account it is (L-3, owner decision 2026-09-28) …
+   */
+  @Post('auth/tg/preview')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  telegramLinkPreview(@Body() body: unknown) {
+    return this.auth.previewJwt(body);
+  }
+
+  /**
+   * … and signs in only when the visitor confirms, with a same-origin POST:
+   * a link someone else hands over names their account and cannot sign a
+   * visitor in unasked. The link is spent (R79, owner decision О-9).
+   */
+  @Post('auth/tg')
+  @HttpCode(204)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async telegramLink(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const sessionId = await this.auth.exchangeJwt(body, {
+      ip: request.ip,
+      ...(request.headers['user-agent'] ? { userAgent: request.headers['user-agent'] } : {}),
+    });
     setSessionCookie(reply, sessionId);
-    return reply.redirect('/account', 302);
   }
 
   @Post('auth/logout')

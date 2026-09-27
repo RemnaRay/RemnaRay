@@ -4,8 +4,8 @@ import { expect, test, type BrowserContext } from '@playwright/test';
 
 import { stackState } from '../setup/fixtures';
 
-/** Signs in the way the bot's «Открыть кабинет» button does (section 13.3). */
-async function signIn(context: BrowserContext, baseURL: string): Promise<string> {
+/** A link the bot's «Открыть кабинет» button carries (section 13.3). */
+async function botLink(context: BrowserContext, baseURL: string): Promise<string> {
   const state = stackState();
   const issued = await context.request.post(`${state.apiUrl}/api/internal/v1/auth/issue-token`, {
     headers: { 'x-internal-token': state.internalToken, 'content-type': 'application/json' },
@@ -13,8 +13,19 @@ async function signIn(context: BrowserContext, baseURL: string): Promise<string>
   });
   expect(issued.ok()).toBeTruthy();
   const { token } = (await issued.json()) as { token: string };
+  return `${baseURL}/auth/tg?token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Signs in the way the bot's button does: the link opens a page naming the
+ * account, and the customer confirms (L-3).
+ */
+async function signIn(context: BrowserContext, baseURL: string): Promise<string> {
+  const state = stackState();
   const page = await context.newPage();
-  await page.goto(`${baseURL}/auth/tg?token=${encodeURIComponent(token)}`);
+  await page.goto(await botLink(context, baseURL));
+  await expect(page.getByText(new RegExp(`@${state.user.username}`, 'u'))).toBeVisible();
+  await page.getByRole('button', { name: /^(Войти|Sign in)$/u }).click();
   await page.waitForURL(/\/(ru|en)\/account/u);
   const location = page.url();
   await page.close();
@@ -92,6 +103,27 @@ test.describe('customer account', () => {
     await expect(account).toBeVisible();
     await account.click();
     await expect(page).toHaveURL(/\/ru\/account$/u);
+  });
+
+  test('the bot`s link asks before it signs in, and works once (L-3, R79)', async ({
+    context,
+    page,
+    baseURL,
+  }) => {
+    const link = await botLink(context, baseURL ?? '');
+    await page.goto(link);
+    await expect(page).toHaveURL(/\/(ru|en)\/auth\/tg$/u);
+    // Nothing is signed in before the button.
+    expect((await context.cookies()).some((cookie) => cookie.name === 'rr_sid')).toBe(false);
+    await page.getByRole('button', { name: /^(Войти|Sign in)$/u }).click();
+    await page.waitForURL(/\/(ru|en)\/account/u);
+
+    await context.clearCookies();
+    await page.goto(link);
+    await expect(
+      page.getByText(/invalid or already used|недействительна или уже использована/u),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: /^(Войти|Sign in)$/u })).toHaveCount(0);
   });
 
   test('preserves the selected locale when the bot opens the account', async ({

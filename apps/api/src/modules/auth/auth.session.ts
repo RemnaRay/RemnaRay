@@ -17,6 +17,8 @@ export interface SessionStorePort {
   delete(id: string): Promise<void>;
   /** True the first time `key` is claimed within `ttlSeconds` (a one-time use). */
   claimOnce(key: string, ttlSeconds: number): Promise<boolean>;
+  /** Whether `key` has been claimed and the claim is still held. */
+  isClaimed(key: string): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -47,6 +49,10 @@ export class RedisSessionStore implements SessionStorePort {
 
   async claimOnce(key: string, ttlSeconds: number): Promise<boolean> {
     return (await this.redis.set(`rr:once:${key}`, '1', 'EX', ttlSeconds, 'NX')) === 'OK';
+  }
+
+  async isClaimed(key: string): Promise<boolean> {
+    return (await this.redis.exists(`rr:once:${key}`)) === 1;
   }
 
   async close(): Promise<void> {

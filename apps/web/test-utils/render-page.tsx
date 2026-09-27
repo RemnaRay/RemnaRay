@@ -10,7 +10,7 @@ import { invalidate } from '../lib/resource';
 
 export type MockRoute = { status?: number; body?: unknown; pending?: boolean };
 
-function messagesFor(locale: 'ru'): Record<string, unknown> {
+export function messagesFor(locale: 'ru'): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const namespace of namespaces) {
     for (const [key, value] of Object.entries(readNamespace(localeRoot, locale, namespace))) {

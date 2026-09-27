@@ -19,6 +19,7 @@ function harness() {
       claimed.add(key);
       return Promise.resolve(true);
     },
+    isClaimed: (key: string) => Promise.resolve(claimed.has(key)),
   };
   const users = {
     upsert: vi.fn().mockResolvedValue({ user: { id: 'user-1', telegramId: '987654321' } }),

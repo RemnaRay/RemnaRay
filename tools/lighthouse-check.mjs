@@ -37,11 +37,11 @@ const TARGETS = [
 ];
 
 /**
- * The entry URL the bot's «Открыть кабинет» button uses (section 13.3).
- * Lighthouse clears storage before it navigates, so the session has to be
- * established by the navigation itself rather than by a cookie set up front.
+ * A customer session, made the way the bot's «Открыть кабинет» link does
+ * (section 13.3): the link's token exchanged by the confirmation page's
+ * same-origin POST (L-3).
  */
-async function signInUrl(stack) {
+async function sessionCookie(stack) {
   const issued = await globalThis.fetch(`${stack.apiUrl}/api/internal/v1/auth/issue-token`, {
     method: 'POST',
     headers: { 'x-internal-token': stack.internalToken, 'content-type': 'application/json' },
@@ -49,13 +49,55 @@ async function signInUrl(stack) {
   });
   if (!issued.ok) throw new Error(`issue-token failed with ${String(issued.status)}`);
   const { token } = await issued.json();
-  return `${stack.baseURL}/auth/tg?token=${encodeURIComponent(token)}`;
+  const exchanged = await globalThis.fetch(`${stack.baseURL}/api/v1/auth/tg`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-requested-with': 'RemnaRay',
+      origin: `https://${new globalThis.URL(stack.baseURL).host}`,
+    },
+    body: JSON.stringify({ token }),
+  });
+  const cookie = exchanged.headers.get('set-cookie')?.split(';')[0];
+  if (!exchanged.ok || !cookie?.startsWith('rr_sid='))
+    throw new Error(`the sign-in exchange failed with ${String(exchanged.status)}`);
+  return decodeURIComponent(cookie.slice('rr_sid='.length));
 }
 
-async function audit(url, { port, categories }) {
+/**
+ * Puts the session into the audited browser's profile — the Lighthouse
+ * recipe for authenticated pages; the audit then keeps the storage it would
+ * otherwise clear before navigating.
+ */
+async function signInBrowser(port, baseURL, session) {
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${String(port)}`);
+  try {
+    await browser.contexts()[0].addCookies([
+      {
+        name: 'rr_sid',
+        value: session,
+        url: baseURL,
+        httpOnly: true,
+        secure: true,
+        sameSite: 'Lax',
+      },
+    ]);
+  } finally {
+    // Disconnects; the browser Lighthouse drives keeps running.
+    await browser.close();
+  }
+}
+
+async function audit(url, { port, categories, keepStorage }) {
   const { lhr } = await lighthouse(
     url,
-    { port, output: 'json', logLevel: 'error', onlyCategories: categories },
+    {
+      port,
+      output: 'json',
+      logLevel: 'error',
+      onlyCategories: categories,
+      ...(keepStorage ? { disableStorageReset: true } : {}),
+    },
     desktopConfig,
   );
   return lhr;
@@ -87,8 +129,13 @@ async function main() {
   try {
     for (const target of TARGETS) {
       const categories = Object.keys(target.thresholds);
-      const url = target.signIn ? await signInUrl(stack) : `${stack.baseURL}${target.path}`;
-      const lhr = await audit(url, { port: chrome.port, categories });
+      if (target.signIn)
+        await signInBrowser(chrome.port, stack.baseURL, await sessionCookie(stack));
+      const lhr = await audit(`${stack.baseURL}${target.path}`, {
+        port: chrome.port,
+        categories,
+        keepStorage: target.signIn === true,
+      });
       const expected = target.expected ?? new RegExp(`^${target.path}$`, 'u');
       if (!expected.test(new globalThis.URL(lhr.finalDisplayedUrl).pathname))
         throw new Error(

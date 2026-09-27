@@ -2929,6 +2929,34 @@
         }
       }
     },
+    "/api/v1/auth/tg": {
+      "post": {
+        "operationId": "botLinkSignIn",
+        "summary": "The bot's account link, confirmed on its page: body { token }; spends the link and sets rr_sid (R79, L-3)",
+        "responses": {
+          "204": {
+            "description": "Signed in"
+          },
+          "401": {
+            "description": "The link is invalid, expired or spent"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/tg/preview": {
+      "post": {
+        "operationId": "botLinkPreview",
+        "summary": "Whose account the bot's link opens, without spending it: body { token }",
+        "responses": {
+          "200": {
+            "description": "{ user: { firstName: string | null, username: string | null } }"
+          },
+          "401": {
+            "description": "The link is invalid, expired or spent"
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "operationId": "getMe",

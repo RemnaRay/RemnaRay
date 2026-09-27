@@ -753,8 +753,55 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   1/1, build, lint, format, typecheck; `pnpm test` 62/63 (the known local
   docs-link failure). VPS action: none.
 
-**Exact next:** package 2 — R79 + L-3 (single-use account link with a
-confirmation page, no Bearer), then L-6, R101.
+- **R79 + L-3 Done (local) — the bot's account link could be reused, used as
+  a Bearer token, and used to sign someone else in.** Cause: `exchangeJwt`
+  never spent the link, so for its hour anyone who saw
+  `/auth/tg?token=<jwt>` (a forwarded message, a screenshot, a log) could open
+  any number of sessions, and the same JWT was accepted as
+  `Authorization: Bearer` on every `/api/v1/me*` route (R79); and a link
+  someone issued for themselves and handed over signed the visitor into
+  that person's account without a word (login CSRF, L-3). Repair (owner
+  decisions О-9 and, for L-3, 2026-09-28): the link JWT carries a `jti`
+  (required); the exchange is `POST /api/v1/auth/tg { token }` — same-origin
+  (the section 19.3 CSRF rule), 10/min — and spends the link
+  (`claimOnce('bot-jwt:<jti>')` until its expiry), recording the visitor's IP
+  and user agent; `POST /api/v1/auth/tg/preview` names the account
+  (`firstName`, `username`) without spending it and refuses a spent link or a
+  banned or anonymized user; `GET /api/v1/auth/tg` is gone, so a link to the
+  API cannot bypass the page; `AuthGuard` no longer accepts Bearer. The web
+  `/auth/tg?token=` route only redirects to `/<locale>/auth/tg#<token>` — the
+  token in the fragment, out of every log and `Referer` — where the page
+  (history cleared of the token) shows «Войти как <имя> (@username)?» and
+  signs in only on the button, then opens `/<locale>/account`; a spent or
+  broken link says so and offers nothing to press. The bot is unchanged (13.3's
+  URL). i18n `account.botSignIn.*`, `seo.botSignInTitle`; OpenAPI routes;
+  `docs/account.md`, `docs/e2e.md`. The e2e sign-in and the Lighthouse
+  account audit follow the new flow; the audit now puts the session cookie
+  into the browser's profile and keeps storage (Lighthouse's recipe for
+  authenticated pages, Context7 `/googlechrome/lighthouse`;
+  `connectOverCDP`'s `close()` only disconnects, Context7
+  `/microsoft/playwright`) — a `Cookie` in `extraHeaders` was tried first and
+  never reached the page. Recorded deviations from 9.2: no Bearer (the
+  «MiniApp groundwork»), and the exchange is the confirmed POST instead of
+  `GET /api/v1/auth/tg` → 302. Evidence: `auth.bot-link.test.ts` — the second
+  exchange of a link refused, the preview names the account and spends
+  nothing, a valid link token as Bearer gets 401 — red (second session
+  opened; no preview; Bearer accepted) → green; web
+  `auth-tg-route.test.ts` (redirect to the page with the token in the
+  fragment, no API call, no cookie) red → green; `bot-sign-in.test.tsx`
+  (names «Анна (@anna)», signs in only on «Войти» with a same-origin POST,
+  clears the fragment; a spent link and a missing token offer nothing) red
+  (no page) → green; `e2e/specs/account.spec.ts` 15/15 on the local stack,
+  with «the bot's link asks before it signs in, and works once» (no `rr_sid`
+  before the button; the same link again shows the refusal); Lighthouse
+  landing 100/96/100 (ru, en), account accessibility 96. Checks: API 432,
+  web 70, bot 93, build, lint, format, typecheck, typecheck:e2e,
+  i18n-check (2312); `pnpm test` 62/63 (the known local docs-link failure).
+  VPS action: after deploy, open «Личный кабинет» in the bot, confirm on the
+  page, and check that the same link opened again is refused.
+
+**Exact next:** package 2 — L-6 (an unknown `kid` reloads Telegram's JWKS at
+most once a minute), then R101.
 
 ## VPS acceptance run — 2026-09-26
 

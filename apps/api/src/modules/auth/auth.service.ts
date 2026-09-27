@@ -2,8 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { SettingsService } from '../settings/settings.service';
 import { UsersService } from '../users/users.service';
-import { verifyJwt, verifyTelegramWidget, signJwt, AuthFailure } from './auth.crypto';
 import {
+  verifyJwt,
+  verifyTelegramWidget,
+  signJwt,
+  AuthFailure,
+  type JwtClaims,
+} from './auth.crypto';
+import {
+  botLinkSchema,
   issueTokenSchema,
   telegramOidcSchema,
   telegramWidgetSchema,
@@ -115,9 +122,39 @@ export class AuthService {
     return { token: signJwt(user.user.id, this.appKey), user: user.user };
   }
 
-  async exchangeJwt(token: string): Promise<string> {
-    const claims = verifyJwt(token, this.appKey);
-    return this.sessions.create({ userId: claims.sub });
+  /**
+   * The name of the account the bot's link opens, for the confirmation page
+   * (L-3, owner decision 2026-09-28); the link is not spent. A spent link, or
+   * one for a user who is gone or banned, is refused.
+   */
+  async previewJwt(value: unknown): Promise<{
+    user: { firstName: string | null; username: string | null };
+  }> {
+    const claims = verifyJwt(botLinkSchema.parse(value).token, this.appKey);
+    if (await this.sessions.isClaimed(botLinkKey(claims))) throw new AuthFailure('UNAUTHENTICATED');
+    const user = await this.users.summary(claims.sub);
+    if (!user || user.isBanned) throw new AuthFailure('UNAUTHENTICATED');
+    return { user: { firstName: user.firstName, username: user.username } };
+  }
+
+  /**
+   * Section 13.3's exchange of the bot's link for a session. R79 (owner
+   * decision О-9): the link opens one session only, so a link seen by anyone
+   * else — forwarded, in a screenshot, in a log — is spent.
+   */
+  async exchangeJwt(
+    value: unknown,
+    requestMeta?: { userAgent?: string; ip?: string },
+  ): Promise<string> {
+    const claims = verifyJwt(botLinkSchema.parse(value).token, this.appKey);
+    const ttl = Math.max(1, claims.exp - Math.floor(Date.now() / 1000));
+    if (!(await this.sessions.claimOnce(botLinkKey(claims), ttl)))
+      throw new AuthFailure('UNAUTHENTICATED');
+    return this.sessions.create({
+      userId: claims.sub,
+      ...(requestMeta?.userAgent ? { userAgent: requestMeta.userAgent } : {}),
+      ...(requestMeta?.ip ? { ip: requestMeta.ip } : {}),
+    });
   }
 
   async logout(sessionId: string | undefined): Promise<void> {
@@ -127,4 +164,8 @@ export class AuthService {
 
 export function asTelegramWidgetInput(value: unknown): TelegramWidgetInput {
   return telegramWidgetSchema.parse(value);
+}
+
+function botLinkKey(claims: JwtClaims): string {
+  return `bot-jwt:${claims.jti}`;
 }

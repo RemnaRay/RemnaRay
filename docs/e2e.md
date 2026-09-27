@@ -20,12 +20,12 @@ fixtures are written to `e2e/.stack.json`, which the specs read.
 
 ## What the specs cover
 
-| Spec                  | Covers                                                                                                                                                                                                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `site.spec.ts`        | landing brand, plans and CTAs; language switch; legal pages; robots and sitemap; `public/config`, `public/theme`, `public/plans`; the `/r/<code>` referral cookie                                                                                                                      |
-| `account.spec.ts`     | the middleware redirect for an anonymous visitor; `/auth/tg` sign-in from the bot; the empty subscription state; the plan list with providers and the promo field; balance and history; saving settings; sign-out; a purchase with the `mock` provider confirmed by its signed webhook |
-| `admin-login.spec.ts` | a wrong password; the password + TOTP flow; the redirect of an anonymous visitor to the login screen                                                                                                                                                                                   |
-| `admin.spec.ts`       | the dashboard widgets and charts; user search and the card; the journal; creating a plan; the AC-061 provider gate; the system page; a forged mutation and one with a wrong CSRF token; `Disallow: /admin`                                                                             |
+| Spec                  | Covers                                                                                                                                                                                                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `site.spec.ts`        | landing brand, plans and CTAs; language switch; legal pages; robots and sitemap; `public/config`, `public/theme`, `public/plans`; the `/r/<code>` referral cookie                                                                                                                                                                     |
+| `account.spec.ts`     | the middleware redirect for an anonymous visitor; `/auth/tg` sign-in from the bot, confirmed on its page and spent after one use; the empty subscription state; the plan list with providers and the promo field; balance and history; saving settings; sign-out; a purchase with the `mock` provider confirmed by its signed webhook |
+| `admin-login.spec.ts` | a wrong password; the password + TOTP flow; the redirect of an anonymous visitor to the login screen                                                                                                                                                                                                                                  |
+| `admin.spec.ts`       | the dashboard widgets and charts; user search and the card; the journal; creating a plan; the AC-061 provider gate; the system page; a forged mutation and one with a wrong CSRF token; `Disallow: /admin`                                                                                                                            |
 
 ## Projects
 
@@ -57,15 +57,17 @@ accessibility at least 90 for the account. It reuses the same stack, so the
 numbers describe the production build rather than `next dev`, and audits three
 pages with the official desktop preset:
 
-| Target       | Entry                  | Categories                      |
-| ------------ | ---------------------- | ------------------------------- |
-| `landing-ru` | `/ru`                  | performance, accessibility, SEO |
-| `landing-en` | `/en`                  | performance, accessibility, SEO |
-| `account`    | `/auth/tg?token=<jwt>` | accessibility                   |
+| Target       | Entry                | Categories                      |
+| ------------ | -------------------- | ------------------------------- |
+| `landing-ru` | `/ru`                | performance, accessibility, SEO |
+| `landing-en` | `/en`                | performance, accessibility, SEO |
+| `account`    | `/account` (session) | accessibility                   |
 
-Lighthouse clears storage before it navigates, so the account audit signs in
-the way the bot's «Открыть кабинет» button does instead of presenting a
-cookie, and the run fails if the navigation does not end on `/<locale>/account`.
+Lighthouse clears storage before it navigates, so the account audit makes a
+session the way the bot's «Открыть кабинет» link does (the confirmation
+page's exchange), puts its cookie into the audited browser's profile and keeps
+the storage for that audit (Lighthouse's recipe for authenticated pages); the
+run fails if the navigation does not end on `/<locale>/account`.
 Reports are written to `test-results/lighthouse/<target>.json`.
 
 The browser is resolved from `CHROME_PATH`, falling back to Playwright's
