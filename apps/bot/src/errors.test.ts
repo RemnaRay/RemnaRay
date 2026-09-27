@@ -1,8 +1,9 @@
-import { BotError, GrammyError } from 'grammy';
+import { BotError, GrammyError, HttpError } from 'grammy';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiClientError } from './api-client.js';
 import { botErrorHandler, incidentId, outgoingThrottle } from './bot.js';
+import { logger } from './logger.js';
 import type { RrContext } from './types.js';
 
 function failed(cause: unknown) {
@@ -35,7 +36,7 @@ describe('bot error handler for Stars payments (R1)', () => {
   }
 
   it('tells the customer the payment is received and being credited', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { error, reply } = paymentFailed(
       (key: string, params: { incidentId: string }) => `${key}:${params.incidentId}`,
     );
@@ -48,14 +49,14 @@ describe('bot error handler for Stars payments (R1)', () => {
 
   it('logs and does not fail when the catalog never loaded', async () => {
     // The i18n middleware failed before `ctx.t` was bound.
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { error, reply } = paymentFailed(undefined);
 
     await expect(botErrorHandler({ markBlocked: vi.fn() })(error)).resolves.toBeUndefined();
 
     expect(log).toHaveBeenCalledWith(
-      'Telegram update failed',
       expect.objectContaining({ updateId: 8, updateType: 'message' }),
+      'Telegram update failed',
     );
     expect(reply).not.toHaveBeenCalled();
     vi.restoreAllMocks();
@@ -87,12 +88,12 @@ describe('bot error and delivery boundaries', () => {
   });
 
   it('logs a handler error with the incident id the customer is shown (FR-127)', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { error, reply } = failed(new ApiClientError(403, 'FORBIDDEN'));
 
     await botErrorHandler({ markBlocked: vi.fn() })(error);
 
-    const [message, context] = log.mock.calls[0] as [string, Record<string, unknown>];
+    const [context, message] = log.mock.calls[0] as unknown as [Record<string, unknown>, string];
     expect(message).toBe('Telegram update failed');
     expect(context).toMatchObject({
       updateId: 7,
@@ -108,12 +109,12 @@ describe('bot error and delivery boundaries', () => {
   });
 
   it('names an unknown handler error in the log', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { error } = failed(new TypeError('x is undefined'));
 
     await botErrorHandler({ markBlocked: vi.fn() })(error);
 
-    expect(log.mock.calls[0]?.[1]).toMatchObject({
+    expect(log.mock.calls[0]?.[0]).toMatchObject({
       description: 'handler_error',
       error: 'TypeError',
       message: 'x is undefined',
@@ -122,7 +123,7 @@ describe('bot error and delivery boundaries', () => {
   });
 
   it('marks a user who blocked the bot instead of answering (EX-04)', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const markBlocked = vi.fn().mockResolvedValue(undefined);
     const { error, reply } = failed(
       new GrammyError(
@@ -138,5 +139,37 @@ describe('bot error and delivery boundaries', () => {
     expect(markBlocked).toHaveBeenCalledWith(42);
     expect(reply).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+describe('bot log lines (sections 19.6 and 20.1, R82)', () => {
+  it('writes one pino JSON line with the incident id and no token', async () => {
+    const written: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      written.push(String(chunk));
+      return true;
+    });
+    const { error, reply } = failed(
+      new HttpError(
+        'Network request for sendMessage failed!',
+        new Error('connect ECONNREFUSED https://api.telegram.org/bot123:SECRETTOKEN/sendMessage'),
+      ),
+    );
+
+    await botErrorHandler({ markBlocked: vi.fn() })(error);
+    stdout.mockRestore();
+
+    const lines = written.filter((line) => line.includes('Telegram update failed'));
+    expect(lines).toHaveLength(1);
+    const record = JSON.parse(lines[0] ?? '') as Record<string, unknown>;
+    expect(record).toMatchObject({
+      level: 50,
+      service: 'bot',
+      msg: 'Telegram update failed',
+      updateId: 7,
+      description: 'http_error',
+    });
+    expect(reply).toHaveBeenCalledWith(`bot.error.generic:${String(record.incidentId)}`);
+    expect(written.join('')).not.toContain('SECRETTOKEN');
   });
 });

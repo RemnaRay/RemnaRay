@@ -5,6 +5,7 @@ import { metricsContentType, metricsText } from '@remnaray/metrics';
 import { ApiClient } from './api-client.js';
 import { createBot, registerCommands, type BotRuntime } from './bot.js';
 import { BotIngress, supportChannel } from './ingress.js';
+import { failureOf, logger } from './logger.js';
 import { createSupportBot, type SupportContext, type SupportRuntime } from './support-bot.js';
 import type { BotConfig } from './types.js';
 
@@ -96,9 +97,9 @@ function configure(): Promise<void> {
         lastConfig = config;
         await configureSupport(config, runtime);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         ready = false;
-        console.error('Bot configuration unavailable; retrying');
+        logger.error(failureOf(error), 'Bot configuration unavailable; retrying');
       }),
   );
 }
@@ -122,9 +123,11 @@ async function configureSupport(config: BotConfig, shop: BotRuntime): Promise<vo
       const old = support;
       support = undefined;
       await old.ingress.stop();
-      await old.runtime.bot.api.deleteWebhook({ drop_pending_updates: false }).catch(() => {
-        console.error('Support bot webhook not removed');
-      });
+      await old.runtime.bot.api
+        .deleteWebhook({ drop_pending_updates: false })
+        .catch((error: unknown) => {
+          logger.error(failureOf(error), 'Support bot webhook not removed');
+        });
       // What it had not handled is for a bot that is gone.
       await old.redis.del(supportChannel(botIdOf(old.token)).stream).catch(() => 0);
       old.redis.disconnect();
@@ -155,12 +158,12 @@ async function configureSupport(config: BotConfig, shop: BotRuntime): Promise<vo
     });
     supportReady = true;
     supportFailures = 0;
-  } catch {
+  } catch (error) {
     supportReady = false;
     supportFailures += 1;
     // 2 s, 4 s, 8 s … up to 5 minutes between attempts.
     supportRetryAt = Date.now() + Math.min(300_000, 1000 * 2 ** supportFailures);
-    console.error('Support bot configuration unavailable; retrying');
+    logger.error(failureOf(error), 'Support bot configuration unavailable; retrying');
   }
 }
 
@@ -180,8 +183,8 @@ subscriber.on('message', (channel: string) => {
 });
 void subscriber
   .subscribe('rr:bot.reconfigure', 'rr:settings.changed', 'rr:i18n.changed')
-  .catch(() => {
-    console.error('Bot settings subscription unavailable');
+  .catch((error: unknown) => {
+    logger.error(failureOf(error), 'Bot settings subscription unavailable');
   });
 void configure();
 // Reconcile after missed Pub/Sub messages or an initial API outage.

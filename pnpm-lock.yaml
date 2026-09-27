@@ -229,6 +229,9 @@ importers:
       '@remnaray/i18n-core':
         specifier: workspace:*
         version: link:../../packages/i18n-core
+      '@remnaray/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@remnaray/metrics':
         specifier: workspace:*
         version: link:../../packages/metrics

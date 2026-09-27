@@ -465,9 +465,27 @@ list above:
   known local-only docs-link failure on the untracked review files). VPS
   action: none (the proxy re-renders on deploy).
 
-**Exact next:** package 2 — R82 (the bot logs through pino), then R28, R84,
-P-2, P-9 + R26, R13 + L-34, R24, R25, R137, R27, R78, R81, R79 + L-3, L-6,
-R101.
+- **R82 Done (local) — the bot logged with `console.error`.** Cause: 19.6 and
+  20.1 require pino JSON lines with the shared redaction in every service; the
+  bot printed `util.inspect` objects (multi-line, no `level`/`service`, no
+  `RR_LOG_LEVEL`, no redaction), and its configuration failures were logged
+  without any cause. Repair: `apps/bot/src/logger.ts` — `createLogger` from
+  `@remnaray/logger` with `service: bot` at `RR_LOG_LEVEL`, written through
+  `process.stdout.write` — replaces all 13 `console.error` calls in `bot.ts`,
+  `support-bot.ts`, `ingress.ts` and `main.ts` with the same fields; the four
+  configuration failures in `main.ts` log `failureOf(error)`: the class,
+  status, code, Telegram code and method, never the message (which can quote
+  the Bot API URL with the token). Evidence: `errors.test.ts` «writes one
+  pino JSON line with the incident id and no token» (an `HttpError` whose
+  cause quotes `…/bot123:SECRETTOKEN/…`) red (no JSON line) → green;
+  `logger.test.ts` `failureOf`; the existing error and ingress tests read
+  the logger instead of `console`. Checks: bot 93, build (the built bot
+  writes `{"level":50,…,"service":"bot",…}`), lint, format, typecheck,
+  i18n-check (2294). VPS action: none.
+
+**Exact next:** package 2 — R28 (masks for `payment_events.raw`/`headers`),
+then R84, P-2, P-9 + R26, R13 + L-34, R24, R25, R137, R27, R78, R81,
+R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

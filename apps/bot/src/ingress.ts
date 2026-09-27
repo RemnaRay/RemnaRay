@@ -6,6 +6,7 @@ import type { Update } from 'grammy/types';
 import type Redis from 'ioredis';
 
 import { ALLOWED_UPDATES, type BotConfig, type RrContext } from './types.js';
+import { logger } from './logger.js';
 import { botUpdatesTotal } from '@remnaray/metrics';
 
 export const TELEGRAM_UPDATES_STREAM = 'tg:updates';
@@ -181,9 +182,10 @@ export class BotIngress<C extends Context = RrContext> {
         for (const [, messages] of batches ?? []) await this.processBatch(messages, false);
       } catch (error) {
         // Reading the stream failed; the PEL keeps every unacknowledged entry.
-        console.error('Telegram update stream failed', {
-          error: error instanceof Error ? error.message : 'unknown',
-        });
+        logger.error(
+          { error: error instanceof Error ? error.message : 'unknown' },
+          'Telegram update stream failed',
+        );
         await delay(500);
       }
     }
@@ -228,11 +230,10 @@ export class BotIngress<C extends Context = RrContext> {
     const reason = error instanceof Error ? error.message : 'unknown';
     // Never print the update payload or token — and a parse error's message
     // quotes the payload, so only the error's class is logged.
-    console.error('Telegram update stream entry failed', {
-      id,
-      deliveries,
-      error: error instanceof Error ? error.name : 'unknown',
-    });
+    logger.error(
+      { id, deliveries, error: error instanceof Error ? error.name : 'unknown' },
+      'Telegram update stream entry failed',
+    );
     const index = fields?.indexOf('payload') ?? -1;
     const payload = index < 0 ? undefined : fields?.[index + 1];
     const payment = paymentOf(payload);
@@ -258,12 +259,12 @@ export class BotIngress<C extends Context = RrContext> {
         String(deliveries),
       );
       await this.redis.xack(this.channel.stream, this.channel.group, id);
-      console.error('Telegram update stream entry dead-lettered', { id, deliveries });
+      logger.error({ id, deliveries }, 'Telegram update stream entry dead-lettered');
     } catch (failure) {
-      console.error('Telegram update dead-letter failed', {
-        id,
-        error: failure instanceof Error ? failure.name : 'unknown',
-      });
+      logger.error(
+        { id, error: failure instanceof Error ? failure.name : 'unknown' },
+        'Telegram update dead-letter failed',
+      );
     }
   }
 
@@ -276,7 +277,7 @@ export class BotIngress<C extends Context = RrContext> {
     try {
       await this.options.onPaymentStuck({ ...payment, deliveries });
     } catch {
-      console.error('Stars payment alert failed', { updateId: payment.updateId });
+      logger.error({ updateId: payment.updateId }, 'Stars payment alert failed');
     }
   }
 
@@ -306,10 +307,10 @@ export class BotIngress<C extends Context = RrContext> {
       if (payment) {
         if (deliveries === 1) await this.report(error as BotError<C>);
         else
-          console.error('Telegram payment update kept pending', {
-            updateId: update.update_id,
-            deliveries,
-          });
+          logger.error(
+            { updateId: update.update_id, deliveries },
+            'Telegram payment update kept pending',
+          );
         await this.stuck(
           { updateId: update.update_id, chargeId: payment.telegram_payment_charge_id },
           deliveries,
@@ -328,10 +329,13 @@ export class BotIngress<C extends Context = RrContext> {
       await this.bot.errorHandler(error);
     } catch (failure) {
       // Never the update payload or the token: the id and the error class only.
-      console.error('Telegram error handler failed', {
-        updateId: error.ctx.update.update_id,
-        error: failure instanceof Error ? failure.name : 'unknown',
-      });
+      logger.error(
+        {
+          updateId: error.ctx.update.update_id,
+          error: failure instanceof Error ? failure.name : 'unknown',
+        },
+        'Telegram error handler failed',
+      );
     }
   }
 }

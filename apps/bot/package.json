@@ -18,6 +18,7 @@
     "@grammyjs/runner": "~2.0.3",
     "@grammyjs/storage-redis": "~2.6.0",
     "@remnaray/i18n-core": "workspace:*",
+    "@remnaray/logger": "workspace:*",
     "@remnaray/metrics": "workspace:*",
     "grammy": "~1.46.0",
     "intl-messageformat": "~12.1.1",

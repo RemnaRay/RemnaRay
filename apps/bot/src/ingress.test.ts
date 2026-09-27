@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiClientError, type ApiClient } from './api-client.js';
 import { BotIngress, supportChannel } from './ingress.js';
 import { registerStars } from './screens/stars.js';
+import { logger } from './logger.js';
 import type { RrContext } from './types.js';
 
 const botInfo = {
@@ -91,7 +92,7 @@ describe('BotIngress failed updates (FR-127)', () => {
 
   it('logs an error handler that fails itself, without the update, and acknowledges', async () => {
     const { bot, redis, deliver } = harness();
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     bot.use(() => {
       throw new Error('boom');
     });
@@ -101,10 +102,13 @@ describe('BotIngress failed updates (FR-127)', () => {
 
     await deliver();
 
-    expect(log).toHaveBeenCalledWith('Telegram error handler failed', {
-      updateId: 5,
-      error: 'Error',
-    });
+    expect(log).toHaveBeenCalledWith(
+      {
+        updateId: 5,
+        error: 'Error',
+      },
+      'Telegram error handler failed',
+    );
     expect(JSON.stringify(log.mock.calls)).not.toContain('Профиль');
     expect(redis.xack).toHaveBeenCalledWith('tg:updates', 'bot', '1-0');
   });
@@ -161,7 +165,7 @@ describe('BotIngress Stars payment updates (R1)', () => {
   });
 
   it('answers the customer on the first delivery only', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { handled, deliver } = paying(() =>
       Promise.reject(new ApiClientError(503, 'UNAVAILABLE')),
     );
@@ -172,10 +176,13 @@ describe('BotIngress Stars payment updates (R1)', () => {
 
     // The error handler answers; a redelivery is logged without a reply.
     expect(handled).toHaveLength(1);
-    expect(log).toHaveBeenCalledWith('Telegram payment update kept pending', {
-      updateId: 6,
-      deliveries: 3,
-    });
+    expect(log).toHaveBeenCalledWith(
+      {
+        updateId: 6,
+        deliveries: 3,
+      },
+      'Telegram payment update kept pending',
+    );
     expect(JSON.stringify(log.mock.calls)).not.toContain('charge-1');
   });
 });
@@ -207,7 +214,7 @@ describe('BotIngress delivery limit (R102)', () => {
   }
 
   it('dead-letters a poison entry at the fifth delivery, without logging its payload', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { redis, batch } = streamed(5);
 
     // JSON.parse quotes its input in the error message.
@@ -236,7 +243,7 @@ describe('BotIngress delivery limit (R102)', () => {
   });
 
   it('keeps a poison entry for another delivery before the limit', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { redis, batch } = streamed(2);
 
     await batch([['3-0', ['payload', 'not json']]]);
@@ -246,7 +253,7 @@ describe('BotIngress delivery limit (R102)', () => {
   });
 
   it('goes on with the batch after an entry that fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { bot, redis, batch } = streamed(1);
     const seen: number[] = [];
     bot.use((ctx) => {
@@ -268,7 +275,7 @@ describe('BotIngress delivery limit (R102)', () => {
   });
 
   it('never drops a payment and alerts once it reaches the limit', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const { bot, redis, batch, onPaymentStuck } = streamed(5);
     registerStars(bot, {
       starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503, 'UNAVAILABLE')),
@@ -287,7 +294,7 @@ describe('BotIngress delivery limit (R102)', () => {
   });
 
   it('keeps a payment below the limit without an alert, and survives a failed alert', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     const failing = vi.fn().mockRejectedValue(new Error('api down'));
     const early = streamed(4, failing);
     registerStars(early.bot, {
@@ -304,7 +311,7 @@ describe('BotIngress delivery limit (R102)', () => {
     expect(failing).toHaveBeenCalledTimes(1);
     expect(late.redis.xack).not.toHaveBeenCalled();
     expect(late.redis.xadd).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith('Stars payment alert failed', { updateId: 6 });
+    expect(log).toHaveBeenCalledWith({ updateId: 6 }, 'Stars payment alert failed');
   });
 });
 

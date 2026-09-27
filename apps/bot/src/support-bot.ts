@@ -15,6 +15,7 @@ import type Redis from 'ioredis';
 import { ApiClientError, type ApiClient } from './api-client.js';
 import { incidentId, outgoingThrottle } from './bot.js';
 import { normalizeLocale, type BotI18n } from './i18n.js';
+import { logger } from './logger.js';
 import { supportRelay } from './support.js';
 import { RATING_DATA, rateTicket, ratingKeyboard } from './support-rating.js';
 import { FAQ_DATA, faqAnswer, faqKeyboard } from './support-faq.js';
@@ -180,16 +181,22 @@ export function supportBotInbox(
 async function supportBotErrorHandler(error: BotError<SupportContext>): Promise<void> {
   const cause = error.error;
   const id = incidentId();
-  console.error('Support bot update failed', {
-    incidentId: id,
-    updateId: error.ctx.update.update_id,
-    chatId: error.ctx.chat?.id,
-    ...(cause instanceof GrammyError
-      ? { code: cause.error_code, description: cause.description, method: cause.method }
-      : cause instanceof ApiClientError
-        ? { description: 'api_error', status: cause.status, apiCode: cause.code }
-        : { description: 'handler_error', error: cause instanceof Error ? cause.name : 'unknown' }),
-  });
+  logger.error(
+    {
+      incidentId: id,
+      updateId: error.ctx.update.update_id,
+      chatId: error.ctx.chat?.id,
+      ...(cause instanceof GrammyError
+        ? { code: cause.error_code, description: cause.description, method: cause.method }
+        : cause instanceof ApiClientError
+          ? { description: 'api_error', status: cause.status, apiCode: cause.code }
+          : {
+              description: 'handler_error',
+              error: cause instanceof Error ? cause.name : 'unknown',
+            }),
+    },
+    'Support bot update failed',
+  );
   if (cause instanceof GrammyError && (cause.error_code === 403 || cause.error_code === 429))
     return;
   if (error.ctx.chat?.type === 'private' && typeof error.ctx.t === 'function')

@@ -9,6 +9,7 @@ import Redis from 'ioredis';
 
 import { ApiClient, ApiClientError } from './api-client.js';
 import { BotI18n } from './i18n.js';
+import { logger } from './logger.js';
 import { registerScreens } from './screens/index.js';
 import { isPaymentUpdate, registerStars } from './screens/stars.js';
 import { installConversations } from './conversations.js';
@@ -92,14 +93,17 @@ export function botErrorHandler(
                 stack: cause instanceof Error ? cause.stack : undefined,
               };
     const id = incidentId();
-    console.error('Telegram update failed', {
-      incidentId: id,
-      updateId: ctx.update.update_id,
-      chatId: ctx.chat?.id,
-      updateType: Object.keys(ctx.update).find((key) => key !== 'update_id'),
-      callbackData: ctx.callbackQuery?.data,
-      ...telegram,
-    });
+    logger.error(
+      {
+        incidentId: id,
+        updateId: ctx.update.update_id,
+        chatId: ctx.chat?.id,
+        updateType: Object.keys(ctx.update).find((key) => key !== 'update_id'),
+        callbackData: ctx.callbackQuery?.data,
+        ...telegram,
+      },
+      'Telegram update failed',
+    );
     if (cause instanceof GrammyError && cause.error_code === 403 && ctx.from) {
       await api.markBlocked(ctx.from.id).catch(() => undefined);
       return;
