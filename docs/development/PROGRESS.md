@@ -677,8 +677,29 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   lint, format; `pnpm test` 61/62 (the known local docs-link failure). VPS
   action: none (the stand runs the nginx profile).
 
-**Exact next:** package 2 — R27 (wrong TOTP codes lock the admin), then R78,
-R81, R79 + L-3, L-6, R101.
+- **R27 Done (local) — an admin's TOTP could be guessed without limit by
+  someone who had the password.** Cause: a wrong code at `POST
+/api/admin/v1/auth/totp` (or `totp/confirm`) was only audited — no counter,
+  no lock, the challenge stayed usable for its five minutes — and a correct
+  password reset `failed_logins` and `locked_until`, so a new challenge every
+  five minutes kept guessing open; the TOTP routes had no limit of their own
+  (60/min anonymous per IP). Repair: a wrong code counts like a wrong
+  password — the same `failed_logins`, five lock the admin for 15 minutes,
+  doubling to 24 hours (9.2) — and the lock spends the challenge; a
+  challenge of an admin locked, deactivated or deleted after the password
+  step is spent, not tried; the counters are cleared only when a sign-in
+  completes (in `complete()`), not by the password; `totp/setup`, `totp` and
+  `totp/confirm` are limited to 10/min like `login`. Evidence:
+  `admin.auth.service.test.ts` «wrong TOTP codes» — three wrong codes, a new
+  sign-in with the right password, two more: 423 `ADMIN_LOCKED`, the
+  challenge gone, an older one refused and spent, the password refused —
+  red (401 each time) → green; «are forgiven only by a completed sign-in»
+  red → green; the four routes carry the 10/min limit, red → green (the test
+  Valkey now honours `NX` and reports what `DEL` removed). Checks: API 422,
+  `m4.admin` 1/1, build, lint, format, typecheck. VPS action: none.
+
+**Exact next:** package 2 — R78 (password and TOTP resets end the admin's
+sessions), then R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -14,6 +14,8 @@ const ADMIN_COOKIE_MAX_AGE = 12 * 60 * 60;
 export class AdminAuthController {
   constructor(private readonly auth: AdminAuthService) {}
 
+  // Section 9.1: sign-in steps are limited like `POST /api/v1/auth/*` —
+  // the TOTP steps too (R27).
   @Post('login')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -23,12 +25,14 @@ export class AdminAuthController {
 
   @Post('totp/setup')
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   setup(@Body() body: unknown) {
     return this.auth.setup(body);
   }
 
   @Post('totp')
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async totp(@Body() body: unknown, @Res({ passthrough: true }) reply: FastifyReply) {
     const result = await this.auth.totp(body);
     setAdminCookie(reply, result.sessionId);
@@ -37,6 +41,7 @@ export class AdminAuthController {
 
   @Post('totp/confirm')
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async confirm(@Body() body: unknown, @Res({ passthrough: true }) reply: FastifyReply) {
     const result = await this.auth.confirm(body);
     setAdminCookie(reply, result.sessionId);

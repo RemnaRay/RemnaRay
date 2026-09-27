@@ -49,14 +49,12 @@ export class AdminAuthService {
 
     const valid = await verifyAdminPassword(admin.passwordHash, input.password);
     if (!valid) {
-      const locked = await this.recordPasswordFailure(admin);
+      const locked = await this.recordFailure(admin);
       throw new AdminAuthFailure(locked ? 'ADMIN_LOCKED' : 'ADMIN_INVALID_CREDENTIALS');
     }
 
-    await this.infra.db.admin.update({
-      where: { id: admin.id },
-      data: { failedLogins: 0, lockedUntil: null },
-    });
+    // R27: the count of failures is cleared by a completed sign-in only —
+    // the password alone is what the second factor must not trust.
     const challengeId = randomBytes(32).toString('base64url');
     await this.infra.redis.set(
       this.challengeKey(challengeId),
@@ -97,6 +95,7 @@ export class AdminAuthService {
     const input = adminTotpSchema.parse(value);
     const challenge = await this.challenge(input.challengeId);
     const admin = await this.infra.db.admin.findUnique({ where: { id: challenge.adminId } });
+    await this.refuseLockedOrGone(admin, input.challengeId);
     if (!admin?.totpEnabled || !admin.totpSecretEnc)
       throw new AdminAuthFailure('ADMIN_TOTP_REQUIRED');
     const secret = decryptTotpSecret(admin.totpSecretEnc, this.appKey);
@@ -112,10 +111,7 @@ export class AdminAuthService {
         90,
         'NX',
       )) === 'OK';
-    if (!accepted) {
-      await this.auditFailure(admin.id, admin.email, 'totp');
-      throw new AdminAuthFailure('ADMIN_TOTP_INVALID');
-    }
+    if (!accepted) await this.codeFailure(admin, input.challengeId, 'totp');
     return this.complete(admin.id, admin.role, input.challengeId);
   }
 
@@ -124,13 +120,12 @@ export class AdminAuthService {
     const challenge = await this.challenge(input.challengeId);
     if (!challenge.pendingSecretEnc) throw new AdminAuthFailure('ADMIN_TOTP_REQUIRED');
     const admin = await this.infra.db.admin.findUnique({ where: { id: challenge.adminId } });
+    await this.refuseLockedOrGone(admin, input.challengeId);
     if (!admin) throw new AdminAuthFailure('ADMIN_INVALID_CREDENTIALS');
     const pendingSecret = decryptTotpSecret(challenge.pendingSecretEnc, this.appKey);
     const totp = totpFromBase32(pendingSecret, admin.email);
-    if (totp.validate({ token: input.code, window: 1 }) === null) {
-      await this.auditFailure(admin.id, admin.email, 'totp-setup');
-      throw new AdminAuthFailure('ADMIN_TOTP_INVALID');
-    }
+    if (totp.validate({ token: input.code, window: 1 }) === null)
+      await this.codeFailure(admin, input.challengeId, 'totp-setup');
     await this.infra.db.admin.update({
       where: { id: admin.id },
       data: {
@@ -183,7 +178,10 @@ export class AdminAuthService {
       ADMIN_SESSION_TTL,
     );
     const admin = await this.infra.db.admin.findUniqueOrThrow({ where: { id: adminId } });
-    await this.infra.db.admin.update({ where: { id: adminId }, data: { lastLoginAt: new Date() } });
+    await this.infra.db.admin.update({
+      where: { id: adminId },
+      data: { lastLoginAt: new Date(), failedLogins: 0, lockedUntil: null },
+    });
     await this.audit(adminId, action, 'admin', adminId, { role });
     return { admin: adminMe(admin), csrfToken: csrf, sessionId };
   }
@@ -221,7 +219,47 @@ export class AdminAuthService {
     };
   }
 
-  private async recordPasswordFailure(admin: { id: string; email: string }): Promise<boolean> {
+  /**
+   * A challenge of an admin who was locked, deactivated or deleted after the
+   * password step is spent, not tried.
+   */
+  private async refuseLockedOrGone(
+    admin: { isActive: boolean; deletedAt: Date | null; lockedUntil: Date | null } | null,
+    challengeId: string,
+  ): Promise<void> {
+    if (
+      admin?.isActive &&
+      !admin.deletedAt &&
+      !(admin.lockedUntil && admin.lockedUntil > new Date())
+    )
+      return;
+    await this.infra.redis.del(this.challengeKey(challengeId));
+    throw new AdminAuthFailure(
+      admin?.isActive && !admin.deletedAt ? 'ADMIN_LOCKED' : 'ADMIN_INVALID_CREDENTIALS',
+    );
+  }
+
+  /**
+   * R27: a wrong code counts like a wrong password (section 9.2: five lock the
+   * admin, 15 minutes and doubling to 24 hours), so the second factor cannot
+   * be guessed at the rate limit; a lock also spends the challenge.
+   */
+  private async codeFailure(
+    admin: { id: string; email: string },
+    challengeId: string,
+    reason: 'totp' | 'totp-setup',
+  ): Promise<never> {
+    if (await this.recordFailure(admin, reason)) {
+      await this.infra.redis.del(this.challengeKey(challengeId));
+      throw new AdminAuthFailure('ADMIN_LOCKED');
+    }
+    throw new AdminAuthFailure('ADMIN_TOTP_INVALID');
+  }
+
+  private async recordFailure(
+    admin: { id: string; email: string },
+    reason = 'password',
+  ): Promise<boolean> {
     // The counter is incremented by the database so parallel attempts cannot
     // read the same value and overwrite each other's increment.
     const updated = await this.infra.db.admin.update({
@@ -237,7 +275,7 @@ export class AdminAuthService {
         data: { lockedUntil: new Date(Date.now() + minutes * 60_000) },
       });
     }
-    await this.auditFailure(admin.id, admin.email);
+    await this.auditFailure(admin.id, admin.email, reason);
     return minutes > 0;
   }
 

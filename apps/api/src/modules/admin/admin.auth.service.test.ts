@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as OTPAuth from 'otpauth';
 
-import { hashAdminPassword } from './admin.crypto';
+import { createTotp, encryptTotpSecret, hashAdminPassword } from './admin.crypto';
+import { AdminAuthController } from './admin.controller';
 import { AdminAuthService } from './admin.auth.service';
 
 type MockRedis = {
@@ -27,14 +28,12 @@ function createFixture() {
   };
   const redis: MockRedis = {
     get: (key) => Promise.resolve(values.get(key) ?? null),
-    set: (key, value) => {
+    set: (key, value, ...args) => {
+      if (args.includes('NX') && values.has(key)) return Promise.resolve(null);
       values.set(key, value);
       return Promise.resolve('OK');
     },
-    del: (key) => {
-      values.delete(key);
-      return Promise.resolve(1);
-    },
+    del: (key) => Promise.resolve(values.delete(key) ? 1 : 0),
   };
   const infra = {
     redis,
@@ -148,4 +147,88 @@ describe('admin authentication', () => {
       else process.env.RR_APP_KEY = previousKey;
     }
   }, 30_000);
+});
+
+describe('wrong TOTP codes (R27)', () => {
+  const appKey = Buffer.alloc(32, 7).toString('base64');
+
+  async function enrolled() {
+    const fixture = createFixture();
+    const totp = createTotp(fixture.admin.email);
+    fixture.admin.passwordHash = await hashAdminPassword('correct');
+    fixture.admin.totpEnabled = true;
+    fixture.admin.totpSecretEnc = encryptTotpSecret(totp.secret.base32, appKey);
+    const login = () => fixture.service.login({ email: fixture.admin.email, password: 'correct' });
+    return { ...fixture, totp, login };
+  }
+
+  function wrong(code: string): string {
+    return code === '000000' ? '111111' : '000000';
+  }
+
+  it('lock the admin on the fifth, however the attempts are spread over sign-ins', async () => {
+    const previousKey = process.env.RR_APP_KEY;
+    process.env.RR_APP_KEY = appKey;
+    try {
+      const { admin, totp, login, service, values } = await enrolled();
+      const first = await login();
+      for (let attempt = 1; attempt <= 3; attempt += 1)
+        await expect(
+          service.totp({ challengeId: first.challengeId, code: wrong(totp.generate()) }),
+        ).rejects.toMatchObject({ code: 'ADMIN_TOTP_INVALID' });
+
+      // The correct password used to reset the count.
+      const second = await login();
+      await expect(
+        service.totp({ challengeId: second.challengeId, code: wrong(totp.generate()) }),
+      ).rejects.toMatchObject({ code: 'ADMIN_TOTP_INVALID' });
+      await expect(
+        service.totp({ challengeId: second.challengeId, code: wrong(totp.generate()) }),
+      ).rejects.toMatchObject({ code: 'ADMIN_LOCKED', status: 423 });
+
+      expect(admin.lockedUntil).toBeInstanceOf(Date);
+      // The challenge is gone, an older one is refused and spent, and neither
+      // the password nor the right code opens the account.
+      expect(values.has(`rr:admin:challenge:${second.challengeId}`)).toBe(false);
+      await expect(
+        service.totp({ challengeId: second.challengeId, code: totp.generate() }),
+      ).rejects.toMatchObject({ code: 'ADMIN_INVALID_CREDENTIALS' });
+      await expect(
+        service.totp({ challengeId: first.challengeId, code: totp.generate() }),
+      ).rejects.toMatchObject({ code: 'ADMIN_LOCKED' });
+      expect(values.has(`rr:admin:challenge:${first.challengeId}`)).toBe(false);
+      await expect(login()).rejects.toMatchObject({ code: 'ADMIN_LOCKED' });
+    } finally {
+      if (previousKey === undefined) delete process.env.RR_APP_KEY;
+      else process.env.RR_APP_KEY = previousKey;
+    }
+  }, 60_000);
+
+  it('are forgiven only by a completed sign-in', async () => {
+    const previousKey = process.env.RR_APP_KEY;
+    process.env.RR_APP_KEY = appKey;
+    try {
+      const { admin, totp, login, service } = await enrolled();
+      const first = await login();
+      await expect(
+        service.totp({ challengeId: first.challengeId, code: wrong(totp.generate()) }),
+      ).rejects.toMatchObject({ code: 'ADMIN_TOTP_INVALID' });
+      expect(admin.failedLogins).toBe(1);
+
+      await service.totp({ challengeId: first.challengeId, code: totp.generate() });
+      expect(admin.failedLogins).toBe(0);
+    } finally {
+      if (previousKey === undefined) delete process.env.RR_APP_KEY;
+      else process.env.RR_APP_KEY = previousKey;
+    }
+  }, 60_000);
+
+  it('are rate limited like the password', () => {
+    const handlers = Object.getOwnPropertyDescriptors(AdminAuthController.prototype);
+    for (const handler of ['login', 'setup', 'totp', 'confirm'])
+      expect(
+        Reflect.getMetadata('THROTTLER:LIMITdefault', handlers[handler]?.value as object),
+        handler,
+      ).toBe(10);
+  });
 });
