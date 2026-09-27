@@ -382,9 +382,67 @@ VPS actions after deploying package 1: compare the bot's
 the failed jobs of the `payments` queue (R49); confirm migration 0011 applied
 at start; check `XLEN tg:updates:dead` (R102).
 
-**Exact next:** package 2 — R4 (pino redact/serializers in api and worker,
-`edge.conf` log format without query; with R113 and R82), then R28/R84, P-2,
-P-9 + R26, R13 (+ R24, R25, L-34), R137, R27, R78/R81, R79 + L-3 + L-6, R101.
+### Package 2 — security, limits, intake availability
+
+Owner decisions taken while planning this package (2026-09-28), beyond the
+list above:
+
+- P-9 — the web container's own server-side requests (a socket inside the
+  compose network and no `X-Forwarded-For`, which both bundled proxies and the
+  edge always set) are not counted in the anonymous 60/min bucket. The client
+  IP is not passed on every SSR fetch: Next 16.3.5 puts request headers into
+  the data-cache key (`incremental-cache` `generateCacheKey`), so a per-client
+  header would make the cache per client.
+- R81 — wrong passwords are counted and locked per (email, IP) in Valkey with
+  the 9.2 durations (15 min, doubling to 24 h); an unknown email behaves the
+  same. Recorded deviation from 9.2 (`admins.locked_until`).
+- L-3 — `/auth/tg?token=` shows a «sign in as <name>?» page and signs in only
+  on the button. Recorded deviation from 9.2 (`GET /api/v1/auth/tg` → 302).
+
+- **R4 Done (local) — the api and worker request logs carried cookies,
+  tokens and the webhook secret.** Cause: `LoggerModule.forRoot` had only a
+  level; pino-http's default request serializer writes the URL with its query,
+  the query and every header, and nestjs-pino binds that `req` to every line
+  logged inside a request, so `rr_sid`/`rr_asid`/`rr_setup`, `Set-Cookie`,
+  `X-Internal-Token`, `X-Telegram-Bot-Api-Secret-Token` and
+  `/tg/webhook/<secret_path>`, `X-CSRF-Token`, provider signature headers and
+  `/auth/tg?token=<jwt>` reached `docker logs` (19.6, NFR-007, ADR-012);
+  `packages/logger` existed but no app used it. The external profile's edge
+  logged nginx's `combined` format, whose request line carries the query.
+  Repair: `@remnaray/logger` exports `httpLoggerOptions({ service, level })`
+  — `base.service`, the redaction list (extended with the internal token,
+  webhook secret, CSRF, idempotency and signature headers and
+  `res.headers["set-cookie"]`), request and response serializers from an
+  allowlist (`id, method, url, remoteAddress`; `statusCode`), the URL without
+  its query and `/tg/webhook/***` for the webhook — and `requestId`, the
+  proxy's `X-Request-Id` when well formed (20.1), used as Fastify's
+  `genReqId` in api and worker, since the logger reuses Fastify's id. api and
+  worker take their `LoggerModule` parameters from `logging.ts`. `edge.conf`
+  logs a JSON format with `$uri` and the `Referer` without its query (a page
+  opened from `/auth/tg?token=` sends it as its assets' referrer).
+  Contract checked on 2026-09-28 (Context7 `/pinojs/pino-http`: options,
+  `genReqId`, wrapped serializers, stream as second argument;
+  `/iamolegga/nestjs-pino`: `pinoHttp` as options or `[options, stream]`).
+  Evidence: `apps/api/src/logging.test.ts` (Nest + Fastify + the module's
+  parameters, `POST /tg/webhook/SECRETPATH?token=…` with cookie, internal
+  token, webhook secret, CSRF and a `Set-Cookie` reply, plus a warning logged
+  in the handler) red — every value in the output — → green;
+  `apps/worker/src/logging.test.ts` the same red → green;
+  `proxy-render.test.ts` «edge access log» red (no named format, then the raw
+  referrer) → green, and the rendered edge answers a real `nginx:1.30-alpine`
+  request `?token=` with `"uri":"/auth/tg"`, `"referer":"https://shop/auth/tg"`;
+  `packages/logger` tests for the new paths (22.2), `logUrl`, `requestId` and
+  the serializers. Checks: logger 5, API 401, worker 39, build (both built
+  apps load the ESM package), lint, format, typecheck, i18n-check (2294).
+  Known residual: nginx's error log (`warn`) writes the request line and
+  referrer of a failed upstream request as they are, query included; its
+  format cannot be changed. VPS action: after deploy rotate
+  `RR_INTERNAL_TOKEN`, change the bot webhook secret path and token, delete
+  `rr:asess:*`, and clear the old container logs.
+
+**Exact next:** package 2 — R113 (proxy access logs mask the webhook secret
+path), then R82, R28, R84, P-2, P-9 + R26, R13 + L-34, R24, R25, R137, R27,
+R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

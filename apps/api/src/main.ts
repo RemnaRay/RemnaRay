@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import multipart from '@fastify/multipart';
+import { requestId } from '@remnaray/logger';
 import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
@@ -13,7 +14,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     // Section 21.7: `X-Forwarded-*` counts only from `RR_TRUSTED_PROXIES`.
-    new FastifyAdapter({ trustProxy: trustedProxies() }),
+    new FastifyAdapter({ trustProxy: trustedProxies(), genReqId: requestId }),
     {
       bufferLogs: true,
       rawBody: true,

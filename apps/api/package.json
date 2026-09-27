@@ -26,6 +26,7 @@
     "@remnaray/db": "workspace:*",
     "@remnaray/domain": "workspace:*",
     "@remnaray/i18n-core": "workspace:*",
+    "@remnaray/logger": "workspace:*",
     "@remnaray/metrics": "workspace:*",
     "@remnaray/payments-mock": "workspace:*",
     "@remnaray/queues": "workspace:*",

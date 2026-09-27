@@ -26,6 +26,7 @@ import { AdminSettingsModule } from './modules/admin-settings/admin-settings.mod
 import { SetupModule } from './modules/setup/setup.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { ApiExceptionFilter } from './common/api-exception.filter';
+import { loggerParams } from './logging';
 
 @Module({
   imports: [
@@ -51,11 +52,7 @@ import { ApiExceptionFilter } from './common/api-exception.filter';
     BroadcastsModule,
     AdminSettingsModule,
     WebhooksModule,
-    LoggerModule.forRoot({
-      pinoHttp: {
-        level: process.env.RR_LOG_LEVEL ?? 'info',
-      },
-    }),
+    LoggerModule.forRoot(loggerParams()),
   ],
   controllers: [HealthController, MetricsController],
   providers: [

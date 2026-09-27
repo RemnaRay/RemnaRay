@@ -6,16 +6,10 @@ import { HealthController } from './health/health.controller';
 import { MetricsController } from './health/metrics.controller';
 import { WorkerService } from './queues/worker.service';
 import { OutboxRelayService } from './queues/outbox-relay.service';
+import { loggerParams } from './logging';
 
 @Module({
-  imports: [
-    ScheduleModule.forRoot(),
-    LoggerModule.forRoot({
-      pinoHttp: {
-        level: process.env.RR_LOG_LEVEL ?? 'info',
-      },
-    }),
-  ],
+  imports: [ScheduleModule.forRoot(), LoggerModule.forRoot(loggerParams())],
   controllers: [HealthController, MetricsController],
   providers: [WorkerService, OutboxRelayService],
 })

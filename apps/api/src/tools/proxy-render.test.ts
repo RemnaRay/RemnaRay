@@ -396,3 +396,19 @@ describe('the internal API is not published (section 9.5)', () => {
     }
   });
 });
+
+describe('edge access log (section 19.6, R4)', () => {
+  // nginx's default `combined` format writes `$request`, the full request line
+  // with its query string — `/auth/tg?token=<jwt>` in the external profile.
+  it('logs the path without its query string', () => {
+    const edge = readFileSync(resolve(proxyRoot, 'external/edge.conf'), 'utf8');
+    const accessLog = /^\s*access_log\s+\/dev\/stdout\s+(\w+);/mu.exec(edge);
+    expect(accessLog?.[1], 'a named JSON format, not the default combined').toBeDefined();
+    const format = new RegExp(`log_format ${accessLog?.[1] ?? '-'}[^;]+;`, 'u').exec(edge)?.[0];
+    expect(format).toBeDefined();
+    expect(format).not.toMatch(/\$request\b|\$request_uri|\$args|\$query_string/u);
+    // A page opened from `/auth/tg?token=` sends that URL as the `Referer`
+    // of its assets.
+    expect(format).not.toContain('$http_referer');
+  });
+});
