@@ -375,6 +375,25 @@ test('the CI workflow covers required quality and image gates', async () => {
   assert.match(workflow, /push: false/);
 });
 
+test('CI runs on dev pushes and gathers the blocking jobs into one required check', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  // The owner pushes to dev directly; without this nothing checks those pushes.
+  assert.match(workflow, /^ {2}push:\n {4}branches: \[main, dev\]$/mu);
+
+  // The `main` ruleset requires only `ci-ok`, whose name never changes with the
+  // Node version in the quality matrix.
+  const job = workflow.slice(workflow.indexOf('\n  ci-ok:'));
+  assert.ok(job.startsWith('\n  ci-ok:'), 'ci.yml has no ci-ok job');
+  assert.match(job, /^ {4}name: ci-ok$/mu);
+  assert.match(job, /^ {4}if: \$\{\{ always\(\) \}\}$/mu);
+  const needs = job.match(/^ {4}needs: \[(?<list>[^\]]+)\]$/mu)?.groups.list.split(/,\s*/u);
+  assert.deepEqual(needs?.toSorted(), ['docker', 'e2e', 'proxy', 'proxy-smoke', 'quality']);
+  // A skipped or cancelled job must not count as passed.
+  assert.match(job, /needs\.\*\.result/u);
+  for (const result of ['failure', 'cancelled', 'skipped'])
+    assert.match(job, new RegExp(`contains\\(needs\\.\\*\\.result, '${result}'\\)`, 'u'));
+});
+
 const tsx = resolve('node_modules/.bin/tsx');
 const i18nCheck = resolve('tools/i18n-check.ts');
 

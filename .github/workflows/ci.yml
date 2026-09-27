@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 permissions:
@@ -271,3 +271,20 @@ jobs:
             stand.log
             test-results
           retention-days: 7
+
+  # The one check the `main` ruleset requires: its name stays the same when the
+  # quality matrix moves to another Node version. Lighthouse measures and is
+  # not blocking.
+  ci-ok:
+    name: ci-ok
+    if: ${{ always() }}
+    needs: [quality, e2e, proxy, docker, proxy-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every blocking job passed
+        if: >-
+          ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped') }}
+        run: |
+          echo 'A blocking job did not pass: ${{ toJSON(needs.*.result) }}' >&2
+          exit 1

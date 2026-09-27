@@ -62,6 +62,12 @@ deploy/ci/proxy-smoke.sh caddy
 See [`docs/proxy.md`](docs/proxy.md) for what those ten checks are and
 [`docs/e2e.md`](docs/e2e.md) for the browser suite.
 
+On GitHub, CI (`.github/workflows/ci.yml`) runs on pushes to `main` and `dev`
+and on every pull request. Its `ci-ok` job passes only when every blocking job
+passed; it is the one check the `main` ruleset requires, so it keeps its name
+when the Node versions of the matrix change. Lighthouse measures and does not
+block.
+
 ## Definition of done
 
 A change is done when:

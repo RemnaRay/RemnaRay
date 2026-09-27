@@ -99,10 +99,29 @@ are repaired here, not moved to M6.
   (`docs/development/reviews/*`); queued in package 12 (list only tracked
   files).
 
+### After package 0 (owner decisions О-2 and the rulesets)
+
+- **CI Done (local) — CI never ran on `dev`, and no stable required check
+  existed.** Found when the owner pushed R65: `ci.yml` ran only on pushes to
+  `main` and on pull requests, so direct pushes to `dev` were never checked;
+  the check names change with the Node version of the quality matrix
+  (`quality / Node 24.21.0`), which would leave a `main` ruleset waiting for a
+  check that no longer reports. Repair: `push` also on `dev`; a `ci-ok` job
+  (`if: always()`, `needs` quality, e2e, proxy, docker, proxy-smoke) fails
+  when any of them failed, was cancelled or skipped — the one check the
+  `main` ruleset requires; Lighthouse measures and does not block.
+  `needs.<job>.result` values and `always()` checked against the GitHub
+  Actions documentation (contexts, workflow syntax) on 2026-09-27.
+  CONTRIBUTING describes it. Evidence: `test/tooling.test.mjs` «CI runs on
+  dev pushes and gathers the blocking jobs into one required check» red on
+  the old workflow → green; the workflow parses (PyYAML); lint, format,
+  tooling and proxy-smoke tests 36/36. **Not yet verified:** a run on
+  GitHub (the next push to `dev`). Owner action: create the `main` ruleset
+  with the required check `ci-ok` once it has reported once.
+
 **Exact next:** the P-5 remainder (`VAQYBIN/remnaray-astra` →
 `RemnaRay/RemnaRay` in `docs/install.md` cosign identity, READMEs,
-`update-check.ts`, `.env.example`) and the `ci-ok` aggregate check with CI on
-`dev` pushes; then package 1.
+`update-check.ts`, `.env.example`); then package 1.
 
 ## VPS acceptance run — 2026-09-26
 
