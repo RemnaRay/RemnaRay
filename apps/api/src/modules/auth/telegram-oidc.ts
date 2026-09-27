@@ -19,6 +19,8 @@ import { AuthFailure } from './auth.crypto';
  */
 export const TELEGRAM_OIDC_ISSUER = 'https://oauth.telegram.org';
 const JWKS_TTL_MS = 60 * 60_000;
+/** L-6: an unknown `kid` reads the keys again at most this often. */
+const JWKS_REFRESH_MS = 60_000;
 const CLOCK_SKEW_SECONDS = 60;
 export const NONCE_TTL_SECONDS = 600;
 
@@ -40,6 +42,8 @@ const ALGORITHMS: Record<string, { hash: string; dsaEncoding?: 'ieee-p1363' }> =
 
 export class TelegramOidcVerifier {
   private keys: { at: number; byKid: Map<string, KeyObject> } | undefined;
+  /** The load in flight, which concurrent requests share. */
+  private loading: Promise<void> | undefined;
 
   constructor(
     private readonly baseUrl = process.env.RR_TELEGRAM_OAUTH_URL ?? TELEGRAM_OIDC_ISSUER,
@@ -90,13 +94,26 @@ export class TelegramOidcVerifier {
     };
   }
 
-  /** The JWKS is cached for an hour and read again once for an unknown `kid`. */
+  /**
+   * The JWKS is cached for an hour. An unknown `kid` — Telegram may have
+   * rotated its keys — reads it again, but at most once a minute (L-6): the
+   * `kid` comes before the signature is checked, so anybody can make one up.
+   * Concurrent requests share one load.
+   */
   private async key(kid: string): Promise<KeyObject> {
-    const fresh = !this.keys || Date.now() - this.keys.at > JWKS_TTL_MS;
-    if (fresh || !this.keys?.byKid.has(kid)) await this.loadKeys();
+    const age = this.keys ? Date.now() - this.keys.at : Infinity;
+    if (age > JWKS_TTL_MS || (!this.keys?.byKid.has(kid) && age > JWKS_REFRESH_MS))
+      await this.reload();
     const key = this.keys?.byKid.get(kid);
     if (!key) throw invalid(`unknown key id ${kid}`);
     return key;
+  }
+
+  private reload(): Promise<void> {
+    this.loading ??= this.loadKeys().finally(() => {
+      this.loading = undefined;
+    });
+    return this.loading;
   }
 
   private async loadKeys(): Promise<void> {

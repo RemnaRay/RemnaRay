@@ -106,6 +106,35 @@ describe('Telegram OIDC id_token (core.telegram.org/widgets/login)', () => {
     });
   });
 
+  // L-6: the key id is read before the signature is checked, so every
+  // made-up `kid` used to fetch Telegram's JWKS again — a request anybody
+  // could multiply at the sign-in rate.
+  it('reloads the keys for an unknown key id at most once a minute, once for concurrent requests', async () => {
+    vi.useFakeTimers({ now: now * 1000 });
+    try {
+      const { instance, fetchImpl } = verifier();
+      await Promise.all(
+        Array.from({ length: 5 }, () => instance.verify(token(good()), expected, now)),
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      for (let attempt = 0; attempt < 20; attempt += 1)
+        await expect(
+          instance.verify(token(good(), { kid: `made-up-${String(attempt)}` }), expected, now),
+        ).rejects.toMatchObject({ reason: `unknown key id made-up-${String(attempt)}` });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      // A key Telegram rotated in is found once the minute has passed.
+      vi.setSystemTime((now + 61) * 1000);
+      await expect(
+        instance.verify(token(good(), { kid: 'made-up-0' }), expected, now + 61),
+      ).rejects.toMatchObject({ reason: 'unknown key id made-up-0' });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses an expired token as AUTH_EXPIRED', async () => {
     await expect(
       verifier().instance.verify(token(good({ exp: now - 120 })), expected, now),

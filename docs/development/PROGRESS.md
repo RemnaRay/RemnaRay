@@ -800,8 +800,21 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   VPS action: after deploy, open «Личный кабинет» in the bot, confirm on the
   page, and check that the same link opened again is refused.
 
-**Exact next:** package 2 — L-6 (an unknown `kid` reloads Telegram's JWKS at
-most once a minute), then R101.
+- **L-6 Done (local) — any made-up key id made the API fetch Telegram's
+  keys.** Cause: `TelegramOidcVerifier` reads the `kid` from the token header
+  before it checks the signature and reloaded the JWKS for every `kid` it did
+  not know, with no pause and no sharing between concurrent requests, so each
+  forged `POST /api/v1/auth/telegram/oidc` (10/min per address) cost an
+  outgoing request to `oauth.telegram.org` with a 10-second timeout. Repair:
+  an unknown `kid` reloads the keys at most once a minute (the hourly refresh
+  stays), and concurrent requests share one load. A key Telegram rotated in
+  is still found within the minute. Evidence: `telegram-oidc.test.ts`
+  «reloads the keys for an unknown key id at most once a minute» — five
+  concurrent sign-ins, twenty made-up `kid`s, then one after 61 s: red (five
+  loads for the first five) → green (one, then one more after the minute).
+  Checks: API 433, lint, format, typecheck. VPS action: none.
+
+**Exact next:** package 2 — R101 (the bot answers only in private chats).
 
 ## VPS acceptance run — 2026-09-26
 
