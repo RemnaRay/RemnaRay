@@ -3,7 +3,6 @@
 # the shop is reachable. The full `site.conf` is rendered after the issue.
 server {
     listen 80 default_server;
-    listen [::]:80 default_server;
     server_name {{DOMAIN}}{{EXTRA_DOMAINS_SUFFIX}};
 
     location = /healthz { access_log off; return 200 "ok\n"; add_header Content-Type text/plain; }

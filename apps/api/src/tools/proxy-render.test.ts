@@ -457,3 +457,20 @@ describe('every proxy forwards the client address (P-9)', () => {
     expect(renderCaddy('acme')).not.toMatch(/header_up\s+-X-Forwarded-For/iu);
   });
 });
+
+describe('IPv4 listeners (R13, L-34)', () => {
+  // The ports are published on IPv4 only and the compose network has no IPv6,
+  // and nginx refuses to start at all on a host booted with ipv6.disable=1
+  // when a server listens on [::].
+  it('no nginx server listens on an IPv6 address', () => {
+    for (const certificate of [true, false])
+      for (const [name, content] of render(
+        'acme',
+        { extraDomains: ['alt.example.com'] },
+        certificate,
+      ))
+        expect(content, name).not.toMatch(/listen \[::\]/u);
+    const edge = readFileSync(resolve(proxyRoot, 'external/edge.conf'), 'utf8');
+    expect(edge).not.toMatch(/listen \[::\]/u);
+  });
+});

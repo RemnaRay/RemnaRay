@@ -1,7 +1,6 @@
 # ---------- HTTP :80 — ACME HTTP-01 and the redirect ----------
 server {
     listen 80 default_server;
-    listen [::]:80 default_server;
     server_name {{DOMAIN}}{{EXTRA_DOMAINS_SUFFIX}};
 
     location = /healthz { access_log off; return 200 "ok\n"; add_header Content-Type text/plain; }
@@ -17,9 +16,7 @@ server {
 # ---------- the shop ----------
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
     listen 443 quic reuseport;
-    listen [::]:443 quic reuseport;
     http2 on;
     server_name {{DOMAIN}};
 

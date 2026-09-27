@@ -220,7 +220,6 @@ function extraDomainsServer(values: Record<string, string>): string {
   return `# ---------- additional domains redirect to the main one ----------
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
     http2 on;
     server_name ${extra};
     include /etc/nginx/conf.d/tls-cert.inc;

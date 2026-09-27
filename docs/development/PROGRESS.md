@@ -583,8 +583,39 @@ list above:
   headers, the edge sets it, Caddy keeps its default). Checks: API 414, lint,
   format, typecheck. VPS action: none.
 
-**Exact next:** package 2 — R13 + L-34 (proxy ports on IPv4 only), then R24,
-R25, R137, R27, R78, R81, R79 + L-3, L-6, R101.
+- **R13 + L-34 Done (local) — an IPv6 visitor could pass as any address.**
+  Cause: the proxies published 80/443 without a host address, so on all of
+  the host's IPv4 and IPv6 addresses; `rr_net` is IPv4 only, so Docker's
+  userland proxy carries an IPv6 connection into it from the network's
+  gateway, 172.28.0.1 — inside `set_real_ip_from` / Caddy's
+  `trusted_proxies` (172.28.0.0/16, template 21.3/21.4). An IPv6 client's
+  `X-Forwarded-For` was believed: the admin allowlist, `rr_signin`/`rr_admin`,
+  the API throttler and the setup-token lock were bypassed, `/metrics`
+  answered (the gateway is in its `allow`), and all IPv6 visitors shared one
+  bucket (`limit_conn` included). L-34: nginx's `listen [::]` also refuses to
+  start on a kernel booted with `ipv6.disable=1`. Repair (owner decision
+  О-1): `compose.yaml` publishes `0.0.0.0:80:80`, `0.0.0.0:443:443`,
+  `0.0.0.0:443:443/udp` for both proxies; no nginx server (site, bootstrap,
+  the extra-domains redirect the renderer writes, the external edge) listens
+  on `[::]`; `docs/install.md` asks for an `A` record and no `AAAA`, and says
+  why. Recorded deviation from 21.8 («`AAAA` with IPv6») and from the 21.3
+  listeners. Contract checked on 2026-09-28 (Context7 `/docker/docs`, bridge
+  driver: «To restrict a published port to IPv4 only, the address must be
+  included in the container's publishing options. For example,
+  `-p 0.0.0.0:8080:80`»); on the local engine `-p 18080:80` binds `0.0.0.0`
+  and `[::]`, `-p 0.0.0.0:18080:80` only `0.0.0.0`, and `docker compose
+config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
+  `test/tooling.test.mjs` «the proxies publish their ports on IPv4 only»
+  (compose ports, install guide) red → green; `proxy-render.test.ts` «IPv4
+  listeners» (every rendered nginx file, with and without a certificate and
+  with an extra domain, and the edge) red → green. Checks: `m5.proxy` 6/6
+  (`nginx -t` in every TLS mode, Caddy), API 415, lint, format, typecheck;
+  `pnpm test` 60/61 (the known local docs-link failure). VPS action: after
+  deploy, `ss -tlnp | grep -E ':(80|443) '` shows only `0.0.0.0`; remove the
+  domain's `AAAA` record if there is one.
+
+**Exact next:** package 2 — R24 (the external edge answers `/metrics` with
+404), then R25, R137, R27, R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

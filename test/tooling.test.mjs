@@ -749,3 +749,26 @@ test('the nightly scan covers every published image', async () => {
     assert.match(trivy, new RegExp(`^ {10}- image: ${image}$`, 'mu'), `${image} is never scanned`);
   assert.match(trivy, /^ {12}file: deploy\/backup\/Dockerfile$/mu);
 });
+
+// R13 (owner decision О-1): the compose network is IPv4 only, so Docker's
+// userland proxy forwards a port published on the host's IPv6 addresses from
+// the network's gateway, 172.28.0.1 — an address the proxy trusts for
+// X-Forwarded-For. Publishing on 0.0.0.0 keeps the proxy ports off IPv6
+// (Docker: "To restrict a published port to IPv4 only, the address must be
+// included in the container's publishing options"), and the installation
+// guide asks for an A record only.
+test('the proxies publish their ports on IPv4 only', async () => {
+  const compose = await readFile('compose.yaml', 'utf8');
+  for (const service of ['proxy-nginx', 'proxy-caddy']) {
+    const block = new RegExp(
+      `^  ${service}:\\n(?:(?:    .*|)\\n)*?    ports: \\[([^\\]]*)\\]`,
+      'mu',
+    ).exec(compose);
+    assert.ok(block, `${service} publishes no ports`);
+    const ports = block[1].split(',').map((port) => port.trim().replace(/^'|'$/gu, ''));
+    assert.deepEqual(ports, ['0.0.0.0:80:80', '0.0.0.0:443:443', '0.0.0.0:443:443/udp'], service);
+  }
+  const install = await readFile('docs/install.md', 'utf8');
+  assert.doesNotMatch(install, /plus `AAAA`/u);
+  assert.match(install, /no `AAAA`/u);
+});

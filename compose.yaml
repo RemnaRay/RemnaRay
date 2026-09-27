@@ -194,7 +194,10 @@ services:
 
   proxy-nginx:
     image: ${RR_NGINX_IMAGE:-${RR_REGISTRY:-ghcr.io/remnaray}/nginx:${RR_VERSION:-1}}
-    ports: ['80:80', '443:443', '443:443/udp']
+    # IPv4 only (R13, owner decision О-1): the compose network has no IPv6, so
+    # Docker would forward the host's IPv6 addresses from the network gateway,
+    # an address the proxy trusts for X-Forwarded-For.
+    ports: ['0.0.0.0:80:80', '0.0.0.0:443:443', '0.0.0.0:443:443/udp']
     volumes:
       - proxy-conf:/etc/nginx/conf.d:ro
       - proxy-acme:/var/cache/nginx/acme
@@ -257,7 +260,10 @@ services:
 
   proxy-caddy:
     image: ${RR_CADDY_IMAGE:-${RR_REGISTRY:-ghcr.io/remnaray}/caddy:${RR_VERSION:-1}}
-    ports: ['80:80', '443:443', '443:443/udp']
+    # IPv4 only (R13, owner decision О-1): the compose network has no IPv6, so
+    # Docker would forward the host's IPv6 addresses from the network gateway,
+    # an address the proxy trusts for X-Forwarded-For.
+    ports: ['0.0.0.0:80:80', '0.0.0.0:443:443', '0.0.0.0:443:443/udp']
     volumes:
       - proxy-conf:/etc/caddy:ro
       - caddy-data:/data

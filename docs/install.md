@@ -5,16 +5,22 @@ within half an hour of the first command.
 
 ## What you need
 
-|                  | Minimum                                                                                    | Recommended           |
-| ---------------- | ------------------------------------------------------------------------------------------ | --------------------- |
-| CPU / RAM / disk | 1 vCPU / 2 GB / 20 GB SSD                                                                  | 2 vCPU / 4 GB / 40 GB |
-| OS               | Ubuntu 22.04+ or Debian 12+, Docker Engine 27+, Compose 2.20+                              | Ubuntu 24.04 LTS      |
-| Open ports       | `80/tcp`, `443/tcp`, `443/udp` (HTTP/3, optional)                                          | and `22`              |
-| DNS              | an `A` record for your domain pointing at the server, TTL ≤ 300 while installing           | plus `AAAA` on IPv6   |
-| Clock            | NTP — webhook signatures and TOTP both depend on it                                        |                       |
-| Panel            | Remnawave 2.8.0+, reachable over HTTPS, with an API token that may manage users and squads |                       |
+|                  | Minimum                                                                                     | Recommended           |
+| ---------------- | ------------------------------------------------------------------------------------------- | --------------------- |
+| CPU / RAM / disk | 1 vCPU / 2 GB / 20 GB SSD                                                                   | 2 vCPU / 4 GB / 40 GB |
+| OS               | Ubuntu 22.04+ or Debian 12+, Docker Engine 27+, Compose 2.20+                               | Ubuntu 24.04 LTS      |
+| Open ports       | `80/tcp`, `443/tcp`, `443/udp` (HTTP/3, optional)                                           | and `22`              |
+| DNS              | an `A` record for your domain pointing at the server, TTL ≤ 300 while installing; no `AAAA` |                       |
+| Clock            | NTP — webhook signatures and TOTP both depend on it                                         |                       |
+| Panel            | Remnawave 2.8.0+, reachable over HTTPS, with an API token that may manage users and squads  |                       |
 
 You also need a Telegram bot token from [@BotFather](https://t.me/BotFather).
+
+The shop answers on IPv4 only: the proxy ports are published on `0.0.0.0`, so
+leave the domain without an `AAAA` record (a client that prefers IPv6 would
+otherwise fail to connect). Docker would carry IPv6 connections into the
+IPv4-only compose network from its gateway address, which the proxy has to
+trust for `X-Forwarded-For`, so any IPv6 visitor could claim any address.
 
 ## Install
 
