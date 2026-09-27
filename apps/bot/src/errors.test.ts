@@ -31,7 +31,7 @@ describe('bot error handler for Stars payments (R1)', () => {
       reply,
       t,
     } as unknown as RrContext;
-    return { error: new BotError<RrContext>(new ApiClientError(503), ctx), reply };
+    return { error: new BotError<RrContext>(new ApiClientError(503, 'UNAVAILABLE'), ctx), reply };
   }
 
   it('tells the customer the payment is received and being credited', async () => {

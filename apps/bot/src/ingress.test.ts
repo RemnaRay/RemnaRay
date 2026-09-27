@@ -127,7 +127,9 @@ describe('BotIngress Stars payment updates (R1)', () => {
   it('keeps a successful_payment the shop failed to record pending', async () => {
     // The stars are taken and Telegram never sends the update again: the
     // stream entry is the only copy of the payment.
-    const { redis, api, deliver } = paying(() => Promise.reject(new ApiClientError(503)));
+    const { redis, api, deliver } = paying(() =>
+      Promise.reject(new ApiClientError(503, 'UNAVAILABLE')),
+    );
 
     await deliver();
 
@@ -138,7 +140,7 @@ describe('BotIngress Stars payment updates (R1)', () => {
   it('keeps it pending when a middleware before the payment handler fails', async () => {
     const context = harness(payment);
     context.bot.use(() => {
-      throw new ApiClientError(502);
+      throw new ApiClientError(502, 'BAD_GATEWAY');
     });
     const api = { starsSuccessfulPayment: vi.fn() };
     registerStars(context.bot, api as unknown as ApiClient);
@@ -160,7 +162,9 @@ describe('BotIngress Stars payment updates (R1)', () => {
 
   it('answers the customer on the first delivery only', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { handled, deliver } = paying(() => Promise.reject(new ApiClientError(503)));
+    const { handled, deliver } = paying(() =>
+      Promise.reject(new ApiClientError(503, 'UNAVAILABLE')),
+    );
 
     await deliver(1);
     await deliver(2);
@@ -267,7 +271,7 @@ describe('BotIngress delivery limit (R102)', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { bot, redis, batch, onPaymentStuck } = streamed(5);
     registerStars(bot, {
-      starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503)),
+      starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503, 'UNAVAILABLE')),
     } as unknown as ApiClient);
     bot.catch(() => undefined);
 
@@ -287,7 +291,7 @@ describe('BotIngress delivery limit (R102)', () => {
     const failing = vi.fn().mockRejectedValue(new Error('api down'));
     const early = streamed(4, failing);
     registerStars(early.bot, {
-      starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503)),
+      starsSuccessfulPayment: () => Promise.reject(new ApiClientError(503, 'UNAVAILABLE')),
     } as unknown as ApiClient);
     early.bot.catch(() => undefined);
     await early.batch([['6-0', ['payload', JSON.stringify(payment)]]]);

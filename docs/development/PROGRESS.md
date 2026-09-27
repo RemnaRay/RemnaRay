@@ -260,6 +260,11 @@ times delivered]`; `XAUTOCLAIM` without `JUSTID` increments the count),
   `api-client.test.ts` `alert()` red → green. Checks: bot 91, lint, format,
   typecheck, i18n-check (2290). VPS action: after deploy check
   `XLEN tg:updates:dead`.
+- Follow-up to R1/R102: the new bot tests built `ApiClientError` without its
+  `code`, which the root `pnpm typecheck` does not cover but the bot's own
+  `tsc -p tsconfig.json` (`pnpm build`) refuses; found by the first
+  `pnpm build` of P-1 and fixed in the tests. `pnpm build` is now part of each
+  repair's gates.
 
 **Exact next:** package 1 — P-1 (a payment for a plan taken off sale goes to
 the balance), then P-1 part 2, R74 and the re-apply backstop, one commit each.
