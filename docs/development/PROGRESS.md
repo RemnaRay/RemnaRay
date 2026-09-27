@@ -198,8 +198,41 @@ One commit each:
   i18n-check. VPS action: after deploy clear the accumulated failed jobs of
   the `payments` queue.
 
-**Exact next:** package 1 — R1 (the bot XACKs a failed `successful_payment`),
-then R102, P-1, P-1 part 2, R74 and the re-apply backstop, one commit each.
+- **R1 Done (local) — a Stars payment the shop failed to record was
+  acknowledged and lost.** Cause: F2 (`fd64949`) made the ingress XACK every
+  `BotError`, and grammY wraps every middleware failure in one, so a
+  `successful_payment` whose `stars/successful-payment` call failed (API
+  restart, 5xx, 10 s timeout) — or whose update failed earlier, in the upsert
+  or the catalog middleware — was answered `error.generic` and acknowledged;
+  Telegram never redelivers it, so the stars were taken and no
+  `payment_events` row existed (a regression of 2a, whose design is "the bot
+  stream is the retry"). Also `botErrorHandler` threw on a context without
+  `ctx.t` (catalog never bound). Repair (`apps/bot/src/ingress.ts`): an update
+  carrying `message.successful_payment` whose handling failed is never
+  acknowledged — it stays in the PEL and `XAUTOCLAIM` redelivers it; the
+  error handler runs (log + reply) on the first delivery only, a redelivery
+  is logged with the update id and the delivery count, never the payload.
+  Every other failed update is still acknowledged (F2). `botErrorHandler`
+  answers a payment update with the new `bot.payment.received` (payment
+  received, being credited, incident id) instead of `error.generic`, and
+  skips the reply without `ctx.t`. The misleading comment in
+  `screens/stars.ts` and `docs/payments/stars.md` describe the path.
+  Invariants: a taken Stars payment is either recorded (idempotent by
+  `telegram_payment_charge_id`) or still pending in the stream; the customer
+  gets one answer. Evidence: `ingress.test.ts` «keeps a successful_payment
+  the shop failed to record pending» (API 503) and «keeps it pending when a
+  middleware before the payment handler fails» red (XACK called) → green,
+  «answers the customer on the first delivery only» red (3 replies) → green;
+  `errors.test.ts` «tells the customer the payment is received» red (generic)
+  → green and «logs and does not fail when the catalog never loaded» red
+  (`TypeError: ctx.t is not a function`) → green. Checks: bot 85, lint,
+  format, typecheck, i18n-check (2288). Until R102 a payment update that can
+  never be recorded is retried every minute without a limit or alert. VPS
+  action: after deploy compare the bot's `getStarTransactions` with the
+  `stars` rows of `payment_events` for payments already lost.
+
+**Exact next:** package 1 — R102 (delivery count, dead-letter, `payment.stars_stuck`),
+then P-1, P-1 part 2, R74 and the re-apply backstop, one commit each.
 
 ## VPS acceptance run — 2026-09-26
 

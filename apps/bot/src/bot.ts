@@ -105,8 +105,14 @@ export function botErrorHandler(
       return;
     }
     if (cause instanceof GrammyError && cause.error_code === 429) return;
-    if (ctx.from)
-      await ctx.reply(ctx.t('bot.error.generic', { incidentId: id })).catch(() => undefined);
+    // A middleware that failed before the catalog was bound leaves no `t`.
+    if (!ctx.from || typeof ctx.t !== 'function') return;
+    // R1: a Stars payment that failed to record stays pending and is
+    // recorded on redelivery, so the customer hears it is being credited.
+    const key = ctx.update.message?.successful_payment
+      ? 'bot.payment.received'
+      : 'bot.error.generic';
+    await ctx.reply(ctx.t(key, { incidentId: id })).catch(() => undefined);
   };
 }
 

@@ -18,6 +18,50 @@ function failed(cause: unknown) {
   return { error: new BotError<RrContext>(cause, ctx), reply };
 }
 
+describe('bot error handler for Stars payments (R1)', () => {
+  function paymentFailed(t: unknown) {
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const ctx = {
+      update: {
+        update_id: 8,
+        message: { successful_payment: { telegram_payment_charge_id: 'charge-1' } },
+      },
+      chat: { id: 42 },
+      from: { id: 42 },
+      reply,
+      t,
+    } as unknown as RrContext;
+    return { error: new BotError<RrContext>(new ApiClientError(503), ctx), reply };
+  }
+
+  it('tells the customer the payment is received and being credited', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { error, reply } = paymentFailed(
+      (key: string, params: { incidentId: string }) => `${key}:${params.incidentId}`,
+    );
+
+    await botErrorHandler({ markBlocked: vi.fn() })(error);
+
+    expect(reply).toHaveBeenCalledWith(expect.stringMatching(/^bot\.payment\.received:/u));
+    vi.restoreAllMocks();
+  });
+
+  it('logs and does not fail when the catalog never loaded', async () => {
+    // The i18n middleware failed before `ctx.t` was bound.
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { error, reply } = paymentFailed(undefined);
+
+    await expect(botErrorHandler({ markBlocked: vi.fn() })(error)).resolves.toBeUndefined();
+
+    expect(log).toHaveBeenCalledWith(
+      'Telegram update failed',
+      expect.objectContaining({ updateId: 8, updateType: 'message' }),
+    );
+    expect(reply).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
 describe('bot error and delivery boundaries', () => {
   it('creates an eight-character incident id without punctuation', () => {
     expect(incidentId()).toMatch(/^[A-Za-z0-9_-]{8}$/u);

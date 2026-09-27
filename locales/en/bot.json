@@ -84,6 +84,7 @@
   "bot.error.invalid_input": "Invalid format. Try again.",
   "bot.error.conversation_timeout": "The input timed out.",
   "bot.error.generic": "Something went wrong. Code: {incidentId}",
+  "bot.payment.received": "Payment received, we are crediting it. If nothing changes in a few minutes, contact support. Code: {incidentId}",
   "bot.error.revoke_rate_limited": "The subscription link can be reset only once every 24 hours.",
   "bot.admin.stats": "Statistics are unavailable.",
   "bot.admin.user": "User: {id}",

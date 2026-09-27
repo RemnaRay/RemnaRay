@@ -150,7 +150,8 @@ export class BotIngress<C extends Context = RrContext> {
           10,
         )) as [string, Array<[string, string[]]>];
         this.claimCursor = claimed[0];
-        for (const [id, fields] of claimed[1]) await this.processMessage(id, fields);
+        // A claimed entry is at least its second delivery.
+        for (const [id, fields] of claimed[1]) await this.processMessage(id, fields, 2);
         const batches = (await this.reader.xreadgroup(
           'GROUP',
           this.channel.group,
@@ -176,7 +177,7 @@ export class BotIngress<C extends Context = RrContext> {
     }
   }
 
-  private async processMessage(id: string, fields: string[]): Promise<void> {
+  private async processMessage(id: string, fields: string[], deliveries = 1): Promise<void> {
     const payloadIndex = fields.indexOf('payload');
     const payload = payloadIndex < 0 ? undefined : fields[payloadIndex + 1];
     if (!payload) throw new Error('Invalid stream envelope');
@@ -194,10 +195,23 @@ export class BotIngress<C extends Context = RrContext> {
       // Anything else (the bot is not initialised) stays in the PEL for
       // `XAUTOCLAIM`.
       if (!(error instanceof BotError)) throw error;
+      // R1: the stars are taken and Telegram never sends the update again,
+      // so a payment the shop did not record stays in the PEL for
+      // `XAUTOCLAIM`; recording it is idempotent by the charge id. The
+      // customer is answered once, on the first delivery.
+      if (update.message?.successful_payment) {
+        if (deliveries === 1) await this.report(error as BotError<C>);
+        else
+          console.error('Telegram payment update kept pending', {
+            updateId: update.update_id,
+            deliveries,
+          });
+        return;
+      }
       await this.report(error as BotError<C>);
     }
-    // A handled update, failed or not, is done: redelivering it would run the
-    // handler's side effects and the error reply again.
+    // Any other handled update, failed or not, is done: redelivering it would
+    // run the handler's side effects and the error reply again.
     await this.redis.xack(this.channel.stream, this.channel.group, id);
   }
 

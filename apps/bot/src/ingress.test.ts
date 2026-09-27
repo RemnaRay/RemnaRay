@@ -1,7 +1,9 @@
 import { Bot, BotError } from 'grammy';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiClientError, type ApiClient } from './api-client.js';
 import { BotIngress, supportChannel } from './ingress.js';
+import { registerStars } from './screens/stars.js';
 import type { RrContext } from './types.js';
 
 const botInfo = {
@@ -27,17 +29,40 @@ const update = {
   },
 };
 
-function harness() {
+const payment = {
+  update_id: 6,
+  message: {
+    message_id: 2,
+    date: 0,
+    chat: { id: 42, type: 'private' as const, first_name: 'Ann' },
+    from: { id: 42, is_bot: false, first_name: 'Ann' },
+    successful_payment: {
+      currency: 'XTR',
+      total_amount: 399,
+      invoice_payload: 'inv_0199c7a0-0000-7000-8000-000000000001',
+      telegram_payment_charge_id: 'charge-1',
+      provider_payment_charge_id: '',
+    },
+  },
+};
+
+type Processing = {
+  processMessage(id: string, fields: string[], deliveries?: number): Promise<void>;
+};
+
+function harness(delivered: object = update) {
   const bot = new Bot<RrContext>('123:token', { botInfo: botInfo as never });
   const redis = {
     duplicate: () => ({ disconnect: vi.fn() }),
     xack: vi.fn().mockResolvedValue(1),
   };
   const ingress = new BotIngress(bot, redis as never, 'test-consumer');
-  const deliver = () =>
-    (
-      ingress as unknown as { processMessage(id: string, fields: string[]): Promise<void> }
-    ).processMessage('1-0', ['payload', JSON.stringify(update)]);
+  const deliver = (deliveries?: number) =>
+    (ingress as unknown as Processing).processMessage(
+      '1-0',
+      ['payload', JSON.stringify(delivered)],
+      deliveries,
+    );
   return { bot, redis, deliver };
 }
 
@@ -82,6 +107,72 @@ describe('BotIngress failed updates (FR-127)', () => {
     });
     expect(JSON.stringify(log.mock.calls)).not.toContain('Профиль');
     expect(redis.xack).toHaveBeenCalledWith('tg:updates', 'bot', '1-0');
+  });
+});
+
+describe('BotIngress Stars payment updates (R1)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function paying(recorded: () => Promise<unknown>) {
+    const context = harness(payment);
+    const api = { starsSuccessfulPayment: vi.fn(recorded) };
+    registerStars(context.bot, api as unknown as ApiClient);
+    const handled: BotError[] = [];
+    context.bot.catch((error) => {
+      handled.push(error);
+    });
+    return { ...context, api, handled };
+  }
+
+  it('keeps a successful_payment the shop failed to record pending', async () => {
+    // The stars are taken and Telegram never sends the update again: the
+    // stream entry is the only copy of the payment.
+    const { redis, api, deliver } = paying(() => Promise.reject(new ApiClientError(503)));
+
+    await deliver();
+
+    expect(api.starsSuccessfulPayment).toHaveBeenCalledTimes(1);
+    expect(redis.xack).not.toHaveBeenCalled();
+  });
+
+  it('keeps it pending when a middleware before the payment handler fails', async () => {
+    const context = harness(payment);
+    context.bot.use(() => {
+      throw new ApiClientError(502);
+    });
+    const api = { starsSuccessfulPayment: vi.fn() };
+    registerStars(context.bot, api as unknown as ApiClient);
+    context.bot.catch(() => undefined);
+
+    await context.deliver();
+
+    expect(api.starsSuccessfulPayment).not.toHaveBeenCalled();
+    expect(context.redis.xack).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges a payment once the shop has recorded it', async () => {
+    const { redis, deliver } = paying(() => Promise.resolve({ ok: true }));
+
+    await deliver();
+
+    expect(redis.xack).toHaveBeenCalledWith('tg:updates', 'bot', '1-0');
+  });
+
+  it('answers the customer on the first delivery only', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { handled, deliver } = paying(() => Promise.reject(new ApiClientError(503)));
+
+    await deliver(1);
+    await deliver(2);
+    await deliver(3);
+
+    // The error handler answers; a redelivery is logged without a reply.
+    expect(handled).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith('Telegram payment update kept pending', {
+      updateId: 6,
+      deliveries: 3,
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('charge-1');
   });
 });
 

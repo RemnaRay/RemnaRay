@@ -71,10 +71,12 @@ export function registerStars(bot: Bot<RrContext>, api: ApiClient): void {
     await ctx.answerPreCheckoutQuery(true);
   });
 
-  // The stars are already taken. A failure is thrown, not answered: the update
-  // then stays pending in the stream and is redelivered until the shop has
-  // recorded it, and the endpoint is idempotent by the charge id. The user is
-  // told by the `payment.succeeded` notification the shop sends on applying it.
+  // The stars are already taken. A failure is thrown, not answered here: the
+  // ingress keeps a failed `successful_payment` pending in the stream (it is
+  // never acknowledged, whichever middleware failed) and it is redelivered
+  // until the shop has recorded it; the endpoint is idempotent by the charge
+  // id. The error handler tells the customer once that the payment is being
+  // credited, and the shop's `payment.succeeded` follows on applying it.
   bot.on('message:successful_payment', async (ctx) => {
     const payment = ctx.message.successful_payment;
     if (payment.currency !== 'XTR') return;

@@ -84,6 +84,7 @@
   "bot.error.invalid_input": "Неверный формат. Попробуйте ещё раз.",
   "bot.error.conversation_timeout": "Время ожидания истекло.",
   "bot.error.generic": "Произошла ошибка. Код: {incidentId}",
+  "bot.payment.received": "Оплата получена, зачисляем её. Если через несколько минут ничего не изменится, напишите в поддержку. Код: {incidentId}",
   "bot.error.revoke_rate_limited": "Ссылку можно сбросить только один раз за 24 часа.",
   "bot.admin.stats": "Статистика пока недоступна.",
   "bot.admin.user": "Пользователь: {id}",

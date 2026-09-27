@@ -32,7 +32,12 @@ bot:
   transaction per invoice, a repeat is a duplicate, an invoice that expired in
   the meantime is credited to the balance (EX-02), and a smaller `total_amount`
   is scaled to roubles so the underpayment rule applies. If the API cannot
-  record it, the bot leaves the update pending and it is delivered again.
+  record it — or anything before the payment handler fails, such as the user
+  upsert or the message catalog — the bot never acknowledges the update: it
+  stays pending in the `tg:updates` stream and is delivered again about every
+  minute. The customer is told once, on the first failure, that the payment
+  was received and is being credited (`bot.payment.received`, with the
+  incident id of the log line).
 - A second charge with another `telegram_payment_charge_id` for an invoice
   already paid — two copies of one invoice paid before the first was applied —
   is credited to the balance as a top-up of its own, and administrators get
