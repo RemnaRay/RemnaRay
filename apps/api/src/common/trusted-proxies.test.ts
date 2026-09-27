@@ -39,3 +39,32 @@ describe('trustedProxies (section 21.7)', () => {
     expect(await ipSeenBy(trustedProxies(''), '172.28.0.10')).toBe('172.28.0.10');
   });
 });
+
+describe('behind the external edge (R25)', () => {
+  // The owner's proxy on the host appends the visitor, the published port
+  // reaches `edge` from the compose gateway, and `edge` appends that.
+  async function behindEdge(list: string): Promise<string> {
+    const app = Fastify({ trustProxy: trustedProxies(list) });
+    app.get('/whoami', (request) => ({ ip: request.ip }));
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/whoami',
+        remoteAddress: '172.28.1.5',
+        headers: { 'x-forwarded-for': '203.0.113.7, 172.28.0.1' },
+      });
+      return response.json<{ ip: string }>().ip;
+    } finally {
+      await app.close();
+    }
+  }
+
+  it('finds the visitor with the compose network trusted', async () => {
+    expect(await behindEdge('172.28.0.0/16')).toBe('203.0.113.7');
+    expect(await behindEdge('172.28.0.0/16,127.0.0.1/32')).toBe('203.0.113.7');
+  });
+
+  it('sees only the edge without it', async () => {
+    expect(await behindEdge('127.0.0.1/32')).toBe('172.28.1.5');
+  });
+});

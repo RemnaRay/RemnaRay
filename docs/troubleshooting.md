@@ -141,8 +141,8 @@ did not, or the address is your proxy rather than the visitor:
 
 - Your proxy must send `Host`, `X-Forwarded-For`, `X-Real-IP` and
   `X-Forwarded-Proto: https`.
-- `RR_TRUSTED_PROXIES` must contain your proxy's address — `127.0.0.1/32` on
-  the same host, or your provider's ranges. **Unset means no header is
+- `RR_TRUSTED_PROXIES` must contain the compose network `172.28.0.0/16` — the
+  API's peer is the `edge` container — plus your provider's ranges. **Unset means no header is
   believed**, which is safe and looks exactly like a misconfigured proxy.
 - Behind Cloudflare, add its ranges and let the API read `CF-Connecting-IP`.
 

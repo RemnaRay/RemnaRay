@@ -630,8 +630,31 @@ config` renders `host_ip: 0.0.0.0` for all six ports. Evidence:
   proxy-render 38, lint, format; `pnpm test` 60/61 (the known local
   docs-link failure). VPS action: none (the stand runs the nginx profile).
 
-**Exact next:** package 2 — R25 (the external profile's trusted proxies in
-the docs), then R137, R27, R78, R81, R79 + L-3, L-6, R101.
+- **R25 Done (local) — the external-profile guide made every visitor one
+  address.** Cause: `docs/external-proxy.md`, `install.md`,
+  `troubleshooting.md` and `.env.example` told the owner to set
+  `RR_TRUSTED_PROXIES=127.0.0.1/32` for a proxy on the same host; the API's
+  peer is the `edge` container (172.28.1.x), and the host's connection to the
+  published port reaches `edge` from the compose gateway, so with that value
+  Fastify believed nothing and `request.ip` was `edge` for everybody — one
+  60/min anonymous bucket, a 10/min sign-in limit and a 5-per-15-min setup
+  lock for the whole shop, `edge` in `audit_log.ip`, and `X-Forwarded-Proto`
+  dropped. The default `172.28.0.0/16` works. Repair (docs only): every guide
+  keeps the compose network first and adds what sits in front of `edge`
+  (nothing for a proxy on the same host; the proxy's subnet, Traefik's
+  network or Cloudflare's ranges after it); the `/admin/system` sample shows
+  the default. The specification is not changed: its 21.7 example
+  («`127.0.0.1/32` for a proxy on the same host») does not fit this
+  architecture, which is recorded here. Evidence: `test/docs.test.mjs` «no
+  guide recommends trusted proxies without the compose network» red (four
+  files) → green; `trusted-proxies.test.ts` «behind the external edge» pins
+  the chain (edge peer, `X-Forwarded-For: <visitor>, 172.28.0.1`): the
+  visitor with `172.28.0.0/16`, only the edge with `127.0.0.1/32`. Checks:
+  API 4 in the file, lint, format; `pnpm test` 61/62 (the known local
+  docs-link failure). VPS action: none (the stand runs the nginx profile).
+
+**Exact next:** package 2 — R137 (the Caddy admin API on localhost), then
+R27, R78, R81, R79 + L-3, L-6, R101.
 
 ## VPS acceptance run — 2026-09-26
 

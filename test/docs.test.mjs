@@ -206,3 +206,26 @@ test('the delivery names the repository RemnaRay/RemnaRay', async () => {
   }
   assert.deepEqual(stale, []);
 });
+
+// R25: behind the external profile the API's peer is the `edge` container,
+// and the connection from the host reaches `edge` from the compose gateway,
+// so the compose network has to stay trusted. `RR_TRUSTED_PROXIES=127.0.0.1/32`
+// alone made every visitor the edge's address: one throttler bucket, one
+// setup-token lock and one audit IP for the whole shop.
+test('no guide recommends trusted proxies without the compose network', async () => {
+  for (const file of [
+    'docs/external-proxy.md',
+    'docs/install.md',
+    'docs/troubleshooting.md',
+    '.env.example',
+  ]) {
+    const text = await readFile(file, 'utf8');
+    assert.doesNotMatch(
+      text,
+      /(?<!172\.28\.0\.0\/16,)127\.0\.0\.1\/32/u,
+      `${file} recommends 127.0.0.1/32 without 172.28.0.0/16`,
+    );
+  }
+  const guide = await readFile('docs/external-proxy.md', 'utf8');
+  assert.match(guide, /RR_TRUSTED_PROXIES=172\.28\.0\.0\/16/u);
+});

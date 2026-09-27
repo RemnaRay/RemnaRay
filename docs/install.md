@@ -146,8 +146,9 @@ host, Traefik and Cloudflare.
 - **Keep `.env` off the backups.** An archive holding both the ciphertext and
   its key protects nothing, which is why `backup` never copies it.
 - **Set `RR_TRUSTED_PROXIES`** to the addresses whose `X-Forwarded-*` headers
-  you believe. Behind your own proxy that is `127.0.0.1/32` or your provider's
-  ranges; with the bundled proxies the compose subnet is right. Unset means
+  you believe. The compose subnet `172.28.0.0/16` is always in it — with your
+  own proxy the API's peer is still the `edge` container — followed by your
+  provider's ranges if there is a CDN in front. Unset means
   nobody is believed, which is the safe default and not the useful one.
 - **Restrict the console** with the administration allowlist in Settings →
   Security if your administrators have fixed addresses.

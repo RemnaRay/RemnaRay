@@ -31,8 +31,16 @@ with `external`.
 `RR_TRUSTED_PROXIES` is **required** and is the whole of the security here: it
 is a comma-separated list of the addresses allowed to set those headers. A
 request that arrives from anywhere else keeps its source address no matter what
-it claims. Set it to `127.0.0.1/32` for a proxy on the same host, or to your
-proxy's subnet; with Cloudflare, set it to Cloudflare's published ranges.
+it claims.
+
+The API never sees your proxy directly: its peer is the `edge` container, and
+your proxy's connection to `127.0.0.1:8080` reaches `edge` from the compose
+network's gateway. Both are in the compose network, so the list **starts with
+`172.28.0.0/16`** — the default — and adds what sits in front of `edge`: nothing
+more for a proxy on the same host, your proxy's subnet for one elsewhere,
+Cloudflare's published ranges behind Cloudflare. A list without the compose
+network makes every visitor look like `edge`: one rate-limit bucket, one
+setup-token lock and one audit address for the whole shop.
 
 You own TLS, rate limiting and the security headers. RemnaRay does not add them
 in this profile, because two sources of the same header means two places to
@@ -64,7 +72,7 @@ server {
 }
 ```
 
-With this, `RR_TRUSTED_PROXIES=127.0.0.1/32`.
+With this, the default `RR_TRUSTED_PROXIES=172.28.0.0/16` is right as it is.
 
 ## Traefik
 
@@ -77,8 +85,8 @@ labels:
   - traefik.http.services.remnaray.loadbalancer.server.port=8080
 ```
 
-Traefik sets `X-Forwarded-*` itself. Put its container network in
-`RR_TRUSTED_PROXIES`.
+Traefik sets `X-Forwarded-*` itself. Add its container network to
+`RR_TRUSTED_PROXIES` after `172.28.0.0/16`.
 
 ## Cloudflare
 
@@ -89,8 +97,9 @@ verified, and add a rule that does not cache `/api/*`, `/webhooks/*` or
 Cloudflare sends the client address in `CF-Connecting-IP` as well as
 `X-Forwarded-For`. Set `RR_TRUSTED_PROXIES` to
 [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) so the forwarded
-address is believed; without that the shop sees Cloudflare's address as the
-client for every request, and the rate limits become useless.
+address is believed (`172.28.0.0/16,` followed by the ranges); without that
+the shop sees Cloudflare's address as the client for every request, and the
+rate limits become useless.
 
 ## Checking it
 
@@ -99,7 +108,7 @@ client for every request, and the rate limits become useless.
 ```json
 "proxy": {
   "profile": "external",
-  "trustedProxies": "127.0.0.1/32",
+  "trustedProxies": "172.28.0.0/16",
   "external": {
     "at": "2026-09-20T12:00:00.000Z",
     "clientIp": "203.0.113.7",
