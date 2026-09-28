@@ -39,7 +39,7 @@
   "errors.last_admin": "Последнего администратора нельзя отключить.",
   "errors.webhook_invalid_signature": "Подпись вебхука не прошла проверку.",
   "errors.idempotency_key_reused": "Этот ключ идемпотентности уже использован с другим запросом.",
-  "errors.provider_config_unreadable": "Сохранённые настройки провайдера не расшифровываются текущим ключом RR_APP_KEY. Верните в .env ключ, которым они были сохранены.",
+  "errors.provider_config_unreadable": "Сохранённые настройки провайдера не расшифровываются текущим ключом RR_APP_KEY. Верните в .env ключ, которым они были сохранены, или смените ключ командой ./scripts/rr rotate-key.",
   "errors.conflict": "Данные изменились. Обновите страницу и повторите.",
   "errors.internal_error": "Произошла ошибка. Код инцидента: {incidentId}",
   "errors.requestId": "Идентификатор запроса: {requestId}",

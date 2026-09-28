@@ -39,7 +39,7 @@
   "errors.last_admin": "The last administrator cannot be removed.",
   "errors.webhook_invalid_signature": "The webhook signature failed verification.",
   "errors.idempotency_key_reused": "This idempotency key was already used with a different request.",
-  "errors.provider_config_unreadable": "The stored provider settings do not decrypt with the current RR_APP_KEY. Put the key they were saved with back in .env.",
+  "errors.provider_config_unreadable": "The stored provider settings do not decrypt with the current RR_APP_KEY. Put the key they were saved with back in .env, or change keys with ./scripts/rr rotate-key.",
   "errors.conflict": "The data changed. Reload and try again.",
   "errors.internal_error": "Something went wrong. Incident code: {incidentId}",
   "errors.requestId": "Request id: {requestId}",

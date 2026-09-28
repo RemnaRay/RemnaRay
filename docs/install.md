@@ -124,6 +124,27 @@ variable — `RR_APP_KEY` must be 32 bytes in base64, `openssl rand -base64 32`
 values) in `docker compose logs`. An empty line counts as unset, and
 `POSTGRES_PASSWORD` may be left out when `DATABASE_URL` names the database.
 
+### Changing `RR_APP_KEY`
+
+The key encrypts every secret in the database — the bot and panel tokens,
+the payment providers' settings, the administrators' TOTP secrets. If it may
+have leaked, make a new one (`openssl rand -base64 32`) and run:
+
+```sh
+./scripts/rr rotate-key
+```
+
+It asks for the current and the new key without echoing them, stops `api`,
+`worker` and `bot`, and re-encrypts everything in one transaction — a value
+the current key cannot read stops it with nothing changed. Then replace
+`RR_APP_KEY` in `.env` and run `./scripts/rr up`. From a source checkout the
+same tool is `pnpm rr:rotate-key --old <key> --new <key>`.
+
+Replacing the key in `.env` without that step is caught at the next start:
+when the key decrypts none of the stored secrets, the API stops with
+`RR_APP_KEY decrypts none of the … stored secrets` instead of running with
+empty tokens.
+
 `init-env.sh` writes `POSTGRES_PASSWORD` single-quoted, so any character but
 a single quote is safe in it, and generates one if you type none. Edit it by
 hand the same way: without the quotes compose drops a `$name` from the value

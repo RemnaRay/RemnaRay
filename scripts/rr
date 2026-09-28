@@ -59,7 +59,7 @@ esac
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/rr {build|up|down|logs|ps|config|proxy:render|proxy:reload|tls:issue|backup|restore|theme:validate|admin:list|admin:reset-password|admin:reset-totp}
+Usage: ./scripts/rr {build|up|down|logs|ps|config|proxy:render|proxy:reload|tls:issue|backup|restore|rotate-key|theme:validate|admin:list|admin:reset-password|admin:reset-totp}
 
 The proxy profile comes from RR_PROXY_PROFILE in .env (default: nginx), and
 RR_TLS_MODE=certbot adds the certbot profile.
@@ -173,9 +173,10 @@ render_proxy() {
 read_secret() {
   prompt=$1
   printf '%s' "$prompt" >&2
-  stty -echo
-  IFS= read -r secret
-  stty echo
+  # Without a terminal (input piped in) there is nothing to hide.
+  stty -echo 2>/dev/null || true
+  IFS= read -r secret || true
+  stty echo 2>/dev/null || true
   printf '\n' >&2
   printf '%s' "$secret"
 }
@@ -364,6 +365,25 @@ case "$command" in
     # no socket to reach it with.
     COMPOSE_FILE="$compose_file" RR_PROXY_PROFILE="$profile" \
       deploy/backup/restore.sh "$1"
+    ;;
+  rotate-key)
+    # Section 17.1 p. 4 (R29): re-encrypt every stored secret with a new
+    # RR_APP_KEY (`openssl rand -base64 32`). The keys are read without echo
+    # and reach the one-off container through its environment, never a
+    # command line `ps` shows. The processes that write secrets stop first;
+    # they start again with the new key once it is in `.env`.
+    old_key=$(read_secret 'Current RR_APP_KEY: ')
+    new_key=$(read_secret 'New RR_APP_KEY: ')
+    if [ -z "$old_key" ] || [ -z "$new_key" ]; then
+      echo 'rotate-key needs the current and the new key' >&2
+      exit 2
+    fi
+    compose stop api worker bot
+    compose up -d postgres
+    RR_OLD_APP_KEY=$old_key RR_NEW_APP_KEY=$new_key \
+      compose run --rm --no-deps -T -e RR_OLD_APP_KEY -e RR_NEW_APP_KEY api node dist/tools/rotate-key.js
+    echo 'Now replace RR_APP_KEY in .env with the new key and run ./scripts/rr up.'
+    echo 'Sign-in links and TOTP enrolments started before now have to be started again.'
     ;;
   theme:validate)
     shift

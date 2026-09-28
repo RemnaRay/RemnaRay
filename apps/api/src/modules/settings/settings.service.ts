@@ -29,7 +29,7 @@ export class SettingsService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.reload();
+    await this.reload(true);
     await this.eventBus.subscribe((event) => {
       this.invalidate(event);
     });
@@ -217,22 +217,46 @@ export class SettingsService implements OnModuleInit, OnModuleDestroy {
     if (!this.loaded) await this.reload();
   }
 
-  private async reload(): Promise<void> {
+  /**
+   * `starting`: R29 — a key that decrypts none of the stored secrets is not
+   * the key they were saved with, and the process stops (section 17.2)
+   * instead of running with every secret at its empty default. One value
+   * that fails among readable ones is section 17.5's case: logged, default.
+   */
+  private async reload(starting = false): Promise<void> {
     const stored = await this.repository.list();
     this.cache.clear();
+    let secrets = 0;
+    let unreadable = 0;
     for (const setting of stored) {
       const definition = settingDefinitions.get(setting.key);
       if (!definition) {
         this.logger.warn(`Ignoring unknown setting ${setting.key}`);
         continue;
       }
+      let value = setting.value;
+      if (setting.isSecret) {
+        secrets += 1;
+        try {
+          value = this.decrypt(setting.value);
+        } catch (error) {
+          unreadable += 1;
+          this.logger.error(`Setting ${setting.key} does not decrypt; using its default`, error);
+          continue;
+        }
+      }
       try {
-        const value = setting.isSecret ? this.decrypt(setting.value) : setting.value;
         this.cache.set(setting.key, definition.schema.parse(value));
       } catch (error) {
         this.logger.error(`Invalid setting ${setting.key}; using its default`, error);
       }
     }
+    if (starting && secrets > 0 && unreadable === secrets)
+      throw new Error(
+        `RR_APP_KEY decrypts none of the ${String(secrets)} stored secrets: it is not the key ` +
+          'they were saved with. Put that key back in .env, or change keys with ' +
+          './scripts/rr rotate-key.',
+      );
     this.loaded = true;
   }
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import process from 'node:process';
 import test from 'node:test';
 
 const rr = resolve('scripts/rr');
-function run(command, values = {}, failure = '', options = {}) {
+function run(command, values = {}, failure = '', options = {}, input = '') {
   const root = mkdtempSync(join(tmpdir(), 'rr-cli-'));
   try {
     writeFileSync(
@@ -28,7 +29,7 @@ function run(command, values = {}, failure = '', options = {}) {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.RR_TEST_LOG, JSON.stringify(args) + '\\n');
-fs.appendFileSync(process.env.RR_TEST_LOG + '.env', JSON.stringify({ RR_VERSION: process.env.RR_VERSION, RR_REGISTRY: process.env.RR_REGISTRY }) + '\\n');
+fs.appendFileSync(process.env.RR_TEST_LOG + '.env', JSON.stringify({ RR_VERSION: process.env.RR_VERSION, RR_REGISTRY: process.env.RR_REGISTRY, ...(process.env.RR_NEW_APP_KEY ? { RR_OLD_APP_KEY: process.env.RR_OLD_APP_KEY, RR_NEW_APP_KEY: process.env.RR_NEW_APP_KEY } : {}) }) + '\\n');
 if (process.env.RR_TEST_FAILURE && args.includes(process.env.RR_TEST_FAILURE)) process.exit(1);
 if (args[0] === 'ps' && process.env.RR_TEST_STALE_ID) console.log(process.env.RR_TEST_STALE_ID);
 if (args.includes('/proxy-conf/certbot-domains') && process.env.RR_TEST_CERTBOT_DOMAINS) console.log(process.env.RR_TEST_CERTBOT_DOMAINS);
@@ -60,6 +61,7 @@ process.stdout.write('ok');
       timeout: 10000,
       cwd: root,
       encoding: 'utf8',
+      input,
       env: {
         ...process.env,
         PATH: `${root}:${process.env.PATH}`,
@@ -395,4 +397,39 @@ test('tls:issue requests one certificate for the domain and its extra domains', 
   const odd = run(['tls:issue'], {}, '', { RR_TEST_CERTBOT_DOMAINS: 'x.example.test;rm -rf' });
   assert.notEqual(odd.status, 0);
   assert.ok(!odd.calls.some((args) => args.includes('certonly')));
+});
+
+// R29, section 17.1 p. 4: the owner re-encrypts the secrets with a new
+// RR_APP_KEY. The keys are read without echo and reach the one-off container
+// through its environment: a key on a command line is visible in `ps`.
+test('rotate-key stops the writers and re-encrypts with keys never on a command line', () => {
+  const oldKey = Buffer.alloc(32, 1).toString('base64');
+  const newKey = Buffer.alloc(32, 2).toString('base64');
+  const result = run(['rotate-key'], {}, '', {}, `${oldKey}\n${newKey}\n`);
+  assert.equal(result.status, 0, result.stderr);
+  const flat = result.calls.map((args) => args.join(' '));
+  const stop = flat.findIndex((call) => / stop api worker bot$/u.test(call));
+  const rotate = flat.findIndex((call) =>
+    call.endsWith(
+      'run --rm --no-deps -T -e RR_OLD_APP_KEY -e RR_NEW_APP_KEY api node dist/tools/rotate-key.js',
+    ),
+  );
+  assert.ok(stop >= 0 && rotate > stop, flat.join('\n'));
+  assert.deepEqual(
+    {
+      old: result.environments[rotate].RR_OLD_APP_KEY,
+      new: result.environments[rotate].RR_NEW_APP_KEY,
+    },
+    { old: oldKey, new: newKey },
+  );
+  for (const call of flat) {
+    assert.ok(!call.includes(oldKey), call);
+    assert.ok(!call.includes(newKey), call);
+  }
+  assert.match(result.stdout + result.stderr, /RR_APP_KEY/u);
+
+  // An empty new key is refused before anything stops.
+  const empty = run(['rotate-key'], {}, '', {}, `${oldKey}\n\n`);
+  assert.notEqual(empty.status, 0);
+  assert.ok(!empty.calls.some((args) => args.includes('stop')));
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { encryptSetting } from './settings.crypto';
 import { SettingsService } from './settings.service';
 import type { SettingsChangedEvent, SettingsEventBusPort } from './settings.events';
 import type { SettingsRepositoryPort, SettingWrite, StoredSetting } from './settings.repository';
@@ -105,6 +106,31 @@ describe('SettingsService', () => {
       '2001:db8::/32',
       '::1',
     ]);
+  });
+
+  // R29: with another RR_APP_KEY every secret failed to decrypt, was logged
+  // as «invalid» and replaced by its default — an empty bot and panel token —
+  // and the API reported itself healthy. Section 17.2 wants a wrong key to
+  // stop the start; one unreadable value among readable ones is still the
+  // section 17.5 case (logged, default, the process starts).
+  it('refuses to start when the key decrypts none of the stored secrets', async () => {
+    const otherKey = Buffer.alloc(32, 3).toString('base64');
+    const repository = new MemoryRepository();
+    repository.values.push(
+      { key: 'bot.token', value: encryptSetting('123:abc', otherKey), isSecret: true },
+      { key: 'panel.api_token', value: encryptSetting('panel', otherKey), isSecret: true },
+    );
+    const service = new SettingsService(repository, new MemoryEventBus(), appKey);
+    await expect(service.onModuleInit()).rejects.toThrow(/RR_APP_KEY decrypts none of the 2/u);
+
+    const mixed = new MemoryRepository();
+    mixed.values.push(
+      { key: 'bot.token', value: encryptSetting('123:abc', appKey), isSecret: true },
+      { key: 'panel.api_token', value: encryptSetting('panel', otherKey), isSecret: true },
+    );
+    const started = new SettingsService(mixed, new MemoryEventBus(), appKey);
+    await started.onModuleInit();
+    expect(await started.get('bot.token')).toBe('123:abc');
   });
 
   it('validates a whole group, encrypts secrets, and publishes invalidation', async () => {

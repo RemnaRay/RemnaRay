@@ -1582,9 +1582,44 @@ worker bot` shows no `Invalid environment configuration`; if it does,
   `pnpm test` 73/74 (the known docs-link test), lint, format, typecheck,
   i18n-check (2314). VPS action: none.
 
-**Exact next:** package 3, R29 part 2 — `rr:rotate-key` (every `is_secret`
-setting and `*_enc` column in one transaction) and the API refusing to start
-when `RR_APP_KEY` decrypts none of the stored secrets. M5 stays NOT
+- **R29 Done (local) — `RR_APP_KEY` could not be rotated, and a wrong key
+  silently emptied every secret.** Cause: 17.1 p. 4's `pnpm rr:rotate-key
+--old --new` did not exist; with a different key in `.env` every secret
+  setting failed GCM authentication, was logged as «invalid» and replaced
+  by its empty default — no bot token, no panel token — while the API
+  reported itself healthy. Repair: `tools/key-rotation.ts` decrypts every
+  `is_secret` setting, `payment_providers.config_enc`,
+  `admins.totp_secret_enc` and `panels.*_enc` with the old key and
+  re-encrypts with the new one; everything is read and re-encrypted before
+  any write, inside one Prisma transaction, and a value the old key cannot
+  read aborts it naming the row, with nothing changed; both keys must be 32
+  bytes of base64 and different. `tools/rotate-key.js` runs it (`pnpm
+rr:rotate-key --old --new` as 17.1 names it, or the keys in
+  `RR_OLD_APP_KEY`/`RR_NEW_APP_KEY`); `./scripts/rr rotate-key` reads both
+  keys without echo, stops `api`/`worker`/`bot`, runs the tool in a one-off
+  `api` container with the keys in its environment only, and says to put
+  the new key in `.env` and `rr up` (`read_secret` now tolerates piped
+  input). At start the settings service stops the API when the key
+  decrypts none of the stored secrets (17.2); one unreadable value among
+  readable ones stays 17.5's case. Sessions are not signed with the key;
+  in-flight sign-in links, nonces and TOTP enrolments are, and restart.
+  `docs/install.md` has the procedure; the provider error message points
+  to it. Evidence: `key-rotation.test.ts` (all four places re-encrypted,
+  a foreign value → nothing written, bad or equal keys refused) red
+  (module missing) → green; `settings.service.test.ts` «refuses to start
+  when the key decrypts none…» red → green (a mixed store still starts);
+  `rr.test.mjs` «rotate-key stops the writers…» red → green (stop before
+  the run, keys only in the environment, an empty key refused before
+  anything stops); new `m1.rotate-key` (in `test:m1`): the built tool
+  against a migrated PostgreSQL re-encrypts a setting, a provider and a
+  TOTP secret, leaves plain settings alone, refuses a second run with the
+  retired key without changing anything, and accepts the spec's flags.
+  Checks: API 452, `pnpm test` 74/75 (the known docs-link test), lint,
+  format, typecheck, i18n-check (2314), shellcheck. VPS action: none
+  (optionally rotate the stand's key with `./scripts/rr rotate-key` after
+  the deploy; by О-20 the stand is recreated anyway).
+
+**Exact next:** package 3, P-21 — a Valkey password (О-17). M5 stays NOT
 VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
