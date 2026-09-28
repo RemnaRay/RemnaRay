@@ -555,6 +555,12 @@ function s3Project(name) {
     '#!/bin/sh\n(umask 022; printf "%s\\n" "$*" >> /argv/log)\nexec /usr/bin/mcli "$@"\n',
     { mode: 0o755 },
   );
+  // Every day is a Sunday here, so the weekly copies are taken.
+  writeFileSync(
+    join(directory, 'wrap', 'date'),
+    '#!/bin/sh\nif [ "$*" = "-u +%u" ]; then echo 7; else exec /bin/date "$@"; fi\n',
+    { mode: 0o755 },
+  );
   writeFileSync(join(directory, 'themes', 'theme.json'), '{"v":1}');
   writeFileSync(
     composeFile,
@@ -667,3 +673,60 @@ test('R111: the S3 copy never puts the keys on a command line', { timeout: 600_0
     project.cleanup();
   }
 });
+
+// R112: `tar … || true` and `upload … || log`, then `status ok`: a failed
+// archive or S3 copy never reached `.last-status`, so `backup-check` raised
+// nothing while the off-site copy did not exist. Only the dump went to S3,
+// without the themes and uploads, and the weekly dumps outlived the archive
+// (14 days) they need.
+test(
+  'R112: the files archive travels with the dump, and a failed copy is reported',
+  { timeout: 600_000 },
+  async () => {
+    docker(['build', '-f', 'deploy/backup/Dockerfile', '-t', IMAGE, '.']);
+    const project = s3Project('s3status');
+    const backups = join(project.directory, 'backups');
+    const status = () => readFileSync(join(backups, '.last-status'), 'utf8').trim().split(/\s+/u);
+    try {
+      await project.start();
+      const first = project.once();
+      assert.equal(first.status, 0, `${first.stdout}${first.stderr}`);
+      assert.equal(status()[0], 'ok');
+      const stamp = /^remnaray-(\d{8}-\d{4})\.dump$/u.exec(
+        readdirSync(backups).find((name) => /^remnaray-\d/u.test(name)) ?? '',
+      )?.[1];
+      assert.ok(stamp, readdirSync(backups).join(', '));
+      const local = readdirSync(backups);
+      for (const name of [
+        `remnaray-weekly-${stamp}.dump`,
+        `files-${stamp}.tar.gz`,
+        `files-weekly-${stamp}.tar.gz`,
+      ])
+        assert.ok(local.includes(name), `${name} missing: ${local.join(', ')}`);
+      const listing = project.s3('ls', 's3/backups/shop/').stdout;
+      assert.match(listing, new RegExp(`remnaray-${stamp}\\.dump`, 'u'), listing);
+      assert.match(listing, new RegExp(`files-${stamp}\\.tar\\.gz`, 'u'), listing);
+
+      // The S3 server goes away: the dump is kept, and the status says so.
+      project.compose('stop', 's3');
+      const second = project.once();
+      assert.notEqual(second.status, 0, `${second.stdout}${second.stderr}`);
+      assert.equal(status()[0], 'upload-failed');
+      assert.match(status()[2], /^remnaray-\d{8}-\d{4}\.dump$/u);
+
+      // The weekly archives are kept as long as the weekly dumps.
+      for (let week = 1; week <= 12; week += 1)
+        writeFileSync(
+          join(backups, `files-weekly-2025${String(week).padStart(4, '0')}-0300.tar.gz`),
+          'x',
+        );
+      project.compose('run', '--rm', '-T', 'backup', 'rotate');
+      assert.equal(
+        readdirSync(backups).filter((name) => name.startsWith('files-weekly-')).length,
+        8,
+      );
+    } finally {
+      project.cleanup();
+    }
+  },
+);

@@ -49,6 +49,7 @@ rotate() {
   prune 'remnaray-2*.dump' "$DAILY_KEEP"
   prune 'remnaray-weekly-*.dump' "$WEEKLY_KEEP"
   prune 'files-2*.tar.gz' "$DAILY_KEEP"
+  prune 'files-weekly-*.tar.gz' "$WEEKLY_KEEP"
 }
 
 prune() {
@@ -75,7 +76,7 @@ upload() {
   esac
   target="rr/$RR_BACKUP_S3_BUCKET/${RR_BACKUP_S3_PREFIX:+$RR_BACKUP_S3_PREFIX/}$(basename "$file")"
   MC_HOST_rr="$scheme://${RR_BACKUP_S3_ACCESS_KEY:-}:${RR_BACKUP_S3_SECRET_KEY:-}@${host%/}" \
-    mcli --quiet cp "$file" "$target" >/dev/null
+    mcli --quiet cp "$file" "$target" >/dev/null || return 1
   log "uploaded $(basename "$file") to $target"
 }
 
@@ -100,21 +101,41 @@ once() {
 
   # Sunday keeps a second name for the weekly retention; a hard link, so the
   # bytes are not stored twice.
+  weekly=false
   if [ "$(date -u +%u)" = '7' ]; then
+    weekly=true
     ln -f "$dump" "$BACKUP_DIR/remnaray-weekly-$stamp.dump"
     log "linked the weekly copy for $stamp"
   fi
 
-  # Section 20.5: the theme and upload directories travel with the dump.
-  # `.env` never does — the README requires keeping it separately.
+  # What went wrong after the dump: the dump stays, and `.last-status` says
+  # what else is missing, which `maintenance.backup-check` raises (R112).
+  problems=''
+
+  # Section 20.5: the theme and upload directories travel with the dump —
+  # a weekly dump with a weekly archive, or it would outlive the daily one it
+  # needs. `.env` never does: the README requires keeping it apart.
+  archive="$BACKUP_DIR/files-$stamp.tar.gz"
   if [ -d "$SOURCE_DIR" ]; then
-    tar -czf "$BACKUP_DIR/files-$stamp.tar.gz" -C "$SOURCE_DIR" . 2>/dev/null || true
-    if [ -f "$BACKUP_DIR/files-$stamp.tar.gz" ]; then private "$BACKUP_DIR/files-$stamp.tar.gz"; fi
+    if tar -czf "$archive" -C "$SOURCE_DIR" .; then
+      private "$archive"
+      if [ "$weekly" = true ]; then ln -f "$archive" "$BACKUP_DIR/files-weekly-$stamp.tar.gz"; fi
+    else
+      log 'the themes and uploads archive failed'
+      rm -f "$archive"
+      problems='files-failed'
+    fi
   fi
 
   rotate
-  upload "$dump" || log 'S3 upload failed'
-  status ok "$(basename "$dump")" "$size"
+  # The off-site copy is the dump and its archive: one without the other
+  # restores a shop without its themes and uploads.
+  if ! upload "$dump" || { [ -f "$archive" ] && ! upload "$archive"; }; then
+    log 'S3 upload failed'
+    problems="${problems:+$problems,}upload-failed"
+  fi
+  status "${problems:-ok}" "$(basename "$dump")" "$size"
+  [ -z "$problems" ]
 }
 
 # `migrate` runs as `node` (uid 1000 in `node:24-alpine`) and writes its

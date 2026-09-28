@@ -19,10 +19,20 @@ if [ -z "$dump" ] || [ ! -f "$dump" ]; then
   exit 1
 fi
 
-# `remnaray-<stamp>.dump` and `remnaray-weekly-<stamp>.dump` share the archive
-# `files-<stamp>.tar.gz`; a pre-migrate dump has none.
+# `remnaray-<stamp>.dump` goes with `files-<stamp>.tar.gz`, and a weekly dump
+# with `files-weekly-<stamp>.tar.gz`, kept as long as it is (a weekly dump
+# older than R112 has only the daily archive, while it lasts); a pre-migrate
+# dump has none.
 stamp=$(basename "$dump" .dump | sed -e 's/^remnaray-weekly-//' -e 's/^remnaray-//')
-files="$(cd "$(dirname "$dump")" && pwd)/files-$stamp.tar.gz"
+directory=$(cd "$(dirname "$dump")" && pwd)
+files="$directory/files-$stamp.tar.gz"
+case "$(basename "$dump")" in
+  remnaray-weekly-*)
+    if [ -f "$directory/files-weekly-$stamp.tar.gz" ]; then
+      files="$directory/files-weekly-$stamp.tar.gz"
+    fi
+    ;;
+esac
 
 if [ "${RR_RESTORE_ASSUME_YES:-}" != 'true' ]; then
   printf 'This replaces the contents of the current database with %s. Continue? [y/N] ' "$dump"

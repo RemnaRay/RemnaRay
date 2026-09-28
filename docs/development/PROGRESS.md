@@ -1362,9 +1362,35 @@ others`) → green. Checks: `pnpm test` 71/72 (the known docs-link test),
   docs-link test), lint, format, typecheck, i18n-check (2312), shellcheck
   clean. VPS action: none (S3 is not configured on the stand).
 
-**Exact next:** package 3, R112 — an S3 or archive failure shows in
-`.last-status`, the files archive goes to S3 and has a weekly copy. M5 stays
-NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R112 Done (local) — a failed S3 copy or files archive still reported
+  `ok`, S3 got only the dump, and weekly dumps outlived their archive.**
+  Cause: `once` ran `tar … 2>/dev/null || true` and `upload "$dump" || log`,
+  then `status ok`, so `maintenance.backup-check` saw `ok` while the
+  off-site copy did not exist; only the dump was uploaded, never
+  `files-*.tar.gz`; the archive was pruned after 14 days while weekly
+  dumps live 8 weeks, so `restore.sh` found no files for them. `upload`
+  also ended with `log`, so a failing `mcli cp` returned 0. Repair: a
+  failed archive (removed, `files-failed`) or upload (`upload-failed`) is
+  written to `.last-status` as the state — any state but `ok` already
+  raises `backup.failed` with it as the detail — and `once` exits
+  non-zero; the dump stays either way. The archive is uploaded with the
+  dump; Sundays hard-link `files-weekly-<stamp>.tar.gz`, pruned with the 8
+  weeklies; `restore.sh` takes it for a weekly dump (the daily one for a
+  weekly dump taken before this change). `docs/backup.md` says so.
+  Evidence: `m5.backup` «R112: the files archive travels with the dump,
+  and a failed copy is reported» (SeaweedFS S3; a `date` wrapper makes the
+  run a Sunday) red (`files-weekly-… missing`) → green (both files in the
+  bucket; with S3 stopped the run fails and the state is `upload-failed`;
+  12 weekly archives rotate to 8); `rr.test.mjs` — a weekly dump restores
+  its weekly archive, red on the old `restore.sh` → green; AC-202, 26.4 R3
+  and R111 still green. Checks: `pnpm test` 71/72 (the known docs-link
+  test), lint, format, typecheck, i18n-check (2312), shellcheck clean.
+  VPS action: none.
+
+**Exact next:** package 3, R58 + P-20 — host/CIDR validation in the
+settings schema and on import; the proxy rendered into a temporary directory
+and switched only after `nginx -t`/`caddy validate`, with a last-known-good.
+M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -6,13 +6,14 @@ minutes**.
 
 ## What is kept
 
-| File                                               | What                                            |
-| -------------------------------------------------- | ----------------------------------------------- |
-| `remnaray-<yyyymmdd-HHMM>.dump`                    | `pg_dump -Fc -Z 6` of the whole database        |
-| `remnaray-weekly-<stamp>.dump`                     | a hard link made on Sundays, for the 8 weeklies |
-| `files-<stamp>.tar.gz`                             | `themes/` and `uploads/`                        |
-| `.last-status`                                     | one line: state, time, file, size               |
-| `pre-migrate/pre-migrate-<migration>-<stamp>.dump` | written by `migrate`; see below                 |
+| File                                               | What                                             |
+| -------------------------------------------------- | ------------------------------------------------ |
+| `remnaray-<yyyymmdd-HHMM>.dump`                    | `pg_dump -Fc -Z 6` of the whole database         |
+| `remnaray-weekly-<stamp>.dump`                     | a hard link made on Sundays, for the 8 weeklies  |
+| `files-<stamp>.tar.gz`                             | `themes/` and `uploads/`                         |
+| `files-weekly-<stamp>.tar.gz`                      | the Sunday archive, kept as long as the weeklies |
+| `.last-status`                                     | one line: state, time, file, size                |
+| `pre-migrate/pre-migrate-<migration>-<stamp>.dump` | written by `migrate`; see below                  |
 
 The dumps and archives hold everything the database and the uploads do, so
 they are written `0600` and handed to the owner of `backups/` — whoever
@@ -41,13 +42,17 @@ and `… rotate` applies the retention without taking one.
 ## S3
 
 Set `RR_BACKUP_S3_ENDPOINT` and `RR_BACKUP_S3_BUCKET` — and the keys, and
-optionally `RR_BACKUP_S3_PREFIX` — and each dump is copied with the MinIO
-client after it is written. The keys reach the client through its environment
-(`MC_HOST_rr`), never a command line another user of the host could see in
-`ps`; an endpoint without a scheme is taken as `https://`. With the variables unset the step is skipped
-silently; the local copy is the same either way. A failed upload does not fail
-the backup, because a dump on disk is better than no dump at all, and it is
-logged.
+optionally `RR_BACKUP_S3_PREFIX` — and each dump and its themes and uploads
+archive are copied with the MinIO client after they are written. The keys
+reach the client through its environment (`MC_HOST_rr`), never a command line
+another user of the host could see in `ps`; an endpoint without a scheme is
+taken as `https://`. With the variables unset the step is skipped silently;
+the local copy is the same either way.
+
+A failed upload keeps the local dump, because a dump on disk is better than no
+dump at all, but the run is not `ok`: `.last-status` says `upload-failed` (or
+`files-failed` when the archive could not be written), and
+`maintenance.backup-check` raises `backup.failed` with that state.
 
 ## Restore
 

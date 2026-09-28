@@ -358,6 +358,18 @@ cat > /dev/null
     const daily = restore('remnaray-20260928-0300.dump');
     assert.equal(daily.status, 0, daily.stderr);
     assert.ok(startsTheStack(daily.calls), daily.calls.join('\n'));
+
+    // R112: a weekly dump takes the weekly archive, which lives as long as it.
+    writeFileSync(join(root, 'files-weekly-20260927-0300.tar.gz'), 'archive');
+    writeFileSync(join(root, 'files-20260927-0300.tar.gz'), 'archive');
+    const weekly = restore('remnaray-weekly-20260927-0300.dump');
+    assert.equal(weekly.status, 0, weekly.stderr);
+    assert.ok(
+      weekly.calls.some((call) =>
+        call.includes('files-weekly-20260927-0300.tar.gz:/restore/files.tar.gz'),
+      ),
+      weekly.calls.join('\n'),
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
