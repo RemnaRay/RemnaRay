@@ -54,6 +54,12 @@ For builds without the module, or by preference. `RR_TLS_MODE=certbot` adds the
 3. The certificate now exists, so the full configuration renders and
    `proxy-reloader` applies it.
 
+Changing `domain.main` later does not take the site back to the bootstrap:
+while the new domain has no certificate, the full configuration keeps serving
+the domain that has one (the one in `.env` if it does), and `proxy-config`
+logs `no certificate for <new> yet`. Point the new domain's DNS at the server
+and run `./rr tls:issue`; the site moves to it once the certificate exists.
+
 Renewal: the `certbot` container runs `certbot renew` every twelve hours. The
 Certbot hook updates a root-owned certificate list in the separate
 `certbot-state` volume and touches `/run/remnaray/certbot/.renewed`.

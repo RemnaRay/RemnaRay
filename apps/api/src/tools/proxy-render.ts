@@ -53,14 +53,38 @@ export type RenderedFile = { name: string; content: string };
  * nginx reads the certificate as its root master; this unprivileged renderer
  * only needs the deployment marker shared with the Certbot service.
  */
+export function certbotCertificates(stateDirectory = '/run/remnaray/certbot'): string[] {
+  const file = resolve(stateDirectory, 'certificates.json');
+  if (!existsSync(file)) return [];
+  const domains: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  return Array.isArray(domains)
+    ? domains.filter((domain): domain is string => typeof domain === 'string')
+    : [];
+}
+
 export function certbotCertificatePresent(
   domain: string,
   stateDirectory = '/run/remnaray/certbot',
 ): boolean {
-  const file = resolve(stateDirectory, 'certificates.json');
-  if (!existsSync(file)) return false;
-  const domains: unknown = JSON.parse(readFileSync(file, 'utf8'));
-  return Array.isArray(domains) && domains.includes(domain);
+  return certbotCertificates(stateDirectory).includes(domain);
+}
+
+/**
+ * R57: which domain the certbot site serves. A new `domain.main` has no
+ * certificate until `rr tls:issue`; rendering the HTTP-only bootstrap for it
+ * would take the working site (TLS, webhooks, the console) down, so a domain
+ * that has one — the one `.env` names, else the first by name — keeps being
+ * served meanwhile (the worker's `tls-check` reports the new one). Only with
+ * no certificate at all is the bootstrap rendered.
+ */
+export function certbotSite(
+  domain: string,
+  certified: string[],
+  preferred?: string,
+): { domain: string; certificatePresent: boolean } {
+  if (certified.includes(domain)) return { domain, certificatePresent: true };
+  const kept = preferred && certified.includes(preferred) ? preferred : [...certified].sort().at(0);
+  return kept ? { domain: kept, certificatePresent: true } : { domain, certificatePresent: false };
 }
 
 /** Section 21.2 replaces `{{NAME}}` placeholders; nothing else is interpreted. */

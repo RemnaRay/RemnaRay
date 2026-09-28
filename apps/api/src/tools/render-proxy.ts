@@ -21,7 +21,8 @@ import {
   PROXY_SETTING_KEYS,
   TLS_MODES,
   applyRender,
-  certbotCertificatePresent,
+  certbotCertificates,
+  certbotSite,
   customFiles,
   renderProfile,
   sourcesFrom,
@@ -106,12 +107,21 @@ async function main(): Promise<void> {
 
   const render = async (): Promise<RenderOutcome> => {
     const rows = await db.setting.findMany({ where: { key: { in: PROXY_SETTING_KEYS } } });
-    const sources = sourcesFrom(rows);
+    const wanted = sourcesFrom(rows);
+    const site =
+      tlsMode === 'certbot'
+        ? certbotSite(wanted.domain, certbotCertificates(), process.env.RR_DOMAIN)
+        : { domain: wanted.domain, certificatePresent: true };
+    if (site.domain !== wanted.domain)
+      process.stdout.write(
+        `no certificate for ${wanted.domain} yet; still serving ${site.domain} — run ./scripts/rr tls:issue\n`,
+      );
+    const sources = { ...wanted, domain: site.domain };
     const files = [
       ...renderProfile(directory, sources, {
         profile: profile as ProxyProfile,
         tlsMode: tlsMode as TlsMode,
-        certificatePresent: certbotCertificatePresent(sources.domain),
+        certificatePresent: site.certificatePresent,
       }),
       ...customFiles(directory, profile as ProxyProfile),
     ];

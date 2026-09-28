@@ -1491,9 +1491,31 @@ issue-token` reached the API, guarded only by `X-Internal-Token`, the
   docs-link test), lint, format, typecheck, i18n-check (2312). VPS action:
   none (the stand runs `acme`).
 
-**Exact next:** package 3, R57 — a domain change in certbot mode keeps
-serving the certified domain instead of the bootstrap; then R118. M5 stays
-NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R57 Done (local) — changing the domain in certbot mode took the working
+  site back to the HTTP-only bootstrap.** Cause: on `rr:settings.changed`
+  the renderer asked `certbotCertificatePresent(newDomain)`, which was false
+  until someone ran `rr tls:issue`, so it rendered the bootstrap: no `:443`,
+  no provider or Telegram webhooks over HTTPS, the console over plain HTTP
+  (with R56's gaps); `nginx -t` passed, so it was applied. Repair:
+  `certbotSite(domain, certified, RR_DOMAIN)` — the configured domain if it
+  has a certificate; otherwise a domain that has one (the one in `.env`,
+  else the first by name) keeps being served by the full configuration;
+  only with no certificate at all is the bootstrap rendered. The renderer
+  logs `no certificate for <new> yet; still serving <old> — run
+./scripts/rr tls:issue`; `docs/tls.md` says so. `rr tls:issue` issuing
+  for the new domain is R118 (next). Not alerted: `maintenance.tls-check`
+  checks `RR_DOMAIN`, not `domain.main`, and reads the certificate without
+  checking its name — recorded in the queue (package 12) rather than
+  inventing an alert type here. Evidence: `proxy-render.test.ts` «keeps
+  serving a certified domain while the new one has no certificate» red
+  (`certbotSite is not a function`) → green; `m5.proxy` M5-002 and M5-004
+  green. Checks: API tools 57, `pnpm test` 71/72 (the known docs-link
+  test), lint, format, typecheck, i18n-check (2312). VPS action: none (the
+  stand runs `acme`).
+
+**Exact next:** package 3, R118 — `rr tls:issue` requests one certificate
+for the configured domain and its `extra_domains`. M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

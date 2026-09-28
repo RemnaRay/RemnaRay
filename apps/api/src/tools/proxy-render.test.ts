@@ -7,6 +7,7 @@ import {
   applyRender,
   caddyHasRateLimit,
   certbotCertificatePresent,
+  certbotSite,
   customFiles,
   fill,
   renderProfile,
@@ -139,6 +140,32 @@ describe('proxy template rendering (section 21.2)', () => {
   // the API (only its token stood in the way) and `/api/admin/*` had neither
   // the console allowlist nor its limits, over plain HTTP, from `rr up` until
   // `rr tls:issue`. It now carries the shop's own locations.
+  // R57: a new `domain.main` without a certificate yet sent the working site
+  // back to the HTTP-only bootstrap — no :443, no webhooks, no console —
+  // until someone ran `rr tls:issue`. A domain that has one keeps being
+  // served; only a deployment with no certificate at all gets the bootstrap.
+  it('keeps serving a certified domain while the new one has no certificate', () => {
+    expect(certbotSite('new.example.com', ['new.example.com', 'old.example.com'])).toEqual({
+      domain: 'new.example.com',
+      certificatePresent: true,
+    });
+    expect(certbotSite('new.example.com', ['old.example.com'])).toEqual({
+      domain: 'old.example.com',
+      certificatePresent: true,
+    });
+    // The one `.env` names first, then the first by name.
+    expect(
+      certbotSite('new.example.com', ['b.example.com', 'a.example.com'], 'b.example.com'),
+    ).toEqual({ domain: 'b.example.com', certificatePresent: true });
+    expect(
+      certbotSite('new.example.com', ['b.example.com', 'a.example.com'], 'gone.example.com'),
+    ).toEqual({ domain: 'a.example.com', certificatePresent: true });
+    expect(certbotSite('new.example.com', [])).toEqual({
+      domain: 'new.example.com',
+      certificatePresent: false,
+    });
+  });
+
   it('protects the bootstrap as the shop is protected', () => {
     const allowlist = { ...sources, adminAllowlist: ['203.0.113.0/24'] };
     const raw = (certificatePresent: boolean) =>
