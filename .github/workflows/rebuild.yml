@@ -45,6 +45,9 @@ jobs:
           - image: backup
             file: deploy/backup/Dockerfile
     steps:
+      # The highest published final version, not GitHub's "latest release":
+      # that is the one published last, and a patch to the previous minor
+      # (24.5) would keep the current line from being rebuilt (R114).
       - name: Find the latest release
         id: release
         uses: actions/github-script@v7
@@ -52,11 +55,19 @@ jobs:
           script: |
             const asked = context.payload.inputs?.version;
             if (asked) return asked;
-            const { data } = await github.rest.repos.getLatestRelease({
+            const releases = await github.paginate(github.rest.repos.listReleases, {
               owner: context.repo.owner,
               repo: context.repo.repo,
+              per_page: 100,
             });
-            return data.tag_name.replace(/^v/u, '');
+            const versions = releases
+              .filter((release) => !release.draft && !release.prerelease)
+              .map((release) => /^v(\d+)\.(\d+)\.(\d+)$/u.exec(release.tag_name))
+              .filter(Boolean)
+              .map((match) => match.slice(1, 4).map(Number));
+            if (versions.length === 0) throw new Error('No published final release');
+            versions.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+            return versions.at(-1).join('.');
           result-encoding: string
 
       # Typed by hand or read from the latest release, it becomes a checkout

@@ -1127,8 +1127,27 @@ compose config` resolves it — «every long-running core service restarts…»
   64/65 (the known docs-link test), lint, format, typecheck, i18n-check
   (2312). VPS action: none beyond the redeploy.
 
-**Exact next:** package 3, P-5 is done; next R114, R115 (+ trivy in
-`release.yml`), R116, R117 — the release pipeline. M5 stays NOT VERIFIED;
+- **R114 Done (local) — the weekly rebuild refreshed a patch to the previous
+  minor instead of the current line.** Cause: `rebuild.yml` took
+  `getLatestRelease`, and `release.yml` published every release without
+  `make_latest`, which GitHub defaults to `true` for a new release — so a
+  security patch to the previous minor (24.5) became «latest» and the
+  Monday rebuild kept rebuilding it while `1`/`1.2` aged on old bases.
+  Repair: the rebuild pages through `listReleases` and takes the highest
+  final version by number (drafts and candidates skipped, a typed version
+  still wins); `floating-tags.sh` prints `latest=` (the newest final
+  release of all) and the release passes it as `make_latest`. Contracts
+  checked: `make_latest` accepts `true`/`false`/`legacy` and defaults to
+  `true` (GitHub REST «Create a release»; softprops/action-gh-release via
+  Context7); `listReleases` pages at most 100. Evidence: `tooling.test.mjs`
+  «the weekly rebuild takes the highest published final release» (the
+  step's script run with a fake `github`) red (`1.1.6`) → green (`1.2.10`);
+  «a release is marked latest only when…» red → green. Checks: `pnpm test`
+  66/67 (the known docs-link test), lint, format, typecheck, i18n-check
+  (2312). VPS action: none.
+
+**Exact next:** package 3, R115 (+ trivy in `release.yml`) — floating tags
+move only after every image is built and scanned. M5 stays NOT VERIFIED;
 TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26

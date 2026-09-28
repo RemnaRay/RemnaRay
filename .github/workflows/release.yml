@@ -44,6 +44,7 @@ jobs:
             file: deploy/backup/Dockerfile
     outputs:
       prerelease: ${{ steps.version.outputs.prerelease }}
+      latest: ${{ steps.floating.outputs.latest }}
     steps:
       # All history, for the release tags `floating-tags.sh` compares with.
       - name: Checkout
@@ -176,3 +177,6 @@ jobs:
           body_path: notes.md
           prerelease: ${{ needs.images.outputs.prerelease == 'true' }}
           generate_release_notes: true
+          # GitHub makes every new release the latest by default, so a patch
+          # to the previous minor would take that place from the current line.
+          make_latest: ${{ needs.images.outputs.latest }}

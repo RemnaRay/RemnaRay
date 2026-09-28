@@ -499,15 +499,15 @@ test('the floating tags move only for the newest final release of their line', a
     for (const tag of ['v1.1.5', 'v1.2.3', 'v1.2.10', 'v1.3.0-rc.1', 'v2.0.0']) git('tag', tag);
 
     // The newest of both lines, compared as versions rather than as text.
-    assert.equal(floating('1.2.10'), 'minor=true\nmajor=true\n');
+    assert.equal(floating('1.2.10'), 'minor=true\nmajor=true\nlatest=false\n');
     // A rebuild of an older patch of the current minor moves neither.
-    assert.equal(floating('1.2.3'), 'minor=false\nmajor=false\n');
+    assert.equal(floating('1.2.3'), 'minor=false\nmajor=false\nlatest=false\n');
     // A security patch to the previous minor takes `1.1`, not `1`.
-    assert.equal(floating('1.1.6'), 'minor=true\nmajor=false\n');
+    assert.equal(floating('1.1.6'), 'minor=true\nmajor=false\nlatest=false\n');
     // A candidate moves neither, even as the highest version.
-    assert.equal(floating('1.3.0-rc.1'), 'minor=false\nmajor=false\n');
-    assert.equal(floating('1.10.0'), 'minor=true\nmajor=true\n');
-    assert.equal(floating('2.0.1'), 'minor=true\nmajor=true\n');
+    assert.equal(floating('1.3.0-rc.1'), 'minor=false\nmajor=false\nlatest=false\n');
+    assert.equal(floating('1.10.0'), 'minor=true\nmajor=true\nlatest=false\n');
+    assert.equal(floating('2.0.1'), 'minor=true\nmajor=true\nlatest=true\n');
   } finally {
     await rm(repository, { recursive: true, force: true });
   }
@@ -820,4 +820,95 @@ test('the postgres healthcheck asks over TCP', async () => {
   const { services } = await resolvedCompose();
   const check = services.postgres.healthcheck.test.join(' ');
   assert.match(check, /pg_isready -h 127\.0\.0\.1 /u);
+});
+
+// A workflow step's `actions/github-script` body, run with the given `github`
+// and `context`; resolves to what the step returns.
+function runGithubScript(workflow, name, github, context) {
+  const script = new RegExp(
+    `- name: ${name}\\n(?: {8}.*\\n)*? {10}script: \\|\\n((?: {12}.*\\n|\\n)+)`,
+    'u',
+  )
+    .exec(workflow)?.[1]
+    .replace(/^ {12}/gmu, '');
+  assert.ok(script, name);
+  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+  return new AsyncFunction('github', 'context', script)(github, context);
+}
+
+// R114: GitHub's "latest release" is the one published last by default, so a
+// security patch to the previous minor (24.5) became it, and the Monday
+// rebuild kept refreshing that patch while the current line aged on its old
+// bases. The rebuild takes the highest published final version; the release
+// marks itself latest only when it is that version.
+test('the weekly rebuild takes the highest published final release', async () => {
+  const rebuild = await readFile('.github/workflows/rebuild.yml', 'utf8');
+  const releases = [
+    { tag_name: 'v1.1.6', draft: false, prerelease: false },
+    { tag_name: 'v1.3.0-rc.1', draft: false, prerelease: true },
+    { tag_name: 'v1.4.0', draft: true, prerelease: false },
+    { tag_name: 'v1.2.10', draft: false, prerelease: false },
+    { tag_name: 'v1.2.9', draft: false, prerelease: false },
+  ];
+  const github = {
+    rest: {
+      repos: {
+        listReleases: () => assert.fail('listReleases is called through paginate'),
+        getLatestRelease: async () => ({ data: releases[0] }),
+      },
+    },
+    paginate: async (method, parameters) => {
+      assert.equal(method, github.rest.repos.listReleases);
+      assert.deepEqual(parameters, { owner: 'RemnaRay', repo: 'RemnaRay', per_page: 100 });
+      return releases;
+    },
+  };
+  const context = { repo: { owner: 'RemnaRay', repo: 'RemnaRay' }, payload: {} };
+  assert.equal(
+    await runGithubScript(rebuild, 'Find the latest release', github, context),
+    '1.2.10',
+  );
+  // A version typed by hand still wins.
+  assert.equal(
+    await runGithubScript(rebuild, 'Find the latest release', github, {
+      ...context,
+      payload: { inputs: { version: '1.1.6' } },
+    }),
+    '1.1.6',
+  );
+});
+
+test('a release is marked latest only when it is the highest final version', async () => {
+  const release = await readFile('.github/workflows/release.yml', 'utf8');
+  assert.match(
+    release,
+    /uses: softprops\/action-gh-release@\S+(?: # \S+)?\n {8}with:\n(?: {10}.*\n)* {10}make_latest: \$\{\{ needs\.images\.outputs\.latest \}\}\n/u,
+  );
+  assert.match(release, /latest: \$\{\{ steps\.floating\.outputs\.latest \}\}/u);
+
+  const repository = await mkdtemp(join(tmpdir(), 'rr-latest-'));
+  const git = (...args) =>
+    execFileSync('git', ['-c', 'user.email=ci@example.test', '-c', 'user.name=ci', ...args], {
+      cwd: repository,
+      encoding: 'utf8',
+    });
+  const latest = (version) =>
+    /^latest=(\w+)$/mu.exec(
+      execFileSync('sh', [resolve('scripts/floating-tags.sh'), version], {
+        cwd: repository,
+        encoding: 'utf8',
+      }),
+    )?.[1];
+  try {
+    git('init', '-q');
+    git('commit', '-q', '--allow-empty', '-m', 'release');
+    for (const tag of ['v1.1.5', 'v1.2.9', 'v1.2.10', 'v1.3.0-rc.1']) git('tag', tag);
+    assert.equal(latest('1.2.11'), 'true');
+    assert.equal(latest('1.1.6'), 'false');
+    assert.equal(latest('1.2.3'), 'false');
+    assert.equal(latest('1.3.0-rc.1'), 'false');
+    assert.equal(latest('2.0.0'), 'true');
+  } finally {
+    await rm(repository, { recursive: true, force: true });
+  }
 });
