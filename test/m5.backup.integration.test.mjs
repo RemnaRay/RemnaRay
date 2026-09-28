@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -69,6 +69,17 @@ test(
       assert.equal(dumps.length, 1, `expected one dump, got ${dumps.join(', ')}`);
       const dump = join(directory, dumps[0]);
       assert.ok(readFileSync(dump).length > 1000, 'the dump must not be empty');
+
+      // R110: the dump holds every secret the database has (password hashes,
+      // TOTP secrets, ciphertexts); it was 0644 root, readable by every user
+      // of the host. Now 0600 and the backups directory owner's — whoever
+      // restores from the host can read it, nobody else — in a directory
+      // others may only pass through to the status file.
+      const mode = (path) => statSync(path).mode & 0o777;
+      assert.equal(mode(dump), 0o600, 'the dump is readable by others');
+      assert.equal(statSync(dump).uid, statSync(directory).uid);
+      assert.equal(mode(directory), 0o711);
+      assert.equal(mode(join(directory, '.last-status')), 0o644);
 
       const status = readFileSync(join(directory, '.last-status'), 'utf8').trim().split(/\s+/u);
       assert.equal(status[0], 'ok');
@@ -249,6 +260,11 @@ volumes:
       assert.ok(dump, 'no dump was written');
       const stamp = dump.replace(/^remnaray-/u, '').replace(/\.dump$/u, '');
       assert.ok(readdirSync(join(directory, 'backups')).includes(`files-${stamp}.tar.gz`));
+      // R110: the archive of themes and uploads is private too.
+      assert.equal(
+        statSync(join(directory, 'backups', `files-${stamp}.tar.gz`)).mode & 0o777,
+        0o600,
+      );
 
       // R2: what happens after the backup.
       sql("INSERT INTO marks VALUES ('after')");

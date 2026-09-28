@@ -1324,9 +1324,26 @@ server at "127.0.0.1", port 5432 failed`) → green (the dump holds the
   API 438, `pnpm test` 71/72 (the known docs-link test), lint, format,
   typecheck, i18n-check (2312). VPS action: none.
 
-**Exact next:** package 3, R110, R111, R112 — dump permissions, S3 keys out
-of argv, upload and archive status. M5 stays NOT VERIFIED; TASK-M5-004 is
-unchanged.
+- **R110 Done (local) — database dumps and file archives were readable by
+  every user of the host.** Cause: the `backup` container runs as root with
+  umask 022, so `pg_dump --file` and `tar -czf` wrote `0644` files into the
+  bind-mounted `./backups`: password hashes, TOTP secrets and setting
+  ciphertexts to any local user (and to the worker's read-only mount).
+  Repair: `backup-entrypoint.sh` runs with `umask 077`; each dump and
+  archive is handed to the owner of `backups/` and made `0600` (the operator
+  who cloned the repository can still restore without root; the weekly hard
+  link shares the inode); the directory is `0711`, so the worker (uid 1000)
+  still reaches `.last-status`, now written `0644` explicitly, without
+  listing anything. `docs/backup.md` says so. Evidence: `m5.backup` AC-202
+  (dump `0600`, owned by the directory's owner, directory `0711`, status
+  `0644`) and 26.4 R3 (archive `0600`) red (`the dump is readable by
+others`) → green. Checks: `pnpm test` 71/72 (the known docs-link test),
+  lint, format, typecheck, i18n-check (2312), shellcheck (warnings) clean.
+  VPS action: `chmod 600 /opt/test/backups/*.dump
+/opt/test/backups/*.tar.gz` for the files written before the deploy.
+
+**Exact next:** package 3, R111 — S3 keys out of `mcli` argv. M5 stays NOT
+VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -9,6 +9,11 @@
 #   run      install the crontab and stay in the foreground (the default)
 set -eu
 
+# R110: a dump holds every secret the database has. What this script writes
+# is its owner's alone; `private` hands it to the owner of the backups
+# directory, so whoever restores from the host can read it, and nobody else.
+umask 077
+
 BACKUP_DIR=${RR_BACKUP_DIR:-/backups}
 SOURCE_DIR=${RR_BACKUP_SOURCE_DIR:-/src}
 DAILY_KEEP=${RR_BACKUP_DAILY_KEEP:-14}
@@ -22,6 +27,19 @@ status() {
   # the file it produced and its size in bytes.
   printf '%s %s %s %s\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:--}" "${3:-0}" \
     > "$STATUS_FILE"
+  # The worker (uid 1000) reads it; it names a file, it holds no secret.
+  chmod 644 "$STATUS_FILE"
+}
+
+# Others may pass through the directory to `.last-status`, not list it.
+private_dir() {
+  mkdir -p "$BACKUP_DIR"
+  chmod 711 "$BACKUP_DIR"
+}
+
+private() {
+  chown "$(stat -c %u:%g "$BACKUP_DIR")" "$@"
+  chmod 600 "$@"
 }
 
 # Keeps the newest $DAILY_KEEP dumps and the newest $WEEKLY_KEEP Sunday ones.
@@ -57,7 +75,7 @@ upload() {
 }
 
 once() {
-  mkdir -p "$BACKUP_DIR"
+  private_dir
   stamp=$(date -u +%Y%m%d-%H%M)
   dump="$BACKUP_DIR/remnaray-$stamp.dump"
 
@@ -71,6 +89,7 @@ once() {
     status failed
     return 1
   fi
+  private "$dump"
   size=$(wc -c < "$dump" | tr -d ' ')
   log "wrote $(basename "$dump") ($size bytes)"
 
@@ -85,6 +104,7 @@ once() {
   # `.env` never does — the README requires keeping it separately.
   if [ -d "$SOURCE_DIR" ]; then
     tar -czf "$BACKUP_DIR/files-$stamp.tar.gz" -C "$SOURCE_DIR" . 2>/dev/null || true
+    if [ -f "$BACKUP_DIR/files-$stamp.tar.gz" ]; then private "$BACKUP_DIR/files-$stamp.tar.gz"; fi
   fi
 
   rotate
@@ -105,7 +125,8 @@ case "${1:-run}" in
   once) once ;;
   rotate) rotate ;;
   run)
-    mkdir -p "$BACKUP_DIR" /etc/crontabs
+    private_dir
+    mkdir -p /etc/crontabs
     prepare
     echo "0 3 * * * /scripts/backup-entrypoint.sh once >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
     log 'scheduled the daily dump at 03:00 UTC'

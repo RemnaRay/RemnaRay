@@ -14,6 +14,12 @@ minutes**.
 | `.last-status`                                     | one line: state, time, file, size               |
 | `pre-migrate/pre-migrate-<migration>-<stamp>.dump` | written by `migrate`; see below                 |
 
+The dumps and archives hold everything the database and the uploads do, so
+they are written `0600` and handed to the owner of `backups/` — whoever
+restores from the host reads them, no other user of the host does. The
+directory is `0711`: the worker reaches `.last-status` (`0644`) through it
+without listing it.
+
 `.env` is never copied. It holds `RR_APP_KEY`, and a backup that carries both
 the ciphertext and the key protects nothing — the README asks you to keep it
 somewhere else.
