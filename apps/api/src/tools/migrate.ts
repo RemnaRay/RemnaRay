@@ -55,9 +55,19 @@ function prismaCli(): string {
   return existsSync(local) ? local : 'prisma';
 }
 
-function preMigrateBackup(version: string): void {
+/**
+ * The dump is named after the schema it holds: the last migration already
+ * applied, which is the version the upgrade leaves. `RR_VERSION` names where
+ * it goes, and on the `1` channel every upgrade wrote the same file (R59).
+ */
+export function preMigrateDumpName(applied: string[]): string {
+  const outgoing = [...applied].sort().at(-1) ?? 'empty';
+  return `pre-migrate-${outgoing}.dump`;
+}
+
+function preMigrateBackup(name: string): void {
   mkdirSync(BACKUP_DIRECTORY, { recursive: true });
-  const target = resolve(BACKUP_DIRECTORY, `pre-migrate-${version}.dump`);
+  const target = resolve(BACKUP_DIRECTORY, name);
   process.stdout.write(`migrate: taking a pre-migrate dump into ${target}\n`);
   run(
     'pg_dump',
@@ -109,7 +119,7 @@ async function main(): Promise<void> {
     process.env.RR_AUTO_PREMIGRATE_BACKUP !== 'false' &&
     needsPreMigrateBackup(MIGRATIONS_DIRECTORY, pending)
   )
-    preMigrateBackup(process.env.RR_VERSION ?? 'latest');
+    preMigrateBackup(preMigrateDumpName(applied));
 
   // `prisma.config.ts` reads DATABASE_URL, which compose no longer assembles.
   const url = resolveDatabaseUrl();

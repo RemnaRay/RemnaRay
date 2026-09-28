@@ -82,6 +82,18 @@ else
   echo "  no $(basename "$files") next to the dump; themes and uploads are left as they are"
 fi
 
+# A pre-migrate dump holds the schema of the version the upgrade left, and
+# `.env` may still name the new one, whose `migrate` would apply the same
+# irreversible migration again at once (R59). The owner picks the version.
+case "$(basename "$dump")" in
+  pre-migrate-*)
+    echo '5/5 not starting the stack: this dump is from before an upgrade.'
+    echo 'Set RR_VERSION in .env to the version you are going back to, then run:'
+    echo '  ./scripts/rr up'
+    exit 0
+    ;;
+esac
+
 echo '5/5 starting the stack'
 docker compose -f "$compose_file" --profile "$profile" up -d
 echo 'Restored. Check /admin/system and the bot before announcing it.'

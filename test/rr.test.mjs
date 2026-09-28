@@ -28,6 +28,7 @@ function run(command, values = {}, failure = '', options = {}) {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.RR_TEST_LOG, JSON.stringify(args) + '\\n');
+fs.appendFileSync(process.env.RR_TEST_LOG + '.env', JSON.stringify({ RR_VERSION: process.env.RR_VERSION, RR_REGISTRY: process.env.RR_REGISTRY }) + '\\n');
 if (process.env.RR_TEST_FAILURE && args.includes(process.env.RR_TEST_FAILURE)) process.exit(1);
 if (args[0] === 'ps' && process.env.RR_TEST_STALE_ID) console.log(process.env.RR_TEST_STALE_ID);
 if (args.includes('config') && args.includes('--services')) console.log('proxy-caddy\\nproxy-nginx\\nedge\\ncertbot\\nproxy-config\\nproxy-reloader');
@@ -67,12 +68,17 @@ process.stdout.write('ok');
       },
     });
     let calls = [];
+    let environments = [];
     try {
       calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n').map(JSON.parse);
+      environments = readFileSync(join(root, 'calls.env'), 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
     } catch {
       // Validation can fail before Docker is invoked.
     }
-    return { ...result, calls };
+    return { ...result, calls, environments };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -281,4 +287,78 @@ test('the shell recovery ends the admin`s sessions and lifts password locks', ()
   assert.match(resetPassword, /endAdminSessions\(redis, target\.id\)/u);
   assert.match(resetPassword, /clearPasswordFailures\(redis, target\.email\)/u);
   assert.match(resetTotp, /endAdminSessions\(redis, target\.id\)/u);
+});
+
+// R59: `docs/upgrade.md` rolls back with `RR_VERSION=1.2.2 ./scripts/rr up`,
+// but `rr` exported every `RR_VERSION` of `.env` over the environment — the
+// reverse of compose's own precedence — so with `RR_VERSION=1` in `.env`
+// the "rollback" started the newest release again.
+test('an RR_VERSION or RR_REGISTRY given in the environment wins over .env', () => {
+  const pinned = run(['config'], { RR_VERSION: '1', RR_REGISTRY: 'ghcr.io/remnaray' }, '', {
+    RR_VERSION: '1.2.2',
+    RR_REGISTRY: 'registry.example.test/mirror',
+  });
+  assert.equal(pinned.status, 0, pinned.stderr);
+  assert.ok(pinned.environments.length > 0);
+  for (const environment of pinned.environments)
+    assert.deepEqual(environment, {
+      RR_VERSION: '1.2.2',
+      RR_REGISTRY: 'registry.example.test/mirror',
+    });
+
+  // Without one, `.env` still decides.
+  const plain = run(['config'], { RR_VERSION: '1', RR_REGISTRY: 'ghcr.io/remnaray' });
+  assert.equal(plain.status, 0, plain.stderr);
+  for (const entry of plain.environments)
+    assert.deepEqual(entry, { RR_VERSION: '1', RR_REGISTRY: 'ghcr.io/remnaray' });
+});
+
+// R59: a pre-migrate dump holds the schema of the version the upgrade left.
+// `restore.sh` then started the stack on the version `.env` names — the new
+// one — whose `migrate` applied the same irreversible migration again at
+// once. After such a dump it stops with PostgreSQL alone and says what to do.
+test('restore.sh leaves the stack stopped after a pre-migrate dump', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rr-restore-'));
+  try {
+    writeFileSync(
+      join(root, 'docker'),
+      `#!/bin/sh
+echo "$*" >> "${join(root, 'calls')}"
+cat > /dev/null
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(root, 'compose.yaml'), 'services: {}\n');
+    const restore = (name) => {
+      writeFileSync(join(root, name), 'dump');
+      rmSync(join(root, 'calls'), { force: true });
+      const result = spawnSync('sh', [resolve('deploy/backup/restore.sh'), join(root, name)], {
+        cwd: root,
+        encoding: 'utf8',
+        input: '',
+        timeout: 10000,
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          COMPOSE_FILE: join(root, 'compose.yaml'),
+          RR_RESTORE_ASSUME_YES: 'true',
+        },
+      });
+      const calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n');
+      return { ...result, calls };
+    };
+    const startsTheStack = (calls) =>
+      calls.some((call) => / up -d$/u.test(call) && !call.endsWith('up -d postgres'));
+
+    const premigrate = restore('pre-migrate-0012_ledger_entries_account_indexes.dump');
+    assert.equal(premigrate.status, 0, premigrate.stderr);
+    assert.ok(!startsTheStack(premigrate.calls), premigrate.calls.join('\n'));
+    assert.match(premigrate.stdout, /RR_VERSION/u);
+
+    const daily = restore('remnaray-20260928-0300.dump');
+    assert.equal(daily.status, 0, daily.stderr);
+    assert.ok(startsTheStack(daily.calls), daily.calls.join('\n'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

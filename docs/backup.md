@@ -12,7 +12,7 @@ minutes**.
 | `remnaray-weekly-<stamp>.dump`  | a hard link made on Sundays, for the 8 weeklies |
 | `files-<stamp>.tar.gz`          | `themes/` and `uploads/`                        |
 | `.last-status`                  | one line: state, time, file, size               |
-| `pre-migrate-<version>.dump`    | written by `migrate`; see below                 |
+| `pre-migrate-<migration>.dump`  | written by `migrate`; see below                 |
 
 `.env` is never copied. It holds `RR_APP_KEY`, and a backup that carries both
 the ciphertext and the key protects nothing — the README asks you to keep it
@@ -74,8 +74,12 @@ prompt in a script.
 
 Section 20.4: the `migrate` service applies migrations before `api`, `bot` and
 `worker` start. When a pending migration is marked `-- reversible: no` in its
-header, it takes `backups/pre-migrate-<RR_VERSION>.dump` first, so a rollback
-has something to go back to. `RR_AUTO_PREMIGRATE_BACKUP=false` turns that off.
+header, it takes `backups/pre-migrate-<last applied migration>.dump` first, so
+a rollback has something to go back to. The name is the schema the dump holds —
+the version the upgrade leaves — so two upgrades in a row write two files.
+Restoring one leaves the stack stopped: set `RR_VERSION` in `.env` to the
+version you are going back to, then `./scripts/rr up` (see
+[`upgrade.md`](upgrade.md#going-back)). `RR_AUTO_PREMIGRATE_BACKUP=false` turns that off.
 
 A fresh database is not dumped: there is nothing in it yet.
 

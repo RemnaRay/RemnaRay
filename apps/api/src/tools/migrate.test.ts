@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { isIrreversible, migrationNames, needsPreMigrateBackup, pendingNames } from './migrate';
+import {
+  isIrreversible,
+  migrationNames,
+  needsPreMigrateBackup,
+  pendingNames,
+  preMigrateDumpName,
+} from './migrate';
 
 function fixture(migrations: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'rr-migrations-'));
@@ -45,5 +51,12 @@ describe('migrate (sections 20.4 and 11.6)', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('names the pre-migrate dump after the schema the upgrade leaves', () => {
+    // The database returns the applied names in no particular order.
+    expect(preMigrateDumpName(['0012_indexes', '0001_init', '0013_guards'])).toBe(
+      'pre-migrate-0013_guards.dump',
+    );
   });
 });

@@ -52,7 +52,8 @@ Every release says what an owner has to know under three headings:
 - **Downgrade path** — what to do if you want to go back.
 
 Before an irreversible migration, `migrate` takes a dump of its own into
-`backups/pre-migrate-<version>.dump` (`RR_AUTO_PREMIGRATE_BACKUP`, on by
+`backups/pre-migrate-<last applied migration>.dump`, named after the schema the
+upgrade leaves, and prints the name (`RR_AUTO_PREMIGRATE_BACKUP`, on by
 default). It is a safety net, not a backup policy: see
 [`backup.md`](backup.md).
 
@@ -67,17 +68,34 @@ its squads and put back on sale; it cannot be activated without them.
 
 ## Going back
 
+Section 20.6: set the version you are going back to in `.env`, then pull and
+start it.
+
 ```sh
-RR_VERSION=1.2.2 docker compose pull
-RR_VERSION=1.2.2 ./scripts/rr up
+# .env
+RR_VERSION=1.2.2
+```
+
+```sh
+docker compose pull
+./scripts/rr up
 ```
 
 That works while no irreversible migration has run in between. When one has,
-restore the pre-migrate dump first:
+restore the pre-migrate dump that upgrade took before starting — the
+`migrate` log of the upgrade names it, and it is named after the last
+migration of the version you are going back to:
 
 ```sh
-./scripts/rr restore backups/pre-migrate-1.2.3.dump
+./scripts/rr restore backups/pre-migrate-0012_ledger_entries_account_indexes.dump
+./scripts/rr up
 ```
+
+After a pre-migrate dump the restore leaves the stack stopped: started on the
+newer version, `migrate` would apply the same migration again at once.
+`RR_VERSION=1.2.2 ./scripts/rr up` also works for a single start — a version
+given on the command line wins over `.env` — but the next plain `rr up` goes
+back to what `.env` says.
 
 ## Security rebuilds
 

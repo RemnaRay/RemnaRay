@@ -1245,10 +1245,38 @@ depend on it`, exit 1) → green (only the dump's rows and tables, no
   docs-link test), lint, format, typecheck, i18n-check (2312). VPS action:
   none.
 
-**Exact next:** package 3, R59 — `rr` keeps an explicit `RR_VERSION`,
-`restore.sh` does not start the new version after a pre-migrate dump, the
-dump named after the outgoing schema, docs. M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+- **R59 Done (local) — the documented rollback started the newest version
+  and re-applied the irreversible migration.** Cause: (1) `scripts/rr`
+  exported every `RR_VERSION`/`RR_REGISTRY`/… of `.env` over the
+  environment — the reverse of compose's precedence — so `RR_VERSION=1.2.2
+./scripts/rr up` with `RR_VERSION=1` in `.env` started `:1`; (2)
+  `restore.sh` ended every restore with `up -d` on the version `.env`
+  names, so after a pre-migrate dump the new `migrate` applied the same
+  `reversible: no` migration again at once; (3) the dump was named
+  `pre-migrate-${RR_VERSION}` — the target version, the same file on every
+  upgrade of the `1` channel. Repair: `rr` exports a `.env` value only when
+  the environment does not already have that variable; `restore.sh` stops
+  after a `pre-migrate-*` dump with PostgreSQL alone and says to set
+  `RR_VERSION` in `.env` and run `rr up` (a daily dump still starts the
+  stack, as 20.5); `migrate` names the dump after the last applied
+  migration, the schema the upgrade leaves (`migrate` runs from the new
+  image and cannot know the old image's version — the review's other
+  option). `docs/upgrade.md` follows 20.6: `.env` first, then the
+  pre-migrate restore, then `rr up`; `docs/backup.md` names the file.
+  Overwriting the dump and the fail-open headers stay with R91. Evidence:
+  `rr.test.mjs` «an RR_VERSION or RR_REGISTRY given in the environment
+  wins over .env» red (`1` from `.env`) → green; «restore.sh leaves the
+  stack stopped after a pre-migrate dump» red (`up -d`) → green (a daily
+  dump still starts it); `m5.premigrate-backup` red
+  (`pre-migrate-9.9.9.dump`) → green (`pre-migrate-0013_….dump`); unit
+  test for the name; shellcheck clean. Checks: `pnpm test` 71/72 (the
+  known docs-link test), API 435, lint, format, typecheck, i18n-check
+  (2312). VPS action: none (a rollback on the stand follows the new
+  `docs/upgrade.md`).
+
+**Exact next:** package 3, R60 — `./backups` writable for `migrate`
+(uid 1000); then R91 (migration headers fail-closed, `POSTGRES_PORT`, no
+overwrite of a good dump). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

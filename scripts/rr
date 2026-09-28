@@ -7,14 +7,22 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 recovery_script=$script_dir/admin-recovery.mjs
 
 # NFR-013: one start command per profile. The profile comes from `.env`, so the
-# owner never types it and never edits a proxy configuration by hand.
+# owner never types it and never edits a proxy configuration by hand. A value
+# the environment already has wins, as it does for compose itself (R59):
+# `RR_VERSION=1.2.2 ./scripts/rr up` starts 1.2.2 whatever `.env` says.
 if [ -f .env ]; then
+  from_env_file=' '
   while IFS='=' read -r key value || [ -n "$key" ]; do
     case "$key" in
       RR_PROXY_PROFILE|RR_TLS_MODE|RR_VERSION|RR_REGISTRY|RR_*_IMAGE|RR_DOMAIN|RR_ACME_EMAIL|RR_EXTERNAL_HTTP_PORT)
+        case "$from_env_file" in
+          *" $key "*) ;;
+          *) if printenv "$key" >/dev/null 2>&1; then continue; fi ;;
+        esac
         value=${value#\"}; value=${value%\"}
         value=${value#\'}; value=${value%\'}
         export "$key=$value"
+        from_env_file="$from_env_file$key "
         ;;
     esac
   done < .env

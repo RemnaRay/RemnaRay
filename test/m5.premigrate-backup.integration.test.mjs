@@ -87,9 +87,17 @@ test('M5 the pre-migrate dump authenticates and is written', { timeout: 240_000 
     const output = `${result.stdout}${result.stderr}`;
     assert.match(output, /taking a pre-migrate dump/u, output);
     assert.equal(result.status, 0, output);
-    const dump = join(backups, 'pre-migrate-9.9.9.dump');
-    assert.deepEqual(readdirSync(backups), ['pre-migrate-9.9.9.dump']);
-    assert.ok(statSync(dump).size > 0);
+    // R59: named after the schema the upgrade leaves — its last applied
+    // migration — not after RR_VERSION, which names where it goes (and,
+    // on the `1` channel, the same file at every upgrade).
+    const outgoing = readdirSync('packages/db/prisma/migrations', { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .at(-1);
+    const name = `pre-migrate-${outgoing}.dump`;
+    assert.deepEqual(readdirSync(backups), [name]);
+    assert.ok(statSync(join(backups, name)).size > 0);
   } finally {
     await postgres.stop();
     rmSync(directory, { recursive: true, force: true });
