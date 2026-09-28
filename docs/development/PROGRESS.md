@@ -990,8 +990,30 @@ Owner decisions taken while planning this package (2026-09-28):
   stand the alert is expected (corrections made before R2 have no
   entries); by О-20 the stand is recreated.
 
-**Exact next:** package 4, R16 — a referral reward reversed cumulatively
-over partial refunds. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R16 Done (local) — a partial refund marked the referral reward
+  reversed, and the rest of the refund reversed nothing.** Cause:
+  `reverseReferralReward` reversed `reward × refunded / source` and then
+  set `status='reversed'` unconditionally; the next refund of the same
+  source saw `reversed` and returned 0. A purchase refunded 10 % and then
+  90 % left the referrer 90 % of the reward (15.2: a full refund reverses
+  the whole reward), and the reward left `held`, so the hold no longer
+  covered it. Repair: the reversal due is cumulative — the whole reward
+  once the source's refunded total reaches its amount, otherwise
+  `floor(reward × refunded / source)` — minus the `referral_reversal`
+  transactions already posted under the reward (`parent_id`); only a full
+  refund sets `reversed` (with the last reversal's id). A partly reversed
+  reward stays `held` until released and holds its whole amount meanwhile
+  — conservative: the referrer can spend less, never more. Invariant: the
+  reversals of a reward never exceed it and equal it after a full refund.
+  Evidence: `m4.rewards` — a 20 % reward of 5980 on a 29 900 purchase,
+  refund 2990 then 26 910: reversals [598, 5382], `held` after the first,
+  `reversed` and a zero balance after the second, the ledger audit still
+  clean; red (`reversed` after the first refund) → green. Checks: API 434,
+  lint, format, typecheck, i18n-check (2312). VPS action: none (О-20).
+
+**Exact next:** package 4, R17 — the reward row locked for a reversal, the
+manual path taking the source transaction first. M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

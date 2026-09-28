@@ -207,7 +207,13 @@ export async function accrueReferralReward(
   return { rewardId: reward.id, amountMinor: amount };
 }
 
-/** Section 15.2 reversal, proportional on a partial refund and rounded down. */
+/**
+ * Section 15.2 reversal, proportional on a partial refund and rounded down.
+ * `refundedMinor` is the source's refunded total so far, so the reversal due
+ * is cumulative (repair queue R16): what earlier reversals already took is
+ * subtracted, the reward stays `held`/`released` until the source is refunded
+ * in full, and a full refund always reverses the whole reward.
+ */
 export async function reverseReferralReward(
   tx: Tx,
   sourceTransactionId: string,
@@ -218,10 +224,13 @@ export async function reverseReferralReward(
     where: { sourceTransactionId },
   });
   if (!reward || reward.status === 'reversed' || sourceAmountMinor <= 0n) return 0n;
-  const amount =
-    refundedMinor >= sourceAmountMinor
-      ? reward.amountMinor
-      : (reward.amountMinor * refundedMinor) / sourceAmountMinor;
+  const full = refundedMinor >= sourceAmountMinor;
+  const due = full ? reward.amountMinor : (reward.amountMinor * refundedMinor) / sourceAmountMinor;
+  const taken = await tx.transaction.aggregate({
+    where: { type: 'referral_reversal', parentId: reward.transactionId },
+    _sum: { amountMinor: true },
+  });
+  const amount = due - (taken._sum.amountMinor ?? 0n);
   if (amount <= 0n) return 0n;
 
   const attribution = await tx.referralAttribution.findUnique({
@@ -239,10 +248,11 @@ export async function reverseReferralReward(
     creditKind: 'referral_expense',
     reason: 'referral source refunded',
   });
-  await tx.referralReward.update({
-    where: { sourceTransactionId },
-    data: { status: 'reversed', reversalTransactionId: reversal.id },
-  });
+  if (full)
+    await tx.referralReward.update({
+      where: { sourceTransactionId },
+      data: { status: 'reversed', reversalTransactionId: reversal.id },
+    });
   return amount;
 }
 

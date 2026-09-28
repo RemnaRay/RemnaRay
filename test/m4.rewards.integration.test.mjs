@@ -227,6 +227,68 @@ test(
       });
       assert.deepEqual(await rewards.releaseHeld(), { released: 1 });
 
+      // Repair queue R16 (15.2): partial refunds reverse the reward in step —
+      // 10 % of the source reverses 10 % of the reward and the reward stays
+      // held; refunding the rest reverses the rest, and only then is it
+      // `reversed`.
+      const partialReferrer = await prisma.user.create({
+        data: { telegramId: 995000011n, language: 'ru', referralCode: 'PARTREF1' },
+      });
+      const partialReferee = await prisma.user.create({
+        data: { telegramId: 995000012n, language: 'ru', referralCode: 'PARTREE1' },
+      });
+      await prisma.referralAttribution.create({
+        data: {
+          refereeId: partialReferee.id,
+          referrerId: partialReferrer.id,
+          source: 'telegram',
+          code: 'PARTREF1',
+          status: 'pending',
+        },
+      });
+      const partialInvoice = await payments.createInvoice({
+        userId: partialReferee.id,
+        kind: 'purchase',
+        planId: plan.id,
+        provider: 'mock',
+        idempotencyKey: 'ref-partial',
+      });
+      await payInvoice(payments, partialInvoice, 29900);
+      const partialSource = await prisma.transaction.findFirstOrThrow({
+        where: { userId: partialReferee.id, type: 'purchase' },
+      });
+      const reversalsOf = async () =>
+        (
+          await prisma.transaction.findMany({
+            where: { userId: partialReferrer.id, type: 'referral_reversal' },
+            orderBy: { id: 'asc' },
+          })
+        ).map((row) => row.amountMinor);
+      await payments.refund(partialSource.id, 2990n, 'partial');
+      assert.deepEqual(await reversalsOf(), [598n]);
+      assert.equal(
+        (
+          await prisma.referralReward.findUniqueOrThrow({
+            where: { sourceTransactionId: partialSource.id },
+          })
+        ).status,
+        'held',
+      );
+      await payments.refund(partialSource.id, 26910n, 'the rest');
+      assert.deepEqual(await reversalsOf(), [598n, 5382n]);
+      const fullyReversed = await prisma.referralReward.findUniqueOrThrow({
+        where: { sourceTransactionId: partialSource.id },
+      });
+      assert.equal(fullyReversed.status, 'reversed');
+      assert.equal(
+        (
+          await prisma.account.findFirstOrThrow({
+            where: { kind: 'user', userId: partialReferrer.id },
+          })
+        ).balanceMinor,
+        0n,
+      );
+
       // AC-155: a promocode with max_uses = 1 sells exactly one slot.
       const me = new MeService(infra, settings, {}, payments, {}, {});
       const promocode = await prisma.promocode.create({
