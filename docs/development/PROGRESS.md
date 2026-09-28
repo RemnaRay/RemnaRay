@@ -939,8 +939,26 @@ Owner decisions taken while planning this package (2026-09-28):
   action: corrections made before this repair have no entries and will show
   in the ledger audit; by О-20 the stand is recreated, no data fix.
 
-**Exact next:** package 4, R15 — the operator's daily credit limit checked
-under a per-operator `pg_advisory_xact_lock` in the posting's transaction.
+- **R15 Done (local) — parallel credits let an operator pass the daily
+  limit.** Cause: `assertOperatorLimit` summed the operator's credits of the
+  day with an autocommit `aggregate` before the transaction, and the only
+  lock taken was the customer's account, so credits to different customers
+  (two console tabs, the console and `/credit`) each read the same sum and
+  all passed (14.2 «до max_credit_minor в сутки суммарно»). Repair: for an
+  operator, `adjustBalance` takes `pg_advisory_xact_lock(hashtext(
+'operator-credit:<admin id>'))` in the posting's transaction, then reads
+  the day's sum with the transaction's client, then posts; the lock is held
+  to the commit. The debit refusal stays before the transaction. Invariant:
+  an operator's credits of a UTC day never exceed
+  `operator.max_credit_minor`. Evidence: `m4.admin` — five parallel credits
+  of 60 000 against a 100 000 limit to five customers, red (5 passed) →
+  green (one passes, four 403, 60 000 credited); the unit test checks the
+  lock is taken with the operator's key before the limit is read. Checks:
+  API 433, `m4.support` (the card's `/credit` under the limit), lint,
+  format, typecheck, i18n-check (2312). VPS action: none.
+
+**Exact next:** package 4, R19 + R68 (`ledger.mismatch`) — the nightly
+`maintenance.ledger-audit` with a linear query, indexes and the alert.
 M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26

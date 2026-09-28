@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 
+import type { Prisma } from '@remnaray/db';
 import { limitKeyFor, type AdminRole } from '@remnaray/domain/rbac';
 
 import { Infrastructure } from '../../infra/infra.module';
@@ -287,16 +288,22 @@ export class AdminUsersService {
     const input = balanceSchema.parse(body);
     if (input.amountMinor === 0n)
       throw new ApiError('VALIDATION_ERROR', HttpStatus.BAD_REQUEST, 'Amount must not be zero.');
-    if (admin.role === 'operator') {
-      if (input.amountMinor < 0n) throw new ApiError('FORBIDDEN', HttpStatus.FORBIDDEN);
-      await this.assertOperatorLimit(admin, input.amountMinor, 'users.balance.credit');
-    }
+    if (admin.role === 'operator' && input.amountMinor < 0n)
+      throw new ApiError('FORBIDDEN', HttpStatus.FORBIDDEN);
     await this.require(id);
 
     const credit = input.amountMinor > 0n;
     const user = { kind: 'user' as const, userId: id };
     const adjustment = { kind: 'adjustment' as const };
     return this.infra.db.$transaction(async (tx) => {
+      // Repair queue R15: the day's sum and this credit are one step per
+      // operator. The lock is theirs, not the customer's — parallel credits
+      // to different customers (two console tabs, the console and `/credit`)
+      // would otherwise each read the same sum and all pass.
+      if (admin.role === 'operator') {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`operator-credit:${admin.id}`}))`;
+        await this.assertOperatorLimit(tx, admin, input.amountMinor, 'users.balance.credit');
+      }
       const [before] = await tx.$queryRaw<{ balance_minor: bigint }[]>`
         SELECT balance_minor FROM accounts WHERE kind = 'user'::account_kind AND user_id = ${id}::uuid`;
       try {
@@ -546,7 +553,12 @@ export class AdminUsersService {
     };
   }
 
+  /**
+   * Section 14.2. An operator never debits, so every `adjustment` they made
+   * is a credit and the day's sum is theirs to spend against the limit.
+   */
   private async assertOperatorLimit(
+    tx: Prisma.TransactionClient,
     admin: ActingAdmin,
     amountMinor: bigint,
     permission: 'users.balance.credit' | 'payments.refund',
@@ -556,7 +568,7 @@ export class AdminUsersService {
     const limit = BigInt(String(await this.settings.get(key)));
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);
-    const used = await this.infra.db.transaction.aggregate({
+    const used = await tx.transaction.aggregate({
       where: {
         actorAdminId: admin.id,
         type: permission === 'payments.refund' ? 'refund' : 'adjustment',

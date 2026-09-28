@@ -346,6 +346,44 @@ test(
         [],
       );
 
+      // Repair queue R15: the operator's daily limit (14.2, 100 000 here)
+      // holds against parallel credits to different customers — five of 60 000
+      // at once let exactly one through.
+      const operator = await prisma.admin.create({
+        data: { email: 'operator@example.test', passwordHash: 'x', role: 'operator' },
+      });
+      const targets = await Promise.all(
+        [0, 1, 2, 3, 4].map((index) =>
+          prisma.user.create({
+            data: {
+              telegramId: BigInt(994000200 + index),
+              language: 'ru',
+              referralCode: `M4LIM00${String(index)}`,
+            },
+          }),
+        ),
+      );
+      const parallel = await Promise.allSettled(
+        targets.map((target) =>
+          users.adjustBalance(
+            target.id,
+            { amountMinor: 60_000, reason: 'compensation' },
+            { id: operator.id, role: 'operator' },
+          ),
+        ),
+      );
+      assert.equal(parallel.filter((result) => result.status === 'fulfilled').length, 1);
+      assert.ok(
+        parallel
+          .filter((result) => result.status === 'rejected')
+          .every((result) => result.reason.getStatus() === 403),
+      );
+      const credited = await prisma.transaction.aggregate({
+        where: { actorAdminId: operator.id, type: 'adjustment' },
+        _sum: { amountMinor: true },
+      });
+      assert.equal(credited._sum.amountMinor, 60_000n);
+
       await assert.rejects(
         users.adjustBalance(
           created[0].id,

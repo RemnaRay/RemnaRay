@@ -107,6 +107,7 @@ function service(overrides: Record<string, unknown> = {}, settings: Record<strin
     $queryRaw: vi
       .fn()
       .mockImplementation(() => Promise.resolve([{ balance_minor: state.balanceMinor }])),
+    $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: (callback: (tx: unknown) => Promise<unknown>) => callback(db),
     ...overrides,
   };
@@ -257,6 +258,12 @@ describe('AdminUsersService (FR-140, FR-141)', () => {
         { id: 'operator-1', role: 'operator' },
       ),
     ).rejects.toMatchObject({ status: 403 });
+
+    // R15: the limit is read under the operator's lock, in the transaction.
+    const [lock] = test.db.$executeRaw.mock.calls[0] as unknown[];
+    expect((lock as TemplateStringsArray).join('?')).toContain('pg_advisory_xact_lock');
+    expect(test.db.$executeRaw.mock.calls[0]?.[1]).toBe('operator-credit:operator-1');
+    expect(posted).not.toHaveBeenCalled();
 
     posted.mockReset();
     posted.mockResolvedValue({ id: 'tx', amountMinor: 5000n, balanceMinor: 15_000n });
