@@ -1056,9 +1056,27 @@ source_transaction_id = $1 FOR UPDATE` and reads the reward after it; the
   4000; the ledger audit stays clean. Checks: `test:m2` suites 4/4, API
   434, lint, format, typecheck, i18n-check (2312). VPS action: none.
 
-**Exact next:** package 4, L-20 — `payment_events` refuses DELETE and
-TRUNCATE (and TRUNCATE is refused on every immutable table). M5 stays NOT
-VERIFIED; TASK-M5-004 is unchanged.
+- **L-20 Done (local) — a DELETE on `payment_events` reported success and
+  removed nothing, and TRUNCATE emptied the append-only tables.** Cause:
+  0002's `payment_events_guard()` compared `NEW` with `OLD` on DELETE too;
+  `NEW` is NULL there, the comparison is NULL, and the trigger returned
+  NULL — which silently skips the row. Row triggers never see TRUNCATE, and
+  none of the immutable tables (8.1) had a statement trigger. Repair:
+  migration 0013 (`reversible: yes`) makes the guard raise `27000` on
+  DELETE and adds `BEFORE TRUNCATE … FOR EACH STATEMENT EXECUTE FUNCTION
+forbid_mutation()` to `payment_events`, `transactions`,
+  `ledger_entries`, `audit_log` and `notification_log` — TRUNCATE on the
+  other four was the same defect. No code deletes from or truncates these
+  tables (checked). Invariant: the append-only tables lose no row through
+  SQL. Evidence: `m1.integration` — a stored event: `DELETE` red (no error,
+  «Missing expected rejection») → green (`immutable table`, the row still
+  there); `TRUNCATE … CASCADE` refused on all five; `migration.test.mjs`
+  0013 red (missing) → green. Checks: db 9, lint, format, typecheck,
+  i18n-check (2312). VPS action: 0013 applies at start.
+
+**Exact next:** close package 4 — `test:m1`, `test:m2`, `test:m4`, the unit
+suites and `pnpm test`, then the package status. M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

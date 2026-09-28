@@ -114,3 +114,25 @@ test('ledger entries are indexed by account for the nightly audit (repair queue 
   );
   assert.match(schema, /@@index\(\[debitAccountId\], map: "ix_ledger_entries_debit_account_id"\)/);
 });
+
+test('append-only tables refuse DELETE and TRUNCATE (repair queue L-20)', async () => {
+  const guard = await readFile(
+    'prisma/migrations/0013_immutable_no_delete_truncate/migration.sql',
+    'utf8',
+  );
+  assert.match(guard, /-- reversible: yes/);
+  assert.match(guard, /IF TG_OP = 'DELETE' THEN\s+RAISE EXCEPTION/);
+  for (const table of [
+    'payment_events',
+    'transactions',
+    'ledger_entries',
+    'audit_log',
+    'notification_log',
+  ])
+    assert.match(
+      guard,
+      new RegExp(
+        `CREATE TRIGGER ${table}_no_truncate BEFORE TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION forbid_mutation\\(\\);`,
+      ),
+    );
+});

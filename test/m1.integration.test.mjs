@@ -82,6 +82,37 @@ test(
       assert.equal(deductions.filter(Boolean).length, 1);
       assert.equal(await ledger.available(user.id), 4000n);
 
+      // Section 8.1 (repair queue L-20): the append-only tables refuse a
+      // DELETE loudly — `payment_events` used to skip the row and report
+      // nothing — and refuse TRUNCATE, which row triggers never see.
+      await prisma.paymentEvent.create({
+        data: {
+          provider: 'mock',
+          externalId: 'l20-event',
+          type: 'paid',
+          raw: {},
+          headers: {},
+          signatureOk: true,
+        },
+      });
+      const immutable = async (sql) => {
+        await assert.rejects(prisma.$executeRawUnsafe(sql), (error) => {
+          assert.match(String(error.message), /immutable/u, sql);
+          return true;
+        });
+      };
+      await immutable(`DELETE FROM payment_events WHERE external_id = 'l20-event'`);
+      assert.equal(await prisma.paymentEvent.count({ where: { externalId: 'l20-event' } }), 1);
+      for (const table of [
+        'payment_events',
+        'transactions',
+        'ledger_entries',
+        'audit_log',
+        'notification_log',
+      ])
+        await immutable(`TRUNCATE ${table} CASCADE`);
+      assert.equal(await prisma.paymentEvent.count({ where: { externalId: 'l20-event' } }), 1);
+
       const trial = await subscriptions.trial(subscriptionUser.id, {
         trialEnabled: true,
         trialDays: 3,
