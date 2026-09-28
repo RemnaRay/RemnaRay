@@ -1295,9 +1295,38 @@ depend on it`, exit 1) → green (only the dump's rows and tables, no
   typecheck, i18n-check (2312). VPS action: none needed after the deploy
   (`ls -ld /opt/test/backups/pre-migrate` shows uid 1000).
 
-**Exact next:** package 3, R91 — migration headers fail-closed,
-`POSTGRES_PORT`/`DATABASE_URL` for `pg_dump`, no overwrite of a good dump.
-M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R91 Done (local) — the pre-migrate dump failed open, read the wrong
+  database and could clobber a good dump.** Cause: `isIrreversible` looked
+  for `-- reversible: no` anywhere and took everything else as reversible,
+  so 0002–0004 (`-- reversible: <text>`) and 0005 (no header) — and any
+  later slip — skipped the dump; `pg_dump` got `POSTGRES_HOST/USER/DB`
+  only, ignoring `POSTGRES_PORT` and an explicit `DATABASE_URL` that the
+  migration itself uses, so it dumped another database or failed and
+  stopped `migrate`; it wrote straight to the final name, so a failed dump
+  left a truncated file there (with R59's old naming, over the previous
+  good one). Repair: only a first header line `-- reversible: yes` skips
+  the dump — `no`, any other text or no header takes it (8.4 forbids
+  editing the applied 0002–0005, so their headers stay and would count as
+  irreversible; every migration after 0005 is checked to say yes or no);
+  `pg_dump` connects through libpq variables built from the resolved
+  database URL (host, port, user, database, `sslmode`; the password never
+  in argv); the dump is written to `.partial`, renamed on success and
+  removed on failure; the name carries the time
+  (`pre-migrate-<migration>-<yyyymmdd-HHMMSS>.dump`), so a second attempt
+  at an upgrade never replaces the first attempt's dump. Docs follow.
+  Evidence: `migrate.test.ts` — the header cases (a later `-- reversible:
+no` line, free text, none, `yesterday`), the header check over the real
+  migrations, the stamped name and the libpq mapping (encoded password,
+  `sslmode`, IPv6) red → green; `m5.premigrate-backup` with the database
+  on a port other than 5432 and no `DATABASE_URL` red (`connection to
+server at "127.0.0.1", port 5432 failed`) → green (the dump holds the
+  marker table; a `pg_dump` failing half-way leaves no new file). Checks:
+  API 438, `pnpm test` 71/72 (the known docs-link test), lint, format,
+  typecheck, i18n-check (2312). VPS action: none.
+
+**Exact next:** package 3, R110, R111, R112 — dump permissions, S3 keys out
+of argv, upload and archive status. M5 stays NOT VERIFIED; TASK-M5-004 is
+unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

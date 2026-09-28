@@ -6,13 +6,13 @@ minutes**.
 
 ## What is kept
 
-| File                                       | What                                            |
-| ------------------------------------------ | ----------------------------------------------- |
-| `remnaray-<yyyymmdd-HHMM>.dump`            | `pg_dump -Fc -Z 6` of the whole database        |
-| `remnaray-weekly-<stamp>.dump`             | a hard link made on Sundays, for the 8 weeklies |
-| `files-<stamp>.tar.gz`                     | `themes/` and `uploads/`                        |
-| `.last-status`                             | one line: state, time, file, size               |
-| `pre-migrate/pre-migrate-<migration>.dump` | written by `migrate`; see below                 |
+| File                                               | What                                            |
+| -------------------------------------------------- | ----------------------------------------------- |
+| `remnaray-<yyyymmdd-HHMM>.dump`                    | `pg_dump -Fc -Z 6` of the whole database        |
+| `remnaray-weekly-<stamp>.dump`                     | a hard link made on Sundays, for the 8 weeklies |
+| `files-<stamp>.tar.gz`                             | `themes/` and `uploads/`                        |
+| `.last-status`                                     | one line: state, time, file, size               |
+| `pre-migrate/pre-migrate-<migration>-<stamp>.dump` | written by `migrate`; see below                 |
 
 `.env` is never copied. It holds `RR_APP_KEY`, and a backup that carries both
 the ciphertext and the key protects nothing — the README asks you to keep it
@@ -73,11 +73,14 @@ prompt in a script.
 ## The pre-migrate dump
 
 Section 20.4: the `migrate` service applies migrations before `api`, `bot` and
-`worker` start. When a pending migration is marked `-- reversible: no` in its
-header, it takes `backups/pre-migrate/pre-migrate-<last applied migration>.dump`
-first, so a rollback has something to go back to. The name is the schema the
-dump holds — the version the upgrade leaves — so two upgrades in a row write
-two files. Restoring one leaves the stack stopped: set `RR_VERSION` in `.env`
+`worker` start. When a pending migration does not say `-- reversible: yes` in
+its header — `no`, anything else, or no header — it first takes
+`backups/pre-migrate/pre-migrate-<last applied migration>-<yyyymmdd-HHMMSS>.dump`
+of the database it is about to migrate (the same host, port and name), so a
+rollback has something to go back to. The name is the schema the dump holds —
+the version the upgrade leaves — and the time, so neither two upgrades nor two
+attempts at one replace an earlier dump; a dump that fails half-way is
+removed. Restoring one leaves the stack stopped: set `RR_VERSION` in `.env`
 to the version you are going back to, then `./scripts/rr up` (see
 [`upgrade.md`](upgrade.md#going-back)). `RR_AUTO_PREMIGRATE_BACKUP=false` turns
 the dump off.

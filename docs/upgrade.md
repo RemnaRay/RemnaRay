@@ -52,8 +52,8 @@ Every release says what an owner has to know under three headings:
 - **Downgrade path** — what to do if you want to go back.
 
 Before an irreversible migration, `migrate` takes a dump of its own into
-`backups/pre-migrate/pre-migrate-<last applied migration>.dump`, named after
-the schema the upgrade leaves, and prints the name
+`backups/pre-migrate/pre-migrate-<last applied migration>-<time>.dump`, named
+after the schema the upgrade leaves, and prints the name
 (`RR_AUTO_PREMIGRATE_BACKUP`, on by default). It is a safety net, not a backup
 policy: see [`backup.md`](backup.md).
 
@@ -87,7 +87,7 @@ restore the pre-migrate dump that upgrade took before starting — the
 migration of the version you are going back to:
 
 ```sh
-./scripts/rr restore backups/pre-migrate/pre-migrate-0012_ledger_entries_account_indexes.dump
+./scripts/rr restore backups/pre-migrate/pre-migrate-0012_ledger_entries_account_indexes-20260928-120000.dump
 ./scripts/rr up
 ```
 

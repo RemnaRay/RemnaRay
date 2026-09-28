@@ -5,7 +5,7 @@
  * downgrade has something to go back to.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 import { createPrismaClient, resolveDatabaseUrl } from '@remnaray/db';
@@ -14,9 +14,15 @@ const MIGRATIONS_DIRECTORY =
   process.env.RR_MIGRATIONS_DIR ?? resolve(process.cwd(), 'prisma/migrations');
 const BACKUP_DIRECTORY = process.env.RR_BACKUP_DIR ?? '/backups';
 
-/** A migration whose header says it cannot be undone (section 11.6). */
+/**
+ * A migration that may not be undone (section 11.6). Only a header that says
+ * `-- reversible: yes` skips the dump: one that says neither yes nor no, or
+ * none at all, is taken as irreversible (R91), because a missing dump cannot
+ * be taken afterwards. The first such header line counts.
+ */
 export function isIrreversible(sql: string): boolean {
-  return /^--\s*reversible:\s*no\b/imu.test(sql);
+  const value = /^--\s*reversible:\s*(\S*)/imu.exec(sql)?.[1] ?? '';
+  return !/^yes\b/iu.test(value);
 }
 
 export function migrationNames(directory: string): string[] {
@@ -56,40 +62,57 @@ function prismaCli(): string {
 }
 
 /**
- * The dump is named after the schema it holds: the last migration already
- * applied, which is the version the upgrade leaves. `RR_VERSION` names where
- * it goes, and on the `1` channel every upgrade wrote the same file (R59).
+ * The dump is named after the schema it holds — the last migration already
+ * applied, which is the version the upgrade leaves — and the time it was
+ * taken. `RR_VERSION` names where the upgrade goes, and on the `1` channel
+ * every upgrade wrote the same file (R59); the time keeps a second attempt at
+ * the same upgrade from replacing the first one's dump (R91).
  */
-export function preMigrateDumpName(applied: string[]): string {
+export function preMigrateDumpName(applied: string[], now = new Date()): string {
   const outgoing = [...applied].sort().at(-1) ?? 'empty';
-  return `pre-migrate-${outgoing}.dump`;
+  const stamp = now.toISOString().replace(/[-:]/gu, '').replace('T', '-').slice(0, 15);
+  return `pre-migrate-${outgoing}-${stamp}.dump`;
 }
 
-function preMigrateBackup(name: string): void {
+/**
+ * The connection the migration uses, as libpq variables for `pg_dump`: the
+ * same host, port and database (R91 — the dump used to ignore `POSTGRES_PORT`
+ * and an explicit `DATABASE_URL`), and the password in the environment rather
+ * than on a command line anyone on the host can read.
+ */
+export function libpqEnvironment(url: string): Record<string, string> {
+  const parsed = new URL(url);
+  const environment: Record<string, string> = {
+    PGHOST: decodeURIComponent(parsed.hostname).replace(/^\[(.*)\]$/u, '$1'),
+    PGPORT: parsed.port || '5432',
+    PGUSER: decodeURIComponent(parsed.username),
+    PGPASSWORD: decodeURIComponent(parsed.password),
+    PGDATABASE: decodeURIComponent(parsed.pathname.replace(/^\//u, '')),
+  };
+  const sslmode = parsed.searchParams.get('sslmode');
+  if (sslmode) environment.PGSSLMODE = sslmode;
+  return environment;
+}
+
+/**
+ * Into a `.partial` file renamed once `pg_dump` succeeded: a dump cut short
+ * never sits under a dump's name (R91).
+ */
+function preMigrateBackup(name: string, url: string): void {
   mkdirSync(BACKUP_DIRECTORY, { recursive: true });
   const target = resolve(BACKUP_DIRECTORY, name);
+  const partial = `${target}.partial`;
   process.stdout.write(`migrate: taking a pre-migrate dump into ${target}\n`);
-  run(
-    'pg_dump',
-    [
-      '--host',
-      process.env.POSTGRES_HOST ?? 'postgres',
-      '--username',
-      process.env.POSTGRES_USER ?? 'remnaray',
-      '--dbname',
-      process.env.POSTGRES_DB ?? 'remnaray',
-      '--format=custom',
-      '--compress=6',
-      '--file',
-      target,
-    ],
-    {
+  try {
+    run('pg_dump', ['--format=custom', '--compress=6', '--file', partial], {
       ...process.env,
-      // The `postgres` service asks every network client for the password
-      // (`scram-sha-256`), and a one-shot container has no terminal to type it.
-      PGPASSWORD: process.env.POSTGRES_PASSWORD ?? '',
-    },
-  );
+      ...libpqEnvironment(url),
+    });
+  } catch (error) {
+    rmSync(partial, { force: true });
+    throw error;
+  }
+  renameSync(partial, target);
 }
 
 async function main(): Promise<void> {
@@ -114,16 +137,19 @@ async function main(): Promise<void> {
     `migrate: ${String(pending.length)} pending of ${String(onDisk.length)} migrations\n`,
   );
 
+  // `prisma.config.ts` reads DATABASE_URL, which compose no longer assembles.
+  const url = resolveDatabaseUrl();
+  if (url) process.env.DATABASE_URL = url;
+
   if (
     applied.length > 0 &&
     process.env.RR_AUTO_PREMIGRATE_BACKUP !== 'false' &&
     needsPreMigrateBackup(MIGRATIONS_DIRECTORY, pending)
-  )
-    preMigrateBackup(preMigrateDumpName(applied));
-
-  // `prisma.config.ts` reads DATABASE_URL, which compose no longer assembles.
-  const url = resolveDatabaseUrl();
-  if (url) process.env.DATABASE_URL = url;
+  ) {
+    // The client above connected with this URL, so it is there.
+    if (!url) throw new Error('no database URL to take the pre-migrate dump from');
+    preMigrateBackup(preMigrateDumpName(applied), url);
+  }
   run(prismaCli(), ['migrate', 'deploy']);
   process.stdout.write('migrate: done\n');
 }
