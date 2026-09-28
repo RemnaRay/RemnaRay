@@ -1387,10 +1387,33 @@ others`) → green. Checks: `pnpm test` 71/72 (the known docs-link test),
   test), lint, format, typecheck, i18n-check (2312), shellcheck clean.
   VPS action: none.
 
-**Exact next:** package 3, R58 + P-20 — host/CIDR validation in the
-settings schema and on import; the proxy rendered into a temporary directory
-and switched only after `nginx -t`/`caddy validate`, with a last-known-good.
-M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R58 Done (local) — console settings injected directives into the proxy
+  configurations.** Cause: `domain.main` and `domain.extra_domains` were
+  `z.string().min(1)` and `admin.ip_allowlist` `z.array(z.string())`, and
+  the renderer pasted them into nginx and Caddy as they were: an admin
+  (`settings.write`) could add a Caddy site serving `/data` (the ACME keys,
+  Caddy runs as root) or `allow 0.0.0.0/0; allow all;` in nginx; a typo
+  just broke the reload. The setup wizard checked the host, the console
+  did not; an import goes through the same `set()`. Repair: one
+  `common/network-values.ts` — a host name (the wizard's pattern, ≤ 253)
+  and an IPv4/IPv6 address with an optional prefix within its family
+  (`net.isIP`) — used by the wizard, by the three settings (at most 10
+  extra domains, 100 allowlist entries) and again by `sourcesFrom`, which
+  drops a stored value that fails (the domain falls back to `RR_DOMAIN`,
+  the ACME email to `RR_ACME_EMAIL`, list entries are dropped), for rows
+  written before this change or by hand. `docs/proxy.md` says so.
+  Evidence: `settings.service.test.ts` «accepts only host names and IP
+  ranges…» (the Caddy `/data` payload, `;`, a space, a newline, a leading
+  hyphen; `0.0.0.0/0; allow all`, `/33`, `/129`, a trailing space,
+  `localhost`, `1.2.3.4/`) red (resolved) → green; `proxy-render.test.ts`
+  «drops stored values that are not host names or IP ranges» red → green.
+  Checks: API 440, `pnpm test` 71/72 (the known docs-link test), lint,
+  format, typecheck, i18n-check (2312). VPS action: none (the stand's
+  values are valid host names).
+
+**Exact next:** package 3, P-20 — the proxy rendered into a temporary
+directory, switched only after `nginx -t`/`caddy validate`, with a
+last-known-good. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

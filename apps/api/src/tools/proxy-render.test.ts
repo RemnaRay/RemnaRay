@@ -200,6 +200,30 @@ describe('proxy sources and atomic writes', () => {
     });
   });
 
+  // R58: a value written before the settings schema checked it (or by hand)
+  // never reaches a configuration: an invalid domain falls back to
+  // RR_DOMAIN, and invalid list entries are dropped.
+  it('drops stored values that are not host names or IP ranges', () => {
+    process.env.RR_DOMAIN = 'env.example.com';
+    process.env.RR_ACME_EMAIL = 'owner@example.com';
+    expect(
+      sourcesFrom([
+        { key: 'domain.main', value: 'evil.example.com {\n\troot * /data\n}\nshop.example.com' },
+        { key: 'domain.acme_email', value: 'a@b.co\n}' },
+        { key: 'domain.extra_domains', value: ['www.example.com', 'x.example.com;'] },
+        {
+          key: 'admin.ip_allowlist',
+          value: ['203.0.113.0/24', '0.0.0.0/0; allow all', '10.0.0.1/33'],
+        },
+      ]),
+    ).toMatchObject({
+      domain: 'env.example.com',
+      acmeEmail: 'owner@example.com',
+      extraDomains: ['www.example.com'],
+      adminAllowlist: ['203.0.113.0/24'],
+    });
+  });
+
   it('writes only what changed, and reports whether anything did', () => {
     const directory = mkdtempSync(join(tmpdir(), 'rr-proxy-'));
     try {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { hostNameSchema, ipOrCidrSchema } from '../../common/network-values';
 import { OUTGOING_EVENTS } from '../webhooks/outgoing';
 
 const emptyOrUrl = z.union([z.url(), z.literal('')]);
@@ -120,8 +121,9 @@ export const settingRegistry: SettingDefinition[] = [
     },
   }),
   ...definitions('domain', {
+    // R58: the proxy configurations carry these three as they are.
     main: {
-      schema: z.string().min(1),
+      schema: hostNameSchema,
       defaultValue: process.env.RR_DOMAIN ?? 'localhost',
       description: 'Primary public domain.',
     },
@@ -131,7 +133,7 @@ export const settingRegistry: SettingDefinition[] = [
       description: 'Email used for ACME certificates.',
     },
     extra_domains: {
-      schema: z.array(z.string().min(1)),
+      schema: z.array(hostNameSchema).max(10),
       defaultValue: [],
       description: 'Additional domains that redirect to the primary domain.',
     },
@@ -500,7 +502,7 @@ export const settingRegistry: SettingDefinition[] = [
       description: 'Admin session lifetime.',
     },
     ip_allowlist: {
-      schema: z.array(z.string().min(1)),
+      schema: z.array(ipOrCidrSchema).max(100),
       defaultValue: [],
       description: 'Optional admin IP allowlist.',
     },

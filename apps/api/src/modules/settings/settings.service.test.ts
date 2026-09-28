@@ -60,6 +60,53 @@ describe('SettingsService', () => {
     expect(service.schema().some((item) => item.key === 'webhooks.outgoing')).toBe(true);
   });
 
+  // R58: these three values are pasted into the nginx and Caddy
+  // configurations as they are. A domain with `{`, `;` or a newline, or an
+  // allowlist entry `0.0.0.0/0; allow all`, added directives of its own —
+  // in Caddy a site serving the TLS keys under `/data`.
+  it('accepts only host names and IP ranges for what the proxy renders', async () => {
+    const service = new SettingsService(new MemoryRepository(), new MemoryEventBus(), appKey);
+    await service.onModuleInit();
+
+    for (const main of [
+      'shop.example.com {\n}\nevil.example.com {\n\troot * /data\n\tfile_server browse\n}\nshop.example.com',
+      'shop.example.com;',
+      'shop example.com',
+      'shop.example.com\n',
+      '-shop.example.com',
+    ])
+      await expect(service.set({ domain: { main } }), JSON.stringify(main)).rejects.toThrow();
+    await expect(
+      service.set({ domain: { extra_domains: ['www.example.com }'] } }),
+    ).rejects.toThrow();
+    for (const entry of [
+      '0.0.0.0/0; allow all',
+      '10.0.0.1/33',
+      '::/129',
+      '10.0.0.0/8 ',
+      'localhost',
+      '1.2.3.4/',
+    ])
+      await expect(
+        service.set({ admin: { ip_allowlist: [entry] } }),
+        JSON.stringify(entry),
+      ).rejects.toThrow();
+
+    await service.set({
+      domain: {
+        main: 'Shop-1.example.com',
+        extra_domains: ['www.example.com', 'xn--80ak6aa92e.com'],
+      },
+      admin: { ip_allowlist: ['203.0.113.0/24', '198.51.100.7', '2001:db8::/32', '::1'] },
+    });
+    expect(await service.get('admin.ip_allowlist')).toEqual([
+      '203.0.113.0/24',
+      '198.51.100.7',
+      '2001:db8::/32',
+      '::1',
+    ]);
+  });
+
   it('validates a whole group, encrypts secrets, and publishes invalidation', async () => {
     const repository = new MemoryRepository();
     const events = new MemoryEventBus();

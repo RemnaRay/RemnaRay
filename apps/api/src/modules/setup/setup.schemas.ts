@@ -1,14 +1,11 @@
 import { z } from 'zod';
 
+import { hostNameSchema } from '../../common/network-values';
 import { planInputSchema } from '../plans/plans.schemas';
 import { ianaTimeZone } from '../settings/settings.schemas';
 
 const locale = z.enum(['ru', 'en']);
-const host = z
-  .string()
-  .min(1)
-  .max(253)
-  .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/iu);
+const host = hostNameSchema;
 
 /** Section 17.4 step 0. */
 export const setupTokenSchema = z.object({ token: z.string().min(1).max(512) });

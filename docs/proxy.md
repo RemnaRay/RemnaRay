@@ -56,6 +56,13 @@ as well as the main HTML pages. The web image disables Next.js's
 `X-Powered-By` response header, and the `rr_lang` locale cookie is marked
 `Secure` when the language is changed.
 
+The values come in as they are, so only valid ones get there: `domain.main`
+and `domain.extra_domains` must be host names and `admin.ip_allowlist` IP
+addresses or CIDR ranges — the settings API refuses anything else, and the
+renderer drops a stored value that is not (falling back to `RR_DOMAIN` for the
+domain), so a character that ends a directive or a block never reaches a
+configuration.
+
 Placeholders are `{{NAME}}` and nothing else is interpreted: `DOMAIN`,
 `EXTRA_DOMAINS`, `ACME_EMAIL`, `TLS_MODE`, `DOCKER_CIDR`, `ADMIN_ALLOWLIST`,
 `ADMIN_ALLOWLIST_BLOCK`, `API_DOCS_BLOCK`, `INTERNAL_API_BLOCK`,

@@ -8,6 +8,9 @@ import {
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
+import { z } from 'zod';
+
+import { isHostName, isIpOrCidr } from '../common/network-values';
 
 export const TLS_MODES = ['acme', 'certbot', 'custom', 'none'] as const;
 export type TlsMode = (typeof TLS_MODES)[number];
@@ -311,15 +314,21 @@ function settingValue(rows: SettingRow[], key: string): unknown {
   return rows.find((row) => row.key === key)?.value;
 }
 
-function stringOf(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.length > 0 ? value : fallback;
+/**
+ * R58: what the settings schema accepts, checked again here, because a row
+ * written before it did (or by hand) is pasted into the configuration too.
+ * An invalid value falls back to the environment; an invalid list entry is
+ * dropped.
+ */
+function valueOf(value: unknown, valid: (value: unknown) => boolean, fallback: string): string {
+  return typeof value === 'string' && valid(value) ? value : fallback;
 }
 
-function listOf(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
+function listOf(value: unknown, valid: (value: unknown) => boolean): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => valid(item)) : [];
 }
+
+const isEmail = (value: unknown): boolean => z.email().safeParse(value).success;
 
 /**
  * Section 21.2 names the sources: `settings.domain.*`,
@@ -328,10 +337,18 @@ function listOf(value: unknown): string[] {
  */
 export function sourcesFrom(rows: SettingRow[]): ProxySources {
   return {
-    domain: stringOf(settingValue(rows, 'domain.main'), process.env.RR_DOMAIN ?? 'localhost'),
-    acmeEmail: stringOf(settingValue(rows, 'domain.acme_email'), process.env.RR_ACME_EMAIL ?? ''),
-    extraDomains: listOf(settingValue(rows, 'domain.extra_domains')),
-    adminAllowlist: listOf(settingValue(rows, 'admin.ip_allowlist')),
+    domain: valueOf(
+      settingValue(rows, 'domain.main'),
+      isHostName,
+      process.env.RR_DOMAIN ?? 'localhost',
+    ),
+    acmeEmail: valueOf(
+      settingValue(rows, 'domain.acme_email'),
+      isEmail,
+      process.env.RR_ACME_EMAIL ?? '',
+    ),
+    extraDomains: listOf(settingValue(rows, 'domain.extra_domains'), isHostName),
+    adminAllowlist: listOf(settingValue(rows, 'admin.ip_allowlist'), isIpOrCidr),
     dockerCidr: process.env.RR_DOCKER_CIDR ?? '172.28.0.0/16',
     apiDocs: process.env.RR_API_DOCS === 'true',
     internalApi: process.env.RR_ECHO_HEADERS === 'true',
