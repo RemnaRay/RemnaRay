@@ -1536,9 +1536,40 @@ issue-token` reached the API, guarded only by `X-Internal-Token`, the
   known docs-link test), lint, format, typecheck, i18n-check (2312),
   shellcheck. VPS action: none (the stand runs `acme`).
 
-**Exact next:** package 3, R29 (+ `providers.update` losing its config) and
-R67 (+ `RR_APP_KEY` = 32 bytes) — environment validation at start and key
-rotation. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R67 Done (local) — the `.env` schema was never checked at start, and it
+  let a key of the wrong size through.** Cause: `loadEnv` of
+  `packages/config` was called nowhere and no app depended on the package
+  (the M0 record in this file claimed otherwise): `RR_TLS_MODE=acme`
+  without `RR_ACME_EMAIL`, a mistyped `RR_PROXY_PROFILE` or a short key
+  started a stack that failed later, elsewhere (17.2 and 17.5 ask for a
+  stop at start naming the variables). `RR_APP_KEY` was `min(43)`, not the
+  32 bytes of 17.1. Repair: `checkEnvironment()` (loads the schema; on a
+  fault writes the names and reasons, never values, and exits 1) is the
+  first statement of the `api`, `worker` and `bot` entrypoints, which now
+  depend on `@remnaray/config`; `RR_APP_KEY` must be base64 of exactly 32
+  bytes; an empty value counts as unset (compose passes `''` for an empty
+  `.env` line); `POSTGRES_PASSWORD` is required unless `DATABASE_URL` is
+  set (17.2's external-database override, which never uses it — recorded
+  as the reading of «обязательна»). The e2e harness gives the API
+  `RR_ACME_EMAIL` and `RR_SETUP_TOKEN`; `.env.example`'s key placeholder
+  and `docs/install.md` say how to make one. Evidence: `env.test.ts` — a
+  30-byte key, a 16-byte key, a non-base64 one, empty values, the
+  `DATABASE_URL` case, names with reasons and no values — red → green;
+  `tooling.test.mjs` «the api, worker and bot check the environment before
+  anything else» red → green; new `m1.env` (in `test:m1`): each built
+  process with `RR_TLS_MODE=acme`, no email and a bad key exits non-zero
+  naming `RR_ACME_EMAIL` and `RR_APP_KEY` without their values — red (the
+  API died on Prisma) → green; a valid environment passes the check in all
+  three. Checks: config 9, API 447, worker 41, bot 97, `pnpm test` 73/74
+  (the known docs-link test), lint, format, typecheck, `typecheck:e2e`,
+  i18n-check (2312). VPS action: after the deploy `docker compose logs api
+worker bot` shows no `Invalid environment configuration`; if it does,
+  fix the named variable in `.env`.
+
+**Exact next:** package 3, R29 (+ `providers.update` losing its config) —
+`rr:rotate-key`, and a wrong `RR_APP_KEY` failing at start instead of
+silently emptying the secrets. M5 stays NOT VERIFIED; TASK-M5-004 is
+unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

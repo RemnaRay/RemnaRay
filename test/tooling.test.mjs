@@ -1131,3 +1131,17 @@ test('every action is pinned to a commit and every write permission belongs to a
   });
   assert.deepEqual(permissions(job('nightly.yml', 'zap')), { contents: 'read', issues: 'write' });
 });
+
+// R67: section 17.2 has the environment checked against `packages/config`
+// when a process starts, and it failing with the names of the variables at
+// fault. Nothing called `loadEnv`: a wrong `.env` looked like a running stack
+// and failed later, somewhere else.
+test('the api, worker and bot check the environment before anything else', async () => {
+  for (const app of ['api', 'worker', 'bot']) {
+    const manifest = JSON.parse(await readFile(`apps/${app}/package.json`, 'utf8'));
+    assert.equal(manifest.dependencies['@remnaray/config'], 'workspace:*', app);
+    const main = await readFile(`apps/${app}/src/main.ts`, 'utf8');
+    assert.match(main, /^import \{ checkEnvironment \} from '@remnaray\/config';$/mu, app);
+    assert.match(main, /^checkEnvironment\(\);$/mu, app);
+  }
+});

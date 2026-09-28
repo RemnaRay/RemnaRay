@@ -141,13 +141,17 @@ export async function startStack({ seed = true } = {}) {
     VALKEY_URL: valkeyUrl,
     RR_APP_KEY: APP_KEY,
     RR_INTERNAL_TOKEN: INTERNAL_TOKEN,
+    // Section 17.2 (R67): the API checks the environment at start; the
+    // default TLS mode, `acme`, needs the contact address.
+    RR_ACME_EMAIL: 'ops@example.test',
+    RR_SETUP_TOKEN: SETUP_TOKEN,
     RR_TRUSTED_INTERNAL_CIDR: '127.0.0.0/8',
     RR_DOMAIN: `127.0.0.1:${String(proxyPort)}`,
     RR_LOG_LEVEL: 'warn',
     // Section 22.1: the E2E purchase pays through the mock provider.
     RR_PAYMENTS_MOCK: 'true',
     RR_TELEGRAM_OAUTH_URL: oidc.url,
-    ...(seed ? {} : { RR_SETUP_TOKEN: SETUP_TOKEN, RR_TELEGRAM_API_URL: mocks.telegramUrl }),
+    ...(seed ? {} : { RR_TELEGRAM_API_URL: mocks.telegramUrl }),
   };
   const api = spawn('node', ['apps/api/dist/main.js'], { env: apiEnv, stdio: 'pipe' });
   const apiLog = [];

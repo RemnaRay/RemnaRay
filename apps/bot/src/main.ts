@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import Redis from 'ioredis';
+import { checkEnvironment } from '@remnaray/config';
 import { metricsContentType, metricsText } from '@remnaray/metrics';
 import { ApiClient } from './api-client.js';
 import { createBot, registerCommands, type BotRuntime } from './bot.js';
@@ -8,6 +9,9 @@ import { BotIngress, supportChannel } from './ingress.js';
 import { failureOf, logger } from './logger.js';
 import { createSupportBot, type SupportContext, type SupportRuntime } from './support-bot.js';
 import type { BotConfig } from './types.js';
+
+// Section 17.2 (R67): a wrong `.env` stops the process here, by name.
+checkEnvironment();
 
 const redisUrl = process.env.VALKEY_URL ?? 'redis://valkey:6379/0';
 const api = new ApiClient();

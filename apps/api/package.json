@@ -23,6 +23,7 @@
     "@nestjs/terminus": "12.0.0",
     "@nestjs/throttler": "~6.7.0",
     "@node-rs/argon2": "~2.2.1",
+    "@remnaray/config": "workspace:*",
     "@remnaray/db": "workspace:*",
     "@remnaray/domain": "workspace:*",
     "@remnaray/i18n-core": "workspace:*",

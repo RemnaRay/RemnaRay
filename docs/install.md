@@ -118,6 +118,12 @@ database. `.env` carries only secrets and infrastructure:
 | `RR_INTERNAL_TOKEN` | how the bot and the worker authenticate to the API           |
 | `POSTGRES_PASSWORD` | the database password                                        |
 
+`api`, `worker` and `bot` check `.env` when they start: a missing or malformed
+variable — `RR_APP_KEY` must be 32 bytes in base64, `openssl rand -base64 32`
+— stops the process with the names of the variables at fault (never their
+values) in `docker compose logs`. An empty line counts as unset, and
+`POSTGRES_PASSWORD` may be left out when `DATABASE_URL` names the database.
+
 `init-env.sh` writes `POSTGRES_PASSWORD` single-quoted, so any character but
 a single quote is safe in it, and generates one if you type none. Edit it by
 hand the same way: without the quotes compose drops a `$name` from the value
