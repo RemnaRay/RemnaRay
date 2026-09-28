@@ -1665,8 +1665,21 @@ VALKEYCLI_AUTH= valkey valkey-cli ping` answers `NOAUTH`.
   76/77 (the known docs-link test), lint, format, typecheck, i18n-check
   (2314). VPS action: none.
 
-**Exact next:** package 3, L-36 (pin `certbot`), then the package's
-integration suites and its PROGRESS record. M5 stays NOT VERIFIED;
+- **L-36 Done (local) — certbot ran whatever `latest` was that day.** Cause:
+  `compose.yaml` pulled `certbot/certbot:latest`, which changes under every
+  deployment whenever upstream publishes, untested here. Repair:
+  `certbot/certbot:v5.8.0` — the current release (GitHub `certbot/certbot`
+  `v5.8.0`, 2026-09-01), the same image id `latest` had; Renovate's
+  `docker-images` group proposes the next one (R117); the M5-004 test uses
+  the same tag. Evidence: `tooling.test.mjs` «no service runs an image
+  without a version» over the compose file resolved with every profile —
+  red (`certbot runs certbot/certbot:latest`) → green; the other compose
+  tests pass on the all-profile resolution. Checks: `pnpm test` 77/78 (the
+  known docs-link test), lint, format, typecheck, i18n-check (2314). VPS
+  action: none (the stand runs `acme`).
+
+**Exact next:** package 3's integration suites (`test:m1`, `test:m2`,
+`test:m4`, `test:m5`) and its PROGRESS record. M5 stays NOT VERIFIED;
 TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26

@@ -818,7 +818,8 @@ const resolvedCompose = async () => {
     await cp('.env.example', join(directory, '.env'));
     await cp('deploy/monitoring', join(directory, 'deploy/monitoring'), { recursive: true });
     return JSON.parse(
-      execFileSync('docker', ['compose', 'config', '--format', 'json'], {
+      // Every profile, so the proxies, certbot and backup are there too.
+      execFileSync('docker', ['compose', '--profile', '*', 'config', '--format', 'json'], {
         cwd: directory,
         encoding: 'utf8',
       }),
@@ -1179,4 +1180,16 @@ test('the documentation does not present the read-only docker socket as a limit'
   assert.doesNotMatch(compose, /docker socket, and it is read-only/u);
   assert.doesNotMatch(proxy, /docker socket, mounted\s+read-only/u);
   for (const text of [compose, proxy]) assert.match(text, /`:ro`[^.]*does not limit/u);
+});
+
+// L-36: `certbot/certbot:latest` changed under every deployment whenever the
+// upstream published, untested and unannounced. Every image a deployment
+// runs names its version; Renovate proposes the next one.
+test('no service runs an image without a version', async () => {
+  const { services } = await resolvedCompose();
+  for (const [name, service] of Object.entries(services)) {
+    const tag = /:([^/@]+)(?:@sha256:[0-9a-f]{64})?$/u.exec(service.image)?.[1];
+    assert.ok(tag && tag !== 'latest', `${name} runs ${service.image}`);
+  }
+  assert.match(services.certbot.image, /^certbot\/certbot:v\d+\.\d+\.\d+$/u);
 });

@@ -491,7 +491,7 @@ test(
         `${certVolume}:/etc/letsencrypt`,
         '-v',
         `${certs}:/fixture:ro`,
-        'certbot/certbot:latest',
+        'certbot/certbot:v5.8.0',
         '-c',
         'mkdir -p /etc/letsencrypt/archive/shop.example.test /etc/letsencrypt/live/shop.example.test; cp /fixture/fullchain.pem /etc/letsencrypt/archive/shop.example.test/fullchain1.pem; cp /fixture/privkey.pem /etc/letsencrypt/archive/shop.example.test/privkey1.pem; chmod 700 /etc/letsencrypt/archive /etc/letsencrypt/live; chmod 600 /etc/letsencrypt/archive/shop.example.test/privkey1.pem; ln -s ../../archive/shop.example.test/fullchain1.pem /etc/letsencrypt/live/shop.example.test/fullchain.pem; ln -s ../../archive/shop.example.test/privkey1.pem /etc/letsencrypt/live/shop.example.test/privkey.pem',
       ]);
@@ -506,7 +506,7 @@ test(
         `${stateVolume}:/run/remnaray/certbot`,
         '-v',
         `${resolve('deploy/proxy/certbot.sh')}:/scripts/certbot.sh:ro`,
-        'certbot/certbot:latest',
+        'certbot/certbot:v5.8.0',
         '/scripts/certbot.sh',
         'sync',
       ]);
@@ -535,7 +535,7 @@ test(
         'sh',
         '-v',
         `${certVolume}:/etc/letsencrypt:ro`,
-        'certbot/certbot:latest',
+        'certbot/certbot:v5.8.0',
         '-c',
         'stat -c "%u:%g %a" /etc/letsencrypt/archive /etc/letsencrypt/live /etc/letsencrypt/archive/shop.example.test/privkey1.pem',
       ]);

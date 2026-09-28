@@ -270,7 +270,8 @@ services:
 
   # Only with RR_TLS_MODE=certbot; `./rr up` adds the profile automatically.
   certbot:
-    image: certbot/certbot:latest
+    # L-36: a version, not `latest`; Renovate proposes the next one.
+    image: certbot/certbot:v5.8.0
     environment:
       RR_DOMAIN: ${RR_DOMAIN}
     entrypoint: [/bin/sh, /scripts/certbot.sh]
