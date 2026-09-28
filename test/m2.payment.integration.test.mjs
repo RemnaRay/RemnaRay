@@ -31,6 +31,8 @@ test(
       const { PaymentProviderRegistry } =
         await import('../apps/api/dist/modules/payments/payments.registry.js');
       const { MockPaymentProvider } = await import('../packages/payments-mock/dist/index.js');
+      const { LedgerRepository } =
+        await import('../apps/api/dist/modules/ledger/ledger.repository.js');
       const { BalanceProvider } =
         await import('../apps/api/dist/modules/payments/builtin-providers.js');
       const prisma = createPrismaClient(databaseUrl);
@@ -40,6 +42,7 @@ test(
       registry.register(new BalanceProvider());
       const repository = new PaymentsRepository(prisma);
       const service = new PaymentsService(infra, repository, registry);
+      const ledger = new LedgerRepository(prisma);
       const user = await prisma.user.create({
         data: { telegramId: 992000001n, language: 'ru', referralCode: 'M2PAY001' },
       });
@@ -198,8 +201,16 @@ test(
       const buyer = await prisma.user.create({
         data: { telegramId: 992000009n, language: 'ru', referralCode: 'M2PAY009' },
       });
-      await prisma.account.create({
-        data: { kind: 'user', userId: buyer.id, currency: 'RUB', balanceMinor: 6000n },
+      // The starting balance is a real posting, so the ledger audit below
+      // sees every account as the posting paths leave it.
+      await ledger.post({
+        userId: buyer.id,
+        type: 'adjustment',
+        amountMinor: 6000n,
+        currency: 'RUB',
+        debit: { kind: 'adjustment' },
+        credit: { kind: 'user', userId: buyer.id },
+        reason: 'test balance',
       });
       const attempts = await Promise.allSettled(
         [1, 2, 3, 4, 5].map((n) =>
@@ -580,6 +591,11 @@ test(
         (error) => error.name === 'PaymentError' && error.code === 'WEBHOOK_INVALID_SIGNATURE',
       );
       assert.equal(await prisma.paymentEvent.count(), events);
+
+      // Repair queue P-6: every account the payment paths posted to — the
+      // users, `provider_clearing`, `revenue` and `adjustment` — agrees with
+      // its entries under the one sign convention.
+      assert.deepEqual((await ledger.audit()).mismatches, []);
 
       await prisma.$disconnect();
     } finally {

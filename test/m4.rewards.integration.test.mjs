@@ -348,8 +348,14 @@ test(
       const wallet = await prisma.user.create({
         data: { telegramId: 995100200n, language: 'ru', referralCode: 'PROMOW01' },
       });
-      await prisma.account.create({
-        data: { kind: 'user', userId: wallet.id, currency: 'RUB', balanceMinor: 50000n },
+      await ledger.post({
+        userId: wallet.id,
+        type: 'adjustment',
+        amountMinor: 50000n,
+        currency: 'RUB',
+        debit: { kind: 'adjustment' },
+        credit: { kind: 'user', userId: wallet.id },
+        reason: 'test balance',
       });
       const fromBalance = await me.createInvoice(
         wallet.id,
@@ -407,6 +413,11 @@ test(
       });
       assert.ok(linked.invoiceId, 'the reservation names the invoice');
       assert.equal(linked.status, 'reserved');
+
+      // Repair queue P-6: rewards, reversals, the invitee bonus and the
+      // purchases they came from leave every account in agreement with its
+      // entries under the one sign convention.
+      assert.deepEqual((await ledger.audit()).mismatches, []);
 
       await prisma.$disconnect();
     } finally {

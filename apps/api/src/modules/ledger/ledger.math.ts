@@ -13,15 +13,19 @@ export type LedgerAccountBalance = {
   balanceMinor: bigint;
 };
 
+/**
+ * Repair queue P-6 (owner decision 2026-09-28): every account, user or
+ * system, holds `SUM(credit) − SUM(debit)` — a credit adds, a debit
+ * subtracts — as every posting path writes it. A recorded deviation from
+ * section 8.3, which reads system accounts as `debit − credit`.
+ */
 export function nextBalance(
   account: LedgerAccountBalance,
   side: 'debit' | 'credit',
   amountMinor: bigint,
 ): bigint {
   if (amountMinor <= 0n) throw new Error('Ledger amount must be positive');
-  const userDelta = side === 'credit' ? amountMinor : -amountMinor;
-  const systemDelta = side === 'debit' ? amountMinor : -amountMinor;
-  return account.balanceMinor + (account.kind === 'user' ? userDelta : systemDelta);
+  return account.balanceMinor + (side === 'credit' ? amountMinor : -amountMinor);
 }
 
 export function availableBalance(balanceMinor: bigint, heldMinor: bigint): bigint {

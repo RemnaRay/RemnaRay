@@ -156,7 +156,8 @@ export class LedgerRepository implements LedgerRepositoryPort {
       const debit = BigInt(row.debit.toString());
       const credit = BigInt(row.credit.toString());
       const actual = BigInt(row.actual.toString());
-      const expected = row.kind === 'user' ? credit - debit : debit - credit;
+      // P-6: one convention for every account, as `nextBalance`.
+      const expected = credit - debit;
       return expected === actual ? [] : [{ accountId: row.accountId, expected, actual }];
     });
     // Section 9.9 `rr_ledger_audit_mismatch_total`: a counter, not a gauge —

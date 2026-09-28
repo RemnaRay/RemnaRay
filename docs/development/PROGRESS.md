@@ -872,10 +872,44 @@ only and remove any `AAAA` record (R13); if a dump or backup may have leaked,
 change Robokassa's Password1/2 (R28); open «Личный кабинет» from the bot,
 confirm, and check the same link is refused the second time (R79/L-3).
 
-**Exact next:** package 4 (owner decision О-18: 0 → 1 → 2 → 4 → 3 …),
-starting with P-6 — one sign convention for `ledger.math`/`audit()` matching
-the real postings, proven by an audit with zero mismatches after the m2/m4
-scenarios. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+### Package 4 — ledger and balance
+
+Owner decisions taken while planning this package (2026-09-28):
+
+- P-6 — the queue's variant: every account, user or system, holds
+  `SUM(credit) − SUM(debit)`, as every posting path already writes it;
+  `ledger.math` and `audit()` follow the postings. Recorded deviation from
+  8.3 (system accounts as `debit − credit`). No data migration: the stored
+  balances already use this convention.
+- R135 — closed by F37 (О-12, rewards only on top-ups); no code in this
+  package, the deviation from 15.2 is recorded with F37.
+- L-11 — 11.2 literally: a transaction and its entries carry the invoice
+  amount, except an underpaid invoice (< 98 %), which credits what was paid;
+  an overpayment is not recorded anywhere.
+
+- **P-6 Done (local) — the ledger audit read system accounts with the
+  opposite sign to every posting.** Cause: the posting paths
+  (`payments.repository.ts` `postEntry`/`settleBalance`/`refund`,
+  `referrals.engine.ts` `post`) subtract a debit and add a credit on every
+  account, while `ledger.math.nextBalance` (used by `LedgerRepository.post`)
+  and `audit()` read system accounts as `debit − credit` (8.3). Wiring the
+  audit (R19) would have reported every `revenue`, `provider_clearing` and
+  `referral_expense` account as a mismatch, and repairing R2 through
+  `LedgerRepository.post` would have written `adjustment` with the other
+  sign. Repair: `nextBalance` adds a credit and subtracts a debit for every
+  kind; `audit()` expects `credit − debit` for every account; the module
+  README states the convention and the deviation. Invariants: all balances
+  sum to zero; every account equals its entries under one rule. Evidence:
+  `ledger.math.test.ts` «credits add and debits subtract on every account
+  kind» red (revenue credit 750 ≠ 1250) → green; `m2.payment` and
+  `m4.rewards` end with `LedgerRepository.audit()` and zero mismatches, red
+  (four and two system accounts with the sign flipped) → green; their
+  starting balances are now real `adjustment → user` postings. Checks: API
+  433, lint, format, typecheck, i18n-check (2312). VPS action: none.
+
+**Exact next:** package 4, R2 + R14 + R70 — balance adjustments through an
+`adjustment ↔ user` posting (absolute amount, debits, the account created on
+the first credit). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
