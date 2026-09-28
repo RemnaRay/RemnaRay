@@ -259,12 +259,108 @@ test(
       );
       assert.equal(credit.after.balance.amountMinor, credit.before.balance.amountMinor + 2500);
 
+      // Repair queue R2/R14/R70: a correction is a posting (11.7) —
+      // `adjustment → user` to credit, `user → adjustment` to debit — with
+      // the amount unsigned, the reason and the acting admin (11.6).
+      const adjustmentAccount = await prisma.account.findFirstOrThrow({
+        where: { kind: 'adjustment' },
+      });
+      const userAccount = await prisma.account.findFirstOrThrow({
+        where: { kind: 'user', userId: created[0].id },
+      });
+      const entriesOf = async (accountId) => {
+        const entries = await prisma.ledgerEntry.findMany({
+          where: { OR: [{ debitAccountId: accountId }, { creditAccountId: accountId }] },
+          orderBy: { id: 'asc' },
+        });
+        return Promise.all(
+          entries.map(async (row) => {
+            const transaction = await prisma.transaction.findUniqueOrThrow({
+              where: { id: row.transactionId },
+            });
+            return {
+              debit: row.debitAccountId,
+              credit: row.creditAccountId,
+              amountMinor: row.amountMinor,
+              type: transaction.type,
+              transactionAmountMinor: transaction.amountMinor,
+              reason: transaction.reason,
+              actorAdminId: transaction.actorAdminId,
+            };
+          }),
+        );
+      };
+      const creditEntry = {
+        debit: adjustmentAccount.id,
+        credit: userAccount.id,
+        amountMinor: 2500n,
+        type: 'adjustment',
+        transactionAmountMinor: 2500n,
+        reason: 'goodwill',
+        actorAdminId: admin.id,
+      };
+      assert.deepEqual(await entriesOf(userAccount.id), [creditEntry]);
+      const debit = await users.adjustBalance(
+        created[0].id,
+        { amountMinor: -100, reason: 'correction' },
+        { id: admin.id, role: 'admin' },
+      );
+      assert.equal(debit.after.balance.amountMinor, debit.before.balance.amountMinor - 100);
+      assert.deepEqual(await entriesOf(userAccount.id), [
+        creditEntry,
+        {
+          debit: userAccount.id,
+          credit: adjustmentAccount.id,
+          amountMinor: 100n,
+          type: 'adjustment',
+          transactionAmountMinor: 100n,
+          reason: 'correction',
+          actorAdminId: admin.id,
+        },
+      ]);
+
+      // R70: a customer who never paid has no account yet; the first credit
+      // opens it.
+      const newcomer = await prisma.user.create({
+        data: { telegramId: 994000100n, language: 'ru', referralCode: 'M4NEW001' },
+      });
+      const opened = await users.adjustBalance(
+        newcomer.id,
+        { amountMinor: 700, reason: 'welcome' },
+        { id: admin.id, role: 'admin' },
+      );
+      assert.deepEqual(opened.after.balance, { amountMinor: 700, currency: 'RUB' });
+
+      const { LedgerRepository } =
+        await import('../apps/api/dist/modules/ledger/ledger.repository.js');
+      const adjusted = new Set([
+        adjustmentAccount.id,
+        userAccount.id,
+        (await prisma.account.findFirstOrThrow({ where: { kind: 'user', userId: newcomer.id } }))
+          .id,
+      ]);
+      assert.deepEqual(
+        (await new LedgerRepository(prisma).audit()).mismatches.filter((row) =>
+          adjusted.has(row.accountId),
+        ),
+        [],
+      );
+
       await assert.rejects(
         users.adjustBalance(
           created[0].id,
           { amountMinor: -10_000_000, reason: 'oops' },
           { id: admin.id, role: 'admin' },
         ),
+        {
+          response: {
+            error: {
+              code: 'INSUFFICIENT_FUNDS',
+              message: 'INSUFFICIENT_FUNDS',
+              messageKey: 'errors.insufficient_funds',
+            },
+          },
+        },
       );
 
       const anonymized = await users.anonymize(created[3].id, { reason: 'gdpr request' });

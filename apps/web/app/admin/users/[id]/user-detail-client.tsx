@@ -39,7 +39,7 @@ import { AdminSection, useAdminErrorMessage } from '../../admin-states';
 type Detail = z.infer<typeof adminUserDetailSchema>;
 type PendingAction =
   | { kind: 'extend' }
-  | { kind: 'balance' }
+  | { kind: 'balance'; debit: boolean }
   | { kind: 'ban' }
   | { kind: 'unban' }
   | { kind: 'anonymize' }
@@ -344,11 +344,22 @@ export default function UserDetailClient({ userId }: { userId: string }) {
                       disabled={!can(me, 'users.balance.credit')}
                       variant="secondary"
                       onClick={() => {
-                        setAction({ kind: 'balance' });
+                        setAction({ kind: 'balance', debit: false });
                       }}
                     >
                       {t('users.credit')}
                     </Button>
+                    {/* FR-141, section 14.2: debiting is the admin's alone. */}
+                    {can(me, 'users.balance.debit') ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setAction({ kind: 'balance', debit: true });
+                        }}
+                      >
+                        {t('users.debit')}
+                      </Button>
+                    ) : null}
                     <Button
                       disabled={!can(me, 'users.mutate')}
                       variant="secondary"
@@ -414,7 +425,12 @@ export default function UserDetailClient({ userId }: { userId: string }) {
                     if (action?.kind === 'balance')
                       run(
                         'balance',
-                        { amountMinor: Number(amountMinor ?? 0n), reason },
+                        {
+                          amountMinor: Number(
+                            action.debit ? -(amountMinor ?? 0n) : (amountMinor ?? 0n),
+                          ),
+                          reason,
+                        },
                         'POST',
                         idempotencyKey,
                       );
@@ -429,7 +445,11 @@ export default function UserDetailClient({ userId }: { userId: string }) {
                   open={action !== null}
                   pending={pending}
                   requireReason={action?.kind !== 'message'}
-                  title={t(`users.${action?.kind ?? 'extend'}`)}
+                  title={
+                    action?.kind === 'balance'
+                      ? t(action.debit ? 'users.debit' : 'users.credit')
+                      : t(`users.${action?.kind ?? 'extend'}`)
+                  }
                 >
                   {action?.kind === 'extend' ? (
                     <div className="flex flex-col gap-2">

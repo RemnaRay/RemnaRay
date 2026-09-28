@@ -907,9 +907,41 @@ Owner decisions taken while planning this package (2026-09-28):
   starting balances are now real `adjustment → user` postings. Checks: API
   433, lint, format, typecheck, i18n-check (2312). VPS action: none.
 
-**Exact next:** package 4, R2 + R14 + R70 — balance adjustments through an
-`adjustment ↔ user` posting (absolute amount, debits, the account created on
-the first credit). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R2 + R14 + R70 Done (local) — a manual balance correction bypassed the
+  ledger, a debit always failed, and a customer who never paid could not be
+  credited.** Cause: `AdminUsersService.adjustBalance` (the console and the
+  F36 `/credit` card action) updated `accounts.balance_minor` and wrote a
+  signed `transactions(type=adjustment)` with no `ledger_entries` (11.6,
+  11.7); a debit's negative amount broke `CHECK amount_minor >= 0` (500),
+  the console's `MoneyInput` took no minus sign anyway, and a user without an
+  account (created lazily by payments) got 404, which `/credit` reported as
+  «no subscription». Repair: the body of `LedgerRepository.post` became the
+  exported `postInTransaction(tx, input)` (both accounts found, a user's
+  opened with `ON CONFLICT`, locked in `id` order, a user debit refused below
+  `available()`, the transaction with `actor_admin_id`, one entry, both
+  balances); `adjustBalance` checks the user exists and posts
+  `adjustment → user` for a credit or `user → adjustment` for a debit with
+  the unsigned amount, the reason and the acting admin, mapping the ledger's
+  `INSUFFICIENT_FUNDS` to 409. The console has a «Списать» button for
+  `users.balance.debit` (admins only, 14.2) that sends the amount negative.
+  Invariants: every correction is one transaction with one entry; the user
+  account equals its entries; a debit never goes below the available
+  balance (held rewards excluded). Evidence: `m4.admin` — the credit's
+  entry `adjustment → user` 2500 with reason and admin red (no entries) →
+  green, a debit of 100 red (`transactions_amount_minor_check`) → green
+  (`user → adjustment`, amount 100), a first credit to a customer without an
+  account → 700, the touched accounts absent from `audit()`'s mismatches;
+  `m4.support` — `/credit` to a customer without an account red
+  (`no_subscription`) → green (balance 500). Unit tests check the posting's
+  direction and amount and the 409. Checks: API 433, web 70, lint, format,
+  typecheck, i18n-check (2312). A debit is shown in the histories as an
+  `adjustment` of its unsigned amount (the direction is in the entry). VPS
+  action: corrections made before this repair have no entries and will show
+  in the ledger audit; by О-20 the stand is recreated, no data fix.
+
+**Exact next:** package 4, R15 — the operator's daily credit limit checked
+under a per-operator `pg_advisory_xact_lock` in the posting's transaction.
+M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

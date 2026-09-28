@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AdminUsersService } from './admin-users.service';
 import { Audited } from '../admin/audit.interceptor';
+import { LedgerError } from '../ledger/ledger.errors';
+import { postInTransaction, type LedgerPost } from '../ledger/ledger.repository';
+
+// The posting itself (accounts, locks, entries) is covered on PostgreSQL by
+// `m4.admin`; here the service's choice of direction and amount is checked.
+vi.mock('../ledger/ledger.repository', () => ({ postInTransaction: vi.fn() }));
+const posted = vi.mocked(postInTransaction);
 
 const user = {
   id: 'user-1',
@@ -172,14 +179,25 @@ describe('AdminUsersService (FR-140, FR-141)', () => {
     await expect(test.instance.ban('user-1', {})).rejects.toThrow();
   });
 
-  it('credits and debits a balance for an admin', async () => {
+  it('credits and debits a balance for an admin through adjustment postings (R2, R14)', async () => {
     const test = service();
-    await test.instance.adjustBalance(
+    posted.mockReset();
+    posted.mockImplementation((_tx: unknown, input: LedgerPost) => {
+      test.state.balanceMinor +=
+        input.credit.kind === 'user' ? input.amountMinor : -input.amountMinor;
+      return Promise.resolve({
+        id: 'tx',
+        amountMinor: input.amountMinor,
+        balanceMinor: test.state.balanceMinor,
+      });
+    });
+    const credit = await test.instance.adjustBalance(
       'user-1',
       { amountMinor: 5000, reason: 'goodwill' },
       { id: 'admin-1', role: 'admin' },
     );
-    expect(test.state.balanceMinor).toBe(15_000n);
+    expect(credit.before).toEqual({ balance: { amountMinor: 10_000, currency: 'RUB' } });
+    expect(credit.after).toEqual({ balance: { amountMinor: 15_000, currency: 'RUB' } });
 
     await test.instance.adjustBalance(
       'user-1',
@@ -187,6 +205,28 @@ describe('AdminUsersService (FR-140, FR-141)', () => {
       { id: 'admin-1', role: 'admin' },
     );
     expect(test.state.balanceMinor).toBe(10_000n);
+    expect(posted.mock.calls.map(([, input]) => input)).toEqual([
+      {
+        userId: 'user-1',
+        type: 'adjustment',
+        amountMinor: 5000n,
+        currency: 'RUB',
+        debit: { kind: 'adjustment' },
+        credit: { kind: 'user', userId: 'user-1' },
+        reason: 'goodwill',
+        actorAdminId: 'admin-1',
+      },
+      {
+        userId: 'user-1',
+        type: 'adjustment',
+        amountMinor: 5000n,
+        currency: 'RUB',
+        debit: { kind: 'user', userId: 'user-1' },
+        credit: { kind: 'adjustment' },
+        reason: 'correction',
+        actorAdminId: 'admin-1',
+      },
+    ]);
   });
 
   it('never lets an operator debit a balance', async () => {
@@ -218,6 +258,8 @@ describe('AdminUsersService (FR-140, FR-141)', () => {
       ),
     ).rejects.toMatchObject({ status: 403 });
 
+    posted.mockReset();
+    posted.mockResolvedValue({ id: 'tx', amountMinor: 5000n, balanceMinor: 15_000n });
     await expect(
       test.instance.adjustBalance(
         'user-1',
@@ -227,8 +269,10 @@ describe('AdminUsersService (FR-140, FR-141)', () => {
     ).resolves.toBeInstanceOf(Audited);
   });
 
-  it('refuses to drive a balance below zero', async () => {
+  it('answers INSUFFICIENT_FUNDS when the ledger refuses a debit', async () => {
     const test = service();
+    posted.mockReset();
+    posted.mockRejectedValue(new LedgerError('INSUFFICIENT_FUNDS'));
     await expect(
       test.instance.adjustBalance(
         'user-1',

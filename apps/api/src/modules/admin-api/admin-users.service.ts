@@ -4,6 +4,8 @@ import { limitKeyFor, type AdminRole } from '@remnaray/domain/rbac';
 
 import { Infrastructure } from '../../infra/infra.module';
 import { Audited } from '../admin/audit.interceptor';
+import { LedgerError } from '../ledger/ledger.errors';
+import { postInTransaction } from '../ledger/ledger.repository';
 import { ApiError } from '../me/me.errors';
 import { RemnawaveService } from '../remnawave/remnawave.service';
 import { SettingsService } from '../settings/settings.service';
@@ -273,6 +275,13 @@ export class AdminUsersService {
   /**
    * Section 14.2: an operator may only credit, never debit, and only up to
    * `settings.operator.max_credit_minor` per day in total.
+   *
+   * Section 11.7 (repair queue R2, R14, R70): a correction is a posting —
+   * `adjustment → user` to credit, `user → adjustment` to debit — so the
+   * transaction holds the unsigned amount (`CHECK amount_minor >= 0`), the
+   * entry its direction, and a customer who never paid gets an account on the
+   * first credit. A debit is refused below the available balance, held
+   * referral rewards excluded (15.2).
    */
   async adjustBalance(id: string, body: unknown, admin: ActingAdmin) {
     const input = balanceSchema.parse(body);
@@ -282,33 +291,34 @@ export class AdminUsersService {
       if (input.amountMinor < 0n) throw new ApiError('FORBIDDEN', HttpStatus.FORBIDDEN);
       await this.assertOperatorLimit(admin, input.amountMinor, 'users.balance.credit');
     }
+    await this.require(id);
 
+    const credit = input.amountMinor > 0n;
+    const user = { kind: 'user' as const, userId: id };
+    const adjustment = { kind: 'adjustment' as const };
     return this.infra.db.$transaction(async (tx) => {
-      const account = await tx.account.findFirst({
-        where: { kind: 'user', userId: id, currency: 'RUB' },
-      });
-      if (!account) throw new NotFoundException('NOT_FOUND');
-      const [locked] = await tx.$queryRaw<{ balance_minor: bigint }[]>`
-        SELECT balance_minor FROM accounts WHERE id = ${account.id}::uuid FOR UPDATE`;
-      const current = locked?.balance_minor ?? account.balanceMinor;
-      if (current + input.amountMinor < 0n)
-        throw new ApiError('INSUFFICIENT_FUNDS', HttpStatus.CONFLICT);
-      const updated = await tx.account.update({
-        where: { id: account.id },
-        data: { balanceMinor: current + input.amountMinor },
-      });
-      await tx.transaction.create({
-        data: {
+      const [before] = await tx.$queryRaw<{ balance_minor: bigint }[]>`
+        SELECT balance_minor FROM accounts WHERE kind = 'user'::account_kind AND user_id = ${id}::uuid`;
+      try {
+        const posted = await postInTransaction(tx, {
           userId: id,
           type: 'adjustment',
-          status: 'completed',
-          amountMinor: input.amountMinor,
+          amountMinor: credit ? input.amountMinor : -input.amountMinor,
           currency: 'RUB',
+          debit: credit ? adjustment : user,
+          credit: credit ? user : adjustment,
           reason: input.reason,
           actorAdminId: admin.id,
-        },
-      });
-      return new Audited({ balance: money(current) }, { balance: money(updated.balanceMinor) });
+        });
+        return new Audited(
+          { balance: money(before?.balance_minor ?? 0n) },
+          { balance: money(posted.balanceMinor) },
+        );
+      } catch (error) {
+        if (error instanceof LedgerError && error.code === 'INSUFFICIENT_FUNDS')
+          throw new ApiError('INSUFFICIENT_FUNDS', HttpStatus.CONFLICT);
+        throw error;
+      }
     });
   }
 

@@ -293,6 +293,27 @@ test(
         [['users.balance', 'support #2', 'telegram:support']],
       );
 
+      // Repair queue R70: `/credit` to a customer who never paid (no account
+      // yet) credits them instead of answering «no subscription».
+      await prisma.admin.create({
+        data: { email: 'owner@example.test', passwordHash: 'x', role: 'admin', telegramId: 8n },
+      });
+      const newcomer = await prisma.user.create({
+        data: { telegramId: 995300900n, language: 'ru', referralCode: 'SUPNEW01' },
+      });
+      assert.deepEqual(
+        await actions.run({ kind: 'credit', amountMinor: 500n }, newcomer.id, 8, 3),
+        {
+          ok: true,
+          kind: 'credit',
+          amountMinor: 500n,
+        },
+      );
+      assert.equal(
+        (await prisma.account.findFirstOrThrow({ where: { userId: newcomer.id } })).balanceMinor,
+        500n,
+      );
+
       await prisma.$disconnect();
     } finally {
       await postgres.stop();
