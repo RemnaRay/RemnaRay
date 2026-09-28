@@ -957,9 +957,41 @@ Owner decisions taken while planning this package (2026-09-28):
   API 433, `m4.support` (the card's `/credit` under the limit), lint,
   format, typecheck, i18n-check (2312). VPS action: none.
 
-**Exact next:** package 4, R19 + R68 (`ledger.mismatch`) — the nightly
-`maintenance.ledger-audit` with a linear query, indexes and the alert.
-M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R19 + R68 (`ledger.mismatch`) Done (local) — the ledger audit never
+  ran, and its query was quadratic.** Cause: `LedgerService.audit()`
+  existed but no route or job called it, so 8.3's nightly
+  `maintenance.ledger-audit` and FR-163's `ledger.mismatch` alert never
+  happened and `rr_ledger_audit_mismatch_total` stayed 0; its
+  `LEFT JOIN ledger_entries ON debit = a.id OR credit = a.id` cannot hash
+  or merge join and scanned accounts × entries (≈3 min on 20k × 100k in
+  the review). `maintenanceCall` sent any unknown maintenance job to
+  `subscriptions/expire`. Repair: `audit()` sums the entries once per side
+  (`UNION ALL`, `GROUP BY account_id`) and joins the totals to `accounts`
+  in one statement (one snapshot); a mismatch is logged with the account
+  ids, counted, and raised as `notify.alert {type: 'ledger.mismatch'}` once
+  per UTC day (outbox `jobId alert:ledger.mismatch:<yyyymmdd>`).
+  `POST /api/internal/v1/ledger/audit` (internal token) answers
+  `{ checked, mismatches }`; the worker queues `maintenance.ledger-audit`
+  once per UTC day from 02:00 (before the 03:00 backup; a worker down at
+  02:00 runs it on return) and routes it by an explicit case. Migration
+  0012 (`reversible: yes`) indexes `ledger_entries` by debit and credit
+  account. `seed-dev` posts its starting balance `adjustment → user`.
+  `docs/notifications.md` and the module README name the job and alert.
+  Evidence: `schedule.test.ts` «audits the ledger once per UTC day from
+  02:00» red → green; `panel-call.test.ts` «sends the nightly ledger audit
+  to the ledger» red (fell back to `subscriptions/expire`) → green;
+  `migration.test.mjs` 0012 red (missing) → green; `m4.rewards` — a
+  balance changed by 1 is the one mismatch and two audits write one
+  `ledger.mismatch` alert naming the account, red (no alert) → green;
+  `ledger.controller.test.ts` checks the JSON body. Checks: API 434,
+  worker 41, db 8, lint, format, typecheck, i18n-check (2312). VPS action:
+  0012 applies at start; the next day `/admin/system` shows
+  `maintenance.ledger-audit` completed without failures. On the current
+  stand the alert is expected (corrections made before R2 have no
+  entries); by О-20 the stand is recreated.
+
+**Exact next:** package 4, R16 — a referral reward reversed cumulatively
+over partial refunds. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -10,10 +10,10 @@ export function minuteStamp(at: Date): string {
 }
 
 /**
- * The every-minute and quarter-hour crons of section 7.3 and the repair
- * queue's five-minute re-apply backstop, for the minute `at` falls in. The
- * job id names the cron slot rather than the tick, so the slot runs once
- * however many ticks, restarts or workers add it.
+ * The every-minute and quarter-hour crons of section 7.3, the repair
+ * queue's five-minute re-apply backstop and the nightly ledger audit, for the
+ * minute `at` falls in. The job id names the cron slot rather than the tick,
+ * so the slot runs once however many ticks, restarts or workers add it.
  */
 export function cronJobs(at: Date): CronJob[] {
   const slot = new Date(at);
@@ -42,6 +42,18 @@ export function cronJobs(at: Date): CronJob[] {
     },
     // Section 10.5, cron `*/15 * * * *`.
     { queue: 'panel', name: 'panel.reconcile-all', jobId: `reconcile:${minuteStamp(slot)}` },
+    // Section 8.3 (repair queue R19): the ledger audit, nightly — once per
+    // UTC day from 02:00, before the 03:00 backup. Every later minute of the
+    // day names the same job, so a worker down at 02:00 still runs it.
+    ...(at.getUTCHours() >= 2
+      ? [
+          {
+            queue: 'maintenance' as const,
+            name: 'maintenance.ledger-audit',
+            jobId: `maintenance:ledger-audit:${minuteStamp(at).slice(0, 8)}`,
+          },
+        ]
+      : []),
   ];
 }
 

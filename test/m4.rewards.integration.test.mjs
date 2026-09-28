@@ -419,6 +419,31 @@ test(
       // entries under the one sign convention.
       assert.deepEqual((await ledger.audit()).mismatches, []);
 
+      // Repair queue R19/R68: a balance that disagrees with its entries is
+      // reported and raises one `ledger.mismatch` alert a day (FR-163).
+      const tampered = await prisma.account.findFirstOrThrow({
+        where: { kind: 'user', userId: wallet.id },
+      });
+      await prisma.account.update({
+        where: { id: tampered.id },
+        data: { balanceMinor: tampered.balanceMinor + 1n },
+      });
+      const found = await ledger.audit();
+      assert.deepEqual(found.mismatches, [
+        {
+          accountId: tampered.id,
+          expected: tampered.balanceMinor,
+          actual: tampered.balanceMinor + 1n,
+        },
+      ]);
+      await ledger.audit();
+      const alerts = await prisma.outboxJob.findMany({
+        where: { name: 'notify.alert', jobId: { startsWith: 'alert:ledger.mismatch:' } },
+      });
+      assert.equal(alerts.length, 1);
+      assert.equal(alerts[0].payload.type, 'ledger.mismatch');
+      assert.match(alerts[0].payload.details, new RegExp(tampered.id));
+
       await prisma.$disconnect();
     } finally {
       await postgres.stop();

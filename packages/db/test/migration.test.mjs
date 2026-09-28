@@ -97,3 +97,20 @@ test('unapplied payment events are found through a partial index (repair queue b
     /CREATE INDEX ix_payment_events_unapplied_p ON payment_events \(received_at\) WHERE processed_at IS NULL AND signature_ok;/,
   );
 });
+
+test('ledger entries are indexed by account for the nightly audit (repair queue R19)', async () => {
+  const indexes = await readFile(
+    'prisma/migrations/0012_ledger_entries_account_indexes/migration.sql',
+    'utf8',
+  );
+  assert.match(indexes, /-- reversible: yes/);
+  assert.match(
+    indexes,
+    /CREATE INDEX ix_ledger_entries_debit_account_id ON ledger_entries \(debit_account_id\);/,
+  );
+  assert.match(
+    indexes,
+    /CREATE INDEX ix_ledger_entries_credit_account_id ON ledger_entries \(credit_account_id\);/,
+  );
+  assert.match(schema, /@@index\(\[debitAccountId\], map: "ix_ledger_entries_debit_account_id"\)/);
+});

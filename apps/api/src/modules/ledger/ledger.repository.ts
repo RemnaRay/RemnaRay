@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@remnaray/db';
 import { ledgerAuditMismatchTotal } from '@remnaray/metrics';
 
@@ -42,7 +43,7 @@ type HeldRow = { held: bigint | null };
 export interface LedgerRepositoryPort {
   post(input: LedgerPost): Promise<LedgerTransaction>;
   available(userId: string): Promise<bigint>;
-  audit(): Promise<{
+  audit(now?: Date): Promise<{
     checked: number;
     mismatches: Array<{ accountId: string; expected: bigint; actual: bigint }>;
   }>;
@@ -123,6 +124,8 @@ export async function postInTransaction(
 }
 
 export class LedgerRepository implements LedgerRepositoryPort {
+  private readonly logger = new Logger(LedgerRepository.name);
+
   constructor(private readonly prisma: PrismaClient) {}
 
   async post(input: LedgerPost): Promise<LedgerTransaction> {
@@ -145,24 +148,34 @@ export class LedgerRepository implements LedgerRepositoryPort {
     });
   }
 
-  async audit(): Promise<{
+  /**
+   * Section 8.3 `maintenance.ledger-audit`, nightly (repair queue R19): every
+   * account against its entries, `SUM(credit) − SUM(debit)` (P-6). The
+   * entries are summed once per side and joined by account — the earlier
+   * `JOIN … ON debit = a.id OR credit = a.id` was a nested loop over accounts
+   * × entries. One statement, so one snapshot: postings committing meanwhile
+   * are either wholly in or wholly out. A disagreement is logged, counted and
+   * raised to the administrators once a day as `ledger.mismatch` (FR-163).
+   */
+  async audit(now = new Date()): Promise<{
     checked: number;
     mismatches: Array<{ accountId: string; expected: bigint; actual: bigint }>;
   }> {
     const rows = await this.prisma.$queryRaw<
-      Array<{
-        accountId: string;
-        kind: LedgerAccountKind;
-        actual: bigint;
-        debit: bigint;
-        credit: bigint;
-      }>
+      Array<{ accountId: string; actual: bigint; debit: bigint; credit: bigint }>
     >(Prisma.sql`
-      SELECT a.id AS "accountId", a.kind, a.balance_minor AS actual,
-        COALESCE(SUM(CASE WHEN le.debit_account_id = a.id THEN le.amount_minor ELSE 0 END), 0) AS debit,
-        COALESCE(SUM(CASE WHEN le.credit_account_id = a.id THEN le.amount_minor ELSE 0 END), 0) AS credit
-      FROM accounts a LEFT JOIN ledger_entries le ON le.debit_account_id = a.id OR le.credit_account_id = a.id
-      GROUP BY a.id, a.kind, a.balance_minor
+      WITH movements AS (
+        SELECT debit_account_id AS account_id, amount_minor AS debit, 0::bigint AS credit
+        FROM ledger_entries
+        UNION ALL
+        SELECT credit_account_id, 0::bigint, amount_minor FROM ledger_entries
+      ), totals AS (
+        SELECT account_id, SUM(debit) AS debit, SUM(credit) AS credit
+        FROM movements GROUP BY account_id
+      )
+      SELECT a.id AS "accountId", a.balance_minor AS actual,
+        COALESCE(t.debit, 0) AS debit, COALESCE(t.credit, 0) AS credit
+      FROM accounts a LEFT JOIN totals t ON t.account_id = a.id
     `);
     const mismatches = rows.flatMap((row) => {
       const debit = BigInt(row.debit.toString());
@@ -172,11 +185,42 @@ export class LedgerRepository implements LedgerRepositoryPort {
       const expected = credit - debit;
       return expected === actual ? [] : [{ accountId: row.accountId, expected, actual }];
     });
-    // Section 9.9 `rr_ledger_audit_mismatch_total`: a counter, not a gauge —
-    // an audit that found a disagreement once has to stay visible after the
-    // next audit finds none.
-    if (mismatches.length > 0) ledgerAuditMismatchTotal.inc(mismatches.length);
+    if (mismatches.length > 0) {
+      // Section 9.9 `rr_ledger_audit_mismatch_total`: a counter, not a gauge —
+      // an audit that found a disagreement once has to stay visible after the
+      // next audit finds none.
+      ledgerAuditMismatchTotal.inc(mismatches.length);
+      this.logger.error(
+        `ledger audit: ${String(mismatches.length)} account(s) disagree with their entries: ${mismatches
+          .map(
+            (row) =>
+              `${row.accountId} expected ${String(row.expected)} actual ${String(row.actual)}`,
+          )
+          .join('; ')}`,
+      );
+      await this.alertMismatch(mismatches, now);
+    }
     return { checked: rows.length, mismatches };
+  }
+
+  /** One `ledger.mismatch` alert per UTC day, however many audits run. */
+  private async alertMismatch(mismatches: Array<{ accountId: string }>, now: Date): Promise<void> {
+    const jobId = `alert:ledger.mismatch:${now.toISOString().slice(0, 10).replaceAll('-', '')}`;
+    if (await this.prisma.outboxJob.findFirst({ where: { jobId }, select: { id: true } })) return;
+    const shown = mismatches.slice(0, 10).map((row) => row.accountId);
+    await this.prisma.outboxJob.create({
+      data: {
+        queue: 'notify',
+        name: 'notify.alert',
+        payload: {
+          type: 'ledger.mismatch',
+          details: `${String(mismatches.length)} account(s): ${shown.join(', ')}${
+            mismatches.length > shown.length ? ', …' : ''
+          }`,
+        },
+        jobId,
+      },
+    });
   }
 }
 

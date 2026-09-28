@@ -47,4 +47,10 @@ describe('maintenance jobs', () => {
       path: '/api/internal/v1/subscriptions/expire',
     });
   });
+
+  it('sends the nightly ledger audit to the ledger (repair queue R19)', () => {
+    expect(maintenanceCall({ name: 'maintenance.ledger-audit' })).toEqual({
+      path: '/api/internal/v1/ledger/audit',
+    });
+  });
 });

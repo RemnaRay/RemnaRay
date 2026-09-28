@@ -11,6 +11,7 @@ import process from 'node:process';
 import { createPrismaClient } from '@remnaray/db';
 
 import { createTotp, encryptTotpSecret, hashAdminPassword } from '../modules/admin/admin.crypto';
+import { LedgerRepository } from '../modules/ledger/ledger.repository';
 import { encryptSetting } from '../modules/settings/settings.crypto';
 
 export type SeedFixture = {
@@ -137,8 +138,16 @@ export async function seed(): Promise<SeedFixture> {
         referralCode: 'SMOKEUS1',
       },
     });
-    await prisma.account.create({
-      data: { kind: 'user', userId: user.id, currency: 'RUB', balanceMinor: 50_000n },
+    // A real `adjustment → user` posting, so the nightly ledger audit (R19)
+    // finds the seeded stand in agreement.
+    await new LedgerRepository(prisma).post({
+      userId: user.id,
+      type: 'adjustment',
+      amountMinor: 50_000n,
+      currency: 'RUB',
+      debit: { kind: 'adjustment' },
+      credit: { kind: 'user', userId: user.id },
+      reason: 'seed balance',
     });
 
     return {

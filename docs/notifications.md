@@ -45,7 +45,9 @@ after downtime is picked up on the next tick without sending twice.
 `telegram_id`, in `settings.admin.language`, and deduplicates on
 `rr:alert:<type>` with a one-hour TTL (AC-163). The types are the section 16.5
 list; `payment.late`, `payment.underpaid` and `referral.daily_cap` are already
-emitted by the payment and referral paths.
+emitted by the payment and referral paths, and `ledger.mismatch` by the
+nightly `maintenance.ledger-audit` (from 02:00 UTC, once a day, naming the
+accounts whose balance disagrees with their entries).
 
 ## Verification
 

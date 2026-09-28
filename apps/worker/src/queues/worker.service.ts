@@ -435,5 +435,6 @@ export function maintenanceCall(job: Pick<Job<Record<string, unknown>>, 'name'>)
   if (job.name === 'maintenance.support-sweep') return { path: '/api/internal/v1/support/sweep' };
   if (job.name === 'maintenance.referral-release')
     return { path: '/api/internal/v1/rewards/release-held' };
+  if (job.name === 'maintenance.ledger-audit') return { path: '/api/internal/v1/ledger/audit' };
   return { path: '/api/internal/v1/subscriptions/expire' };
 }

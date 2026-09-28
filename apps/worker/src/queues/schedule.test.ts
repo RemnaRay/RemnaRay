@@ -36,6 +36,22 @@ describe('section 7.3 cron jobs', () => {
     expect(reapply('2026-09-25T07:05:00Z')?.jobId).toBe('payments:reapply-events:202609250705');
   });
 
+  it('audits the ledger once per UTC day from 02:00 (section 8.3, repair queue R19)', () => {
+    const audit = (at: string) =>
+      cronJobs(new Date(at)).find((job) => job.name === 'maintenance.ledger-audit');
+
+    expect(audit('2026-09-25T01:59:59Z')).toBeUndefined();
+    expect(audit('2026-09-25T02:00:00Z')).toEqual({
+      queue: 'maintenance',
+      name: 'maintenance.ledger-audit',
+      jobId: 'maintenance:ledger-audit:20260925',
+    });
+    // A worker that was down at 02:00 still runs the day's audit when it
+    // comes back; every later minute of the day names the same job.
+    expect(audit('2026-09-25T17:42:00Z')?.jobId).toBe('maintenance:ledger-audit:20260925');
+    expect(audit('2026-09-26T02:00:00Z')?.jobId).toBe('maintenance:ledger-audit:20260926');
+  });
+
   it('reconciles the panel once per quarter hour under jobId reconcile:<yyyymmddHHMM>', () => {
     const reconcile = (at: string) =>
       cronJobs(new Date(at)).find((job) => job.name === 'panel.reconcile-all');

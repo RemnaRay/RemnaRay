@@ -301,6 +301,8 @@ model LedgerEntry {
   amountMinor BigInt @map("amount_minor")
   currency String @db.Char(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@index([debitAccountId], map: "ix_ledger_entries_debit_account_id")
+  @@index([creditAccountId], map: "ix_ledger_entries_credit_account_id")
   @@map("ledger_entries")
 }
 

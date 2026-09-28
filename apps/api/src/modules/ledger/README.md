@@ -16,5 +16,7 @@ P-6, owner decision 2026-09-28): the posting paths already wrote this
 convention, and the audit follows them.
 
 `available()` subtracts held referral rewards from the user account balance.
-`audit()` recomputes each account from ledger entries and reports mismatches for
-the maintenance worker. All amounts are `bigint` minor units.
+`audit()` recomputes each account from ledger entries in one linear query; the
+worker's nightly `maintenance.ledger-audit` calls it through
+`POST /api/internal/v1/ledger/audit`, and a mismatch is logged, counted in
+`rr_ledger_audit_mismatch_total` and raised once a day as `ledger.mismatch`. All amounts are `bigint` minor units.
