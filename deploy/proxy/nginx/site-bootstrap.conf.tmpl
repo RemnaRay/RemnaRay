@@ -10,11 +10,11 @@ server {
     location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type text/plain; }
 
     include security-headers.inc;
+    limit_conn rr_conn 50;
+
     include common-proxy.inc;
 
-    location ^~ /api/ { limit_req zone=rr_api burst=30 nodelay; proxy_pass http://rr_api; }
-    location ^~ /setup { limit_req zone=rr_auth burst=30 nodelay; proxy_pass http://rr_web; }
-    location / { limit_req zone=rr_general burst=50 nodelay; proxy_pass http://rr_web; }
+    include site-locations.inc;
 
     include custom.d/*.conf;
 }

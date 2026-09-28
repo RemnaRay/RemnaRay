@@ -1468,9 +1468,31 @@ nginx.conf` or `caddy validate --config /etc/caddy/.staging/Caddyfile` in
   known docs-link test), lint, format, typecheck, i18n-check (2312). VPS
   action: none.
 
-**Exact next:** package 3, R56, R57, R118 — the certbot bootstrap
-(`/api/internal` answers 404 with the allowlist and limits, a domain change
-does not drop the working site, a certificate for `extra_domains`). M5 stays
+- **R56 Done (local) — the certbot bootstrap exposed `/api/internal/*` and
+  the console without its allowlist or limits.** Cause: `site-bootstrap.
+conf.tmpl` (certbot mode before the first certificate, and after a domain
+  change, R57) proxied `/api/` wholesale — `POST /api/internal/v1/auth/
+issue-token` reached the API, guarded only by `X-Internal-Token`, the
+  exposure 8a had closed in `site.conf` — and `/api/admin/*` and `/admin`
+  had neither `{{ADMIN_ALLOWLIST_BLOCK}}` nor `rr_admin`/`rr_signin`, over
+  plain HTTP. Repair: the shop's locations (webhooks, sign-in, console,
+  setup, `/api/internal` → 404, `/metrics`, `/api/docs`, the public API,
+  static assets, `/admin`, the site) moved into `site-locations.inc.tmpl`,
+  rendered with the same placeholders and included by both `site.conf` and
+  the bootstrap; the bootstrap also gets `limit_conn rr_conn 50`. The
+  profiles cannot drift apart again. `docs/proxy.md` lists the file.
+  Evidence: `proxy-render.test.ts` «protects the bootstrap as the shop is
+  protected» red (the bootstrap had no `include site-locations.inc;`) →
+  green (the rendered bootstrap answers `/api/internal/` with 404, applies
+  the allowlist and `rr_admin` to `/api/admin/` and `/admin`, `rr_signin`
+  to the sign-ins); the other render tests read `site.conf` with its include
+  expanded; `m5.proxy` M5-002 (`nginx -t` on every mode, the bootstrap
+  included) and «Section 9.5» green. Checks: `pnpm test` 71/72 (the known
+  docs-link test), lint, format, typecheck, i18n-check (2312). VPS action:
+  none (the stand runs `acme`).
+
+**Exact next:** package 3, R57 — a domain change in certbot mode keeps
+serving the certified domain instead of the bootstrap; then R118. M5 stays
 NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26

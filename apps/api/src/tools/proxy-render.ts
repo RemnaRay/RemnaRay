@@ -273,6 +273,10 @@ export function renderProfile(
       { name: 'nginx.conf', content: fill(readTemplate(directory, 'nginx.conf.tmpl'), values) },
       { name: 'site.conf', content: fill(readTemplate(directory, site), values) },
       {
+        name: 'site-locations.inc',
+        content: fill(readTemplate(directory, 'site-locations.inc.tmpl'), values),
+      },
+      {
         name: `tls-${options.tlsMode}.inc`,
         content: fill(readTemplate(directory, `tls-${options.tlsMode}.inc.tmpl`), values),
       },

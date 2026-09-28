@@ -38,7 +38,15 @@ function render(tlsMode: TlsMode, overrides: Partial<ProxySources> = {}, certifi
     { ...sources, ...overrides },
     { profile: 'nginx', tlsMode, certificatePresent: certificate },
   );
-  return new Map(files.map((file) => [file.name, file.content]));
+  const rendered = new Map(files.map((file) => [file.name, file.content]));
+  // `site.conf` as nginx reads it: with the shared locations it includes.
+  const site = rendered.get('site.conf');
+  if (site?.includes('include site-locations.inc;'))
+    rendered.set(
+      'site.conf',
+      site.replace('include site-locations.inc;', rendered.get('site-locations.inc') ?? ''),
+    );
+  return rendered;
 }
 
 describe('proxy template rendering (section 21.2)', () => {
@@ -89,6 +97,7 @@ describe('proxy template rendering (section 21.2)', () => {
           'ratelimits.inc',
           'security-headers.inc',
           'site.conf',
+          'site-locations.inc',
           `tls-${mode}.inc`,
           'tls-cert.inc',
         ].sort(),
@@ -124,6 +133,33 @@ describe('proxy template rendering (section 21.2)', () => {
     expect(bootstrap).not.toContain('listen 443');
     expect(bootstrap).toContain('/.well-known/acme-challenge/');
     expect(render('certbot', {}, true).get('site.conf')).toContain('listen 443 ssl;');
+  });
+
+  // R56: the bootstrap served `/api/` wholesale — `/api/internal/*` reached
+  // the API (only its token stood in the way) and `/api/admin/*` had neither
+  // the console allowlist nor its limits, over plain HTTP, from `rr up` until
+  // `rr tls:issue`. It now carries the shop's own locations.
+  it('protects the bootstrap as the shop is protected', () => {
+    const allowlist = { ...sources, adminAllowlist: ['203.0.113.0/24'] };
+    const raw = (certificatePresent: boolean) =>
+      renderProfile(templates, allowlist, {
+        profile: 'nginx',
+        tlsMode: 'certbot',
+        certificatePresent,
+      }).find((file) => file.name === 'site.conf')?.content ?? '';
+    for (const present of [false, true])
+      expect(raw(present)).toContain('include site-locations.inc;');
+
+    const bootstrap =
+      render('certbot', { adminAllowlist: ['203.0.113.0/24'] }, false).get('site.conf') ?? '';
+    expect(bootstrap).not.toContain('listen 443');
+    expect(bootstrap).toMatch(/location \^~ \/api\/internal\/ \{\s+return 404;\s+\}/u);
+    expect(bootstrap).toMatch(
+      /location \^~ \/api\/admin\/ \{\s+limit_req zone=rr_admin burst=120 nodelay;\s+allow 203\.0\.113\.0\/24;\s+deny all;/u,
+    );
+    expect(bootstrap).toMatch(/location \^~ \/admin \{[^}]*allow 203\.0\.113\.0\/24;/u);
+    expect(bootstrap).toContain('limit_req zone=rr_signin burst=10 nodelay;');
+    expect(bootstrap).toContain('limit_conn rr_conn 50;');
   });
 
   it('exposes nginx`s own counters on loopback inside the container', () => {

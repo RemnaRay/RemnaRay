@@ -53,17 +53,18 @@ settings.admin.ip_allowlist ─┼─► proxy-config ──► proxy-conf volum
 
 `deploy/proxy/nginx/` holds the whole configuration:
 
-| File                       | Rendered as         | Notes                                            |
-| -------------------------- | ------------------- | ------------------------------------------------ |
-| `nginx.conf.tmpl`          | `nginx.conf`        | the main file; nginx is started with `-c` on it  |
-| `site.conf.tmpl`           | `site.conf`         | the `:80` redirect and the `:443` shop           |
-| `site-bootstrap.conf.tmpl` | `site.conf`         | HTTP only, while certbot has no certificate yet  |
-| `tls-<mode>.inc.tmpl`      | `tls-<mode>.inc`    | http-level TLS setup; only `acme` needs anything |
-| `tls-cert-<mode>.inc.tmpl` | `tls-cert.inc`      | the certificate directives of the active mode    |
-| `ratelimits.inc`           | copied              | the section 19.2 zones                           |
-| `security-headers.inc`     | copied              | the section 19 response headers                  |
-| `common-proxy.inc`         | copied              | the upstream headers and timeouts                |
-| `custom.d/*.conf`          | copied, never wiped | the owner's single extension point               |
+| File                       | Rendered as          | Notes                                            |
+| -------------------------- | -------------------- | ------------------------------------------------ |
+| `nginx.conf.tmpl`          | `nginx.conf`         | the main file; nginx is started with `-c` on it  |
+| `site.conf.tmpl`           | `site.conf`          | the `:80` redirect and the `:443` shop           |
+| `site-bootstrap.conf.tmpl` | `site.conf`          | HTTP only, while certbot has no certificate yet  |
+| `site-locations.inc.tmpl`  | `site-locations.inc` | the shop's locations, included by both of them   |
+| `tls-<mode>.inc.tmpl`      | `tls-<mode>.inc`     | http-level TLS setup; only `acme` needs anything |
+| `tls-cert-<mode>.inc.tmpl` | `tls-cert.inc`       | the certificate directives of the active mode    |
+| `ratelimits.inc`           | copied               | the section 19.2 zones                           |
+| `security-headers.inc`     | copied               | the section 19 response headers                  |
+| `common-proxy.inc`         | copied               | the upstream headers and timeouts                |
+| `custom.d/*.conf`          | copied, never wiped  | the owner's single extension point               |
 
 `security-headers.inc` uses nginx's `add_header_inherit merge` so the shared
 headers remain on nested locations that add their own cache or content headers.
@@ -111,6 +112,11 @@ rendered only for that mode, so the other two run on a stock nginx. OCSP
 stapling is enabled for `certbot` only: the ACME module serves the certificate
 through variables, which stapling does not support, and a `custom` certificate
 may be self-signed.
+
+Until certbot has a certificate, `site.conf` is the HTTP-only bootstrap. It
+carries the shop's own locations (`site-locations.inc`), so `/api/internal/*`
+answers `404` and the console keeps its allowlist and limits before the first
+certificate too.
 
 ## The Caddy profile
 
