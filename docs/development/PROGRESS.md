@@ -1105,10 +1105,31 @@ applied (`\d ledger_entries`, `\d payment_events`); the next day
 made before R2 — by О-20 the stand is recreated); in the console an admin
 sees «Начислить» and «Списать», an operator only «Начислить».
 
-**Exact next:** package 3 (owner decision О-18: 0 → 1 → 2 → 4 → 3 → F37 …),
-starting with P-3 + L-35 — `restart: unless-stopped`, logging and
-`no-new-privileges` for postgres, valkey and web, and the postgres
-healthcheck over TCP. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+### Package 3 — install, release and rollback
+
+- **P-3 + L-35 Done (local) — PostgreSQL, Valkey and the web did not come
+  back after a reboot.** Cause: `compose.yaml` gave `restart:
+unless-stopped` and log rotation only to the application services and
+  the proxies; `postgres`, `valkey` and `web` had neither, and `web` had no
+  `no-new-privileges`. A host reboot or an OOM kill left them down, the API,
+  bot and worker crash-looped behind them and the site answered 502 until
+  `rr up`. The postgres healthcheck asked over the unix socket, which the
+  image's initdb server answers before it restarts (L-35; `restore.sh`
+  already asked over TCP). Repair: the three services get `restart:
+unless-stopped`, `no-new-privileges` and the json-file rotation
+  (50m × 5); the healthcheck runs `pg_isready -h 127.0.0.1`. Invariant:
+  every long-running core service restarts, rotates its logs and gains no
+  privileges. Evidence: `tooling.test.mjs` on the compose file as `docker
+compose config` resolves it — «every long-running core service restarts…»
+  red (`postgres restart`) → green, «the postgres healthcheck asks over
+  TCP» red → green; postgres and valkey from the compose file start
+  healthy on fresh volumes under `no-new-privileges`. Checks: `pnpm test`
+  64/65 (the known docs-link test), lint, format, typecheck, i18n-check
+  (2312). VPS action: none beyond the redeploy.
+
+**Exact next:** package 3, P-5 is done; next R114, R115 (+ trivy in
+`release.yml`), R116, R117 — the release pipeline. M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

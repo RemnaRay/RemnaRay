@@ -772,3 +772,52 @@ test('the proxies publish their ports on IPv4 only', async () => {
   assert.doesNotMatch(install, /plus `AAAA`/u);
   assert.match(install, /no `AAAA`/u);
 });
+
+// The compose file as Docker resolves it — merge keys, anchors and the
+// `.env.example` defaults applied — from a deployment directory like the one
+// `init-env.sh` leaves behind.
+const resolvedCompose = async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'rr-compose-'));
+  try {
+    await cp('compose.yaml', join(directory, 'compose.yaml'));
+    await cp('.env.example', join(directory, '.env'));
+    await cp('deploy/monitoring', join(directory, 'deploy/monitoring'), { recursive: true });
+    return JSON.parse(
+      execFileSync('docker', ['compose', 'config', '--format', 'json'], {
+        cwd: directory,
+        encoding: 'utf8',
+      }),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+};
+
+// P-3: the database, Valkey and the web were the only long-running services
+// without a restart policy, so a host reboot or an OOM kill left them down —
+// the API, bot and worker crash-looping behind them and the site answering
+// 502 until someone ran `rr up`. They also had no log rotation, and the web
+// could gain privileges through setuid binaries.
+test('every long-running core service restarts, rotates its logs and gains no privileges', async () => {
+  const { services } = await resolvedCompose();
+  for (const name of ['postgres', 'valkey', 'web', 'api', 'bot', 'worker']) {
+    const service = services[name];
+    assert.equal(service.restart, 'unless-stopped', `${name} restart`);
+    assert.deepEqual(
+      service.logging,
+      { driver: 'json-file', options: { 'max-size': '50m', 'max-file': '5' } },
+      `${name} logging`,
+    );
+    assert.ok(service.security_opt?.includes('no-new-privileges:true'), `${name} security_opt`);
+  }
+});
+
+// L-35: on an empty volume the image first initialises with a server that
+// listens on the unix socket only, answers ready, and then restarts; a
+// healthcheck over the socket lets `migrate` connect into that restart. The
+// restore script already asks over TCP.
+test('the postgres healthcheck asks over TCP', async () => {
+  const { services } = await resolvedCompose();
+  const check = services.postgres.healthcheck.test.join(' ');
+  assert.match(check, /pg_isready -h 127\.0\.0\.1 /u);
+});

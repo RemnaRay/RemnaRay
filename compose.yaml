@@ -41,11 +41,20 @@ services:
     # the entrypoint refuse to start rather than write where nothing reads.
     volumes: [pgdata:/var/lib/postgresql]
     networks: [rr_net]
+    # Over TCP: on an empty volume the image first initialises with a server on
+    # the unix socket only, which answers ready and then restarts (L-35).
     healthcheck:
-      test: [CMD-SHELL, 'pg_isready -U ${POSTGRES_USER:-remnaray} -d ${POSTGRES_DB:-remnaray}']
+      test:
+        [
+          CMD-SHELL,
+          'pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-remnaray} -d ${POSTGRES_DB:-remnaray}',
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: { driver: json-file, options: { max-size: '50m', max-file: '5' } }
 
   valkey:
     image: valkey/valkey:9.1-alpine
@@ -69,6 +78,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: { driver: json-file, options: { max-size: '50m', max-file: '5' } }
 
   # Section 21.1: applies the migrations before anything else starts, and
   # section 20.4 makes it dump first when a pending migration cannot be undone.
@@ -158,6 +170,9 @@ services:
       - ./themes:/themes:ro
       - ./locales:/locales:ro
       - uploads:/uploads:ro
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: { driver: json-file, options: { max-size: '50m', max-file: '5' } }
 
   # --- proxy (section 21.1). `external` starts none of these. ---
   proxy-config:
