@@ -1074,9 +1074,41 @@ forbid_mutation()` to `payment_events`, `transactions`,
   0013 red (missing) → green. Checks: db 9, lint, format, typecheck,
   i18n-check (2312). VPS action: 0013 applies at start.
 
-**Exact next:** close package 4 — `test:m1`, `test:m2`, `test:m4`, the unit
-suites and `pnpm test`, then the package status. M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+**Package 4 status (2026-09-28): repairs done and verified locally; NOT
+VERIFIED on CI or the VPS.** Eight repairs, one commit each (`650a803` …
+`bf49798`), R135 moved to F37 without code. After the last commit: `test:m1`
+7/7, `test:m2` 8/8, `test:m4` 7/7; unit suites API 434, worker 41, db 9,
+web 70, bot 97; build (including `next build`), lint, format, typecheck,
+i18n-check (2312); `pnpm test` 62/63 — the one failure is the known
+local-only docs-link test reading the untracked review files (package 12).
+`test:m5` was not run: nothing in proxy, backup or Grafana changed. Not yet
+verified: the CI run on GitHub (after the next push); `pnpm test:e2e` (the
+console's new «Списать» button was not driven in a browser; the admin spec's
+API debit now succeeds where it used to fail); on the stand, migrations 0012
+and 0013, the first nightly `maintenance.ledger-audit` and the
+`ledger.mismatch` alert delivery. AC-ledger («0 mismatches after all the
+tests») is shown by the audits at the end of `m2.payment` and `m4.rewards`,
+not after every acceptance suite.
+
+Recorded deviations and decisions of this package, all by the owner
+(2026-09-28): 8.3 — every account, system ones included, is `credit − debit`
+(P-6); R135 closed by F37; L-11 follows 11.2 literally (an overpayment is not
+recorded). Behaviour worth knowing: a debit shows in the histories as an
+`adjustment` of its unsigned amount; a partly reversed held reward holds its
+whole amount until released; the ledger audit runs once per UTC day from
+02:00.
+
+VPS actions after deploying package 4: confirm migrations 0012 and 0013
+applied (`\d ledger_entries`, `\d payment_events`); the next day
+`/admin/system` shows `maintenance.ledger-audit` completed without failures
+(on the current stand a `ledger.mismatch` alert is expected from corrections
+made before R2 — by О-20 the stand is recreated); in the console an admin
+sees «Начислить» and «Списать», an operator only «Начислить».
+
+**Exact next:** package 3 (owner decision О-18: 0 → 1 → 2 → 4 → 3 → F37 …),
+starting with P-3 + L-35 — `restart: unless-stopped`, logging and
+`no-new-privileges` for postgres, valkey and web, and the postgres
+healthcheck over TCP. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
