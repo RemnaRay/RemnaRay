@@ -1221,10 +1221,34 @@ push=true`); `release.yml` scans every image with Trivy (the rebuild's
   Expected after the push: Renovate's onboarding opens a pin-digests PR for
   `postgres`/`valkey`. VPS action: none.
 
-**Exact next:** package 3, P-4 + R59 — a working rollback path (restore into
-an empty schema, `rr` keeps an explicit `RR_VERSION`, `restore.sh` does not
-start the new version, the pre-migrate dump named after the outgoing
-version, docs). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **P-4 Done (local) — restoring a dump older than the schema broke the
+  database.** Cause: `restore.sh` ran `pg_restore --clean --if-exists` into
+  the live database (the 20.5 command). A dump older than the schema — the
+  20.6 rollback, or a daily dump restored after an upgrade — cannot drop a
+  table a newer one references (0010: `support_tickets.user_id → users`):
+  `users` kept its new rows, `_prisma_migrations` went back, the new tables
+  stayed, and `set -e` stopped the script with the stack down; the next
+  `migrate` failed on `CREATE TABLE`. Repair: the dump goes into a fresh
+  `<POSTGRES_DB>_restore` database with `--single-transaction
+--exit-on-error`; only when that succeeded is the current database
+  dropped (`WITH (FORCE)`, the stack is down) and the fresh one renamed in
+  its place, all as the container's own user and database names through
+  psql variables. A failed restore leaves the current database untouched
+  and says so. Recorded deviation from the 20.5 command text (same sequence
+  and outcome, a different `pg_restore` target); `docs/backup.md` says why.
+  Evidence: `m5.backup` «P-4: restore.sh puts back a dump older than the
+  current schema» (a named data volume, a newer table with an FK to an
+  older one) red (`cannot drop table public.users because other objects
+depend on it`, exit 1) → green (only the dump's rows and tables, no
+  leftover database; a dump cut in half fails and leaves both rows); «26.4
+  R3» still green; shellcheck clean. Checks: `pnpm test` 69/70 (the known
+  docs-link test), lint, format, typecheck, i18n-check (2312). VPS action:
+  none.
+
+**Exact next:** package 3, R59 — `rr` keeps an explicit `RR_VERSION`,
+`restore.sh` does not start the new version after a pre-migrate dump, the
+dump named after the outgoing schema, docs. M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

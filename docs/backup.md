@@ -48,9 +48,18 @@ logged.
 ```
 
 It performs the section 20.5 sequence — stop the stack, start PostgreSQL
-alone, `pg_restore --clean --if-exists`, start the stack — and asks for
-confirmation first, because `--clean` drops what is there now. Set
-`RR_RESTORE_ASSUME_YES=true` to skip the prompt in a script.
+alone, restore, start the stack — and asks for confirmation first, because
+the current database is replaced. Set `RR_RESTORE_ASSUME_YES=true` to skip the
+prompt in a script.
+
+- It restores into a fresh database (`<POSTGRES_DB>_restore`) in one
+  transaction, and only when that succeeded drops the current database and
+  renames the fresh one in its place. Section 20.5 names
+  `pg_restore --clean --if-exists` into the live database; that fails on a
+  dump older than the schema (a rollback, or a daily dump restored after an
+  upgrade), because a newer table can hold a foreign key to an older one. If
+  the restore fails, the current database is unchanged and the stack stays
+  stopped: `./scripts/rr up` starts it again.
 
 - It restores as the database user and into the database PostgreSQL itself was
   given (`POSTGRES_USER`, `POSTGRES_DB` in `.env`), whatever the shell has.

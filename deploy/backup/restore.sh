@@ -4,8 +4,8 @@
 #   ./deploy/backup/restore.sh backups/remnaray-20260920-0300.dump
 #
 # It performs exactly the documented sequence, and refuses to guess: the dump
-# has to exist and the operator has to confirm, because `--clean --if-exists`
-# drops the current contents. The themes and uploads archive the backup took
+# has to exist and the operator has to confirm, because the current database
+# is replaced by the dump's. The themes and uploads archive the backup took
 # with the dump (`files-<stamp>.tar.gz`, section 20.5) is restored with it.
 set -eu
 
@@ -45,9 +45,27 @@ until docker compose -f "$compose_file" exec -T postgres \
   sleep 1
 done
 
+# Into a fresh database, never over the live one (P-4): a dump older than
+# the schema — the rollback of section 20.6, or a daily dump after an upgrade —
+# cannot `--clean` a table a newer one references, and a half-done restore
+# would leave both. The fresh database replaces the old one only once the
+# whole dump is in; until then the old one is untouched.
 echo '3/5 restoring the database'
-docker compose -f "$compose_file" exec -T postgres \
-  sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < "$dump"
+if ! docker compose -f "$compose_file" exec -T postgres sh -c '
+  set -eu
+  admin() {
+    psql -X -q -v ON_ERROR_STOP=1 -v db="$POSTGRES_DB" -v fresh="${POSTGRES_DB}_restore" \
+      -U "$POSTGRES_USER" -d template1
+  }
+  printf "%s\n" "DROP DATABASE IF EXISTS :\"fresh\";" "CREATE DATABASE :\"fresh\";" | admin
+  pg_restore -U "$POSTGRES_USER" -d "${POSTGRES_DB}_restore" --single-transaction --exit-on-error
+  printf "%s\n" "DROP DATABASE :\"db\" WITH (FORCE);" \
+    "ALTER DATABASE :\"fresh\" RENAME TO :\"db\";" | admin
+' < "$dump"; then
+  echo 'The restore failed; the current database is unchanged.' >&2
+  echo 'Start the stack again with ./scripts/rr up.' >&2
+  exit 1
+fi
 
 echo '4/5 restoring themes and uploads'
 if [ -f "$files" ]; then

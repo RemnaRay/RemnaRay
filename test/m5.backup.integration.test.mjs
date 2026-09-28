@@ -281,3 +281,123 @@ volumes:
     }
   },
 );
+
+/**
+ * P-4: the rollback of section 20.6 and a daily dump restored after an
+ * upgrade both put an older schema back. `pg_restore --clean --if-exists`
+ * into the live database could not drop a table a newer one references
+ * (0010's `support_tickets.user_id → users`): the restore failed half-way,
+ * left the newer rows and tables beside the older `_prisma_migrations`, and
+ * stopped with the stack down. The dump now goes into a fresh database that
+ * replaces the old one only when the whole restore succeeded.
+ */
+test(
+  'P-4: restore.sh puts back a dump older than the current schema',
+  { timeout: 600_000 },
+  async () => {
+    docker(['build', '-f', 'deploy/backup/Dockerfile', '-t', IMAGE, '.']);
+    const directory = mkdtempSync(join(tmpdir(), 'rr-restore-older-'));
+    const project = `rrolder${String(process.pid)}`;
+    const composeFile = join(directory, 'compose.yaml');
+    writeFileSync(
+      composeFile,
+      `name: ${project}
+services:
+  # A named data volume, as the deployment has: the database the dump
+  # replaces is still there when the restore runs.
+  postgres:
+    image: postgres:18-alpine
+    environment: { POSTGRES_USER: shop_owner, POSTGRES_PASSWORD: secret, POSTGRES_DB: shopdb }
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U shop_owner -d shopdb']
+      interval: 1s
+      retries: 60
+  backup:
+    image: ${IMAGE}
+    environment:
+      { POSTGRES_HOST: postgres, POSTGRES_USER: shop_owner, POSTGRES_PASSWORD: secret, POSTGRES_DB: shopdb }
+    volumes:
+      - ./backups:/backups
+      - ${SCRIPTS}:/scripts:ro
+    depends_on: { postgres: { condition: service_healthy } }
+    profiles: [nginx]
+volumes:
+  pgdata: {}
+`,
+    );
+    const compose = (...args) => docker(['compose', '-f', composeFile, ...args]);
+    const sql = (statement) =>
+      compose(
+        'exec',
+        '-T',
+        'postgres',
+        'psql',
+        '-U',
+        'shop_owner',
+        '-d',
+        'shopdb',
+        '-tAc',
+        statement,
+      ).trim();
+    const shell = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([name]) => !['POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD'].includes(name),
+      ),
+    );
+    try {
+      execFileSync('mkdir', ['-p', join(directory, 'backups')]);
+      compose('--profile', 'nginx', 'up', '-d', '--wait');
+      sql(
+        "CREATE TABLE users (id int PRIMARY KEY, name text); INSERT INTO users VALUES (1, 'before')",
+      );
+      compose('exec', '-T', 'backup', '/bin/sh', '/scripts/backup-entrypoint.sh', 'once');
+      const dump = readdirSync(join(directory, 'backups')).find((name) =>
+        /^remnaray-\d.*\.dump$/u.test(name),
+      );
+      assert.ok(dump, 'no dump was written');
+
+      // The upgrade: a new table that references an old one, and new rows.
+      sql(
+        'CREATE TABLE support_tickets (id int PRIMARY KEY, user_id int NOT NULL REFERENCES users (id));' +
+          " INSERT INTO users VALUES (2, 'after'); INSERT INTO support_tickets VALUES (1, 2)",
+      );
+
+      const restoreFrom = (file) =>
+        spawnSync('sh', ['deploy/backup/restore.sh', file], {
+          env: {
+            ...shell,
+            COMPOSE_FILE: composeFile,
+            RR_PROXY_PROFILE: 'nginx',
+            RR_RESTORE_ASSUME_YES: 'true',
+          },
+          encoding: 'utf8',
+        });
+
+      // A dump cut short fails, and the current database is left as it was.
+      const whole = readFileSync(join(directory, 'backups', dump));
+      const broken = join(directory, 'backups', 'remnaray-broken.dump');
+      writeFileSync(broken, whole.subarray(0, Math.floor(whole.length / 2)));
+      const failed = restoreFrom(broken);
+      assert.notEqual(failed.status, 0, `${failed.stdout}${failed.stderr}`);
+      assert.match(failed.stderr, /the current database is unchanged/u);
+      assert.equal(sql("SELECT string_agg(name, ',' ORDER BY id) FROM users"), 'before,after');
+
+      const restore = restoreFrom(join(directory, 'backups', dump));
+      assert.equal(restore.status, 0, `${restore.stdout}${restore.stderr}`);
+      assert.equal(sql("SELECT string_agg(name, ',' ORDER BY id) FROM users"), 'before');
+      assert.equal(
+        sql(
+          "SELECT string_agg(table_name, ',' ORDER BY table_name) FROM information_schema.tables WHERE table_schema = 'public'",
+        ),
+        'users',
+      );
+      // Nothing is left of the database the restore went into.
+      assert.equal(sql("SELECT count(*) FROM pg_database WHERE datname LIKE 'shopdb%'"), '1');
+    } finally {
+      docker(['compose', '-f', composeFile, '--profile', 'nginx', 'down', '-v'], {
+        expectSuccess: false,
+      });
+    }
+  },
+);
