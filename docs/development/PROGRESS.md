@@ -1566,10 +1566,26 @@ issue-token` reached the API, guarded only by `X-Internal-Token`, the
 worker bot` shows no `Invalid environment configuration`; if it does,
   fix the named variable in `.env`.
 
-**Exact next:** package 3, R29 (+ `providers.update` losing its config) —
-`rr:rotate-key`, and a wrong `RR_APP_KEY` failing at start instead of
-silently emptying the secrets. M5 stays NOT VERIFIED; TASK-M5-004 is
-unchanged.
+- **R29, part 1 Done (local) — saving a provider's form after a key change
+  destroyed its stored configuration.** Cause: `ProvidersService.config()`
+  swallowed a decryption failure and returned `{}`; `update()` merged the
+  form into that and encrypted the result under the current key, so the
+  configuration saved under the previous `RR_APP_KEY` was gone for good —
+  restoring the key or rotating it could no longer bring it back. Repair:
+  an update that changes the configuration first checks the stored one
+  decrypts; if it does not, `409 PROVIDER_CONFIG_UNREADABLE` and nothing is
+  written (a message in both locales says to put the key back). Changes
+  that leave the configuration alone (enable, order, name) still apply.
+  Evidence: `providers.service.test.ts` «refuses to replace a stored
+  configuration it cannot decrypt» red (resolved, overwritten) → green (409,
+  ciphertext unchanged; `enabled: false` still applies). Checks: API 448,
+  `pnpm test` 73/74 (the known docs-link test), lint, format, typecheck,
+  i18n-check (2314). VPS action: none.
+
+**Exact next:** package 3, R29 part 2 — `rr:rotate-key` (every `is_secret`
+setting and `*_enc` column in one transaction) and the API refusing to start
+when `RR_APP_KEY` decrypts none of the stored secrets. M5 stays NOT
+VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

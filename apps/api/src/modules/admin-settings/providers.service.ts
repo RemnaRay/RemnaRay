@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { z } from 'zod';
 
 import { Infrastructure } from '../../infra/infra.module';
@@ -80,6 +80,11 @@ export class ProvidersService {
     let config = this.config(before.configEnc);
     if (input.config !== undefined) {
       if (!this.registry.has(code)) throw new NotFoundException('NOT_FOUND');
+      // R29: a stored configuration this key cannot read (a changed
+      // RR_APP_KEY) is never merged into `{}` and overwritten: restoring the
+      // key, or rotating it, must still find it.
+      if (before.configEnc && !this.readable(before.configEnc))
+        throw new ConflictException('PROVIDER_CONFIG_UNREADABLE');
       config = this.registry
         .get(code)
         .configSchema.parse(mergeProviderConfig(config, input.config)) as Record<string, unknown>;
@@ -147,6 +152,15 @@ export class ProvidersService {
       select: { code: true, sortOrder: true },
     });
     return new Audited(before, after, { items: after });
+  }
+
+  private readable(enc: string): boolean {
+    try {
+      decryptSetting({ enc }, this.appKey);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private config(enc: string | null): Record<string, unknown> {

@@ -82,6 +82,26 @@ describe('ProvidersService provider forms (FR-061)', () => {
     });
   });
 
+  // R29: with a changed RR_APP_KEY the stored configuration no longer
+  // decrypts, and `config()` read it as `{}`: the form's fields were merged
+  // into nothing and encrypted under the new key, so the old configuration
+  // was gone for good, a key rotation or a restored key notwithstanding.
+  it('refuses to replace a stored configuration it cannot decrypt', async () => {
+    vi.stubEnv('RR_APP_KEY', appKey);
+    const otherKey = randomBytes(32).toString('base64');
+    const stored = encryptSetting({ shopId: '1', secretKey: 'live_abc' }, otherKey).enc;
+    const test = service([{ ...row, configEnc: stored }], { ok: true, latencyMs: 5 });
+
+    await expect(
+      test.instance.update('mock', { config: { shopId: '2', secretKey: 'live_new' } }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(test.stored[0]?.['configEnc']).toBe(stored);
+    // Everything but the configuration still changes.
+    await test.instance.update('mock', { enabled: false });
+    expect(test.stored[0]?.['enabled']).toBe(false);
+    expect(test.stored[0]?.['configEnc']).toBe(stored);
+  });
+
   it('refuses a configuration the provider schema does not accept', async () => {
     vi.stubEnv('RR_APP_KEY', appKey);
     const test = service([{ ...row }], { ok: true, latencyMs: 5 });
