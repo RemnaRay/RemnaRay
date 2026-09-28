@@ -519,11 +519,13 @@ test(
         '-v',
         `${stateVolume}:/run/remnaray/certbot:ro`,
         '-v',
-        `${resolve('apps/api/dist/tools/proxy-render.js')}:/tool.cjs:ro`,
+        // The compiled tools with their own relative modules, and no
+        // `node_modules`: the renderer needs none of the application's.
+        `${resolve('apps/api/dist')}:/dist:ro`,
         'node:24-alpine',
         'node',
         '-e',
-        "const assert = require('node:assert/strict'); const fs = require('node:fs'); const {certbotCertificatePresent} = require('/tool.cjs'); assert.equal(certbotCertificatePresent('shop.example.test'), true); assert.equal(certbotCertificatePresent('other.example.test'), false); assert.equal(fs.existsSync('/etc/letsencrypt'), false); console.log('renderer reads names only');",
+        "const assert = require('node:assert/strict'); const fs = require('node:fs'); const {certbotCertificatePresent} = require('/dist/tools/proxy-render.js'); assert.equal(certbotCertificatePresent('shop.example.test'), true); assert.equal(certbotCertificatePresent('other.example.test'), false); assert.equal(fs.existsSync('/etc/letsencrypt'), false); console.log('renderer reads names only');",
       ]);
       assert.match(output, /renderer reads names only/);
       const permissions = docker([

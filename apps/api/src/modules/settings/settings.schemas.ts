@@ -1,7 +1,18 @@
 import { z } from 'zod';
 
-import { hostNameSchema, ipOrCidrSchema } from '../../common/network-values';
+import { isHostName, isIpOrCidr } from '../../common/network-values';
 import { OUTGOING_EVENTS } from '../webhooks/outgoing';
+
+/** R58: what the proxy configurations may carry (`common/network-values`). */
+export const hostNameSchema = z
+  .string()
+  .min(1)
+  .max(253)
+  .refine(isHostName, { message: 'Must be a host name' });
+
+export const ipOrCidrSchema = z
+  .string()
+  .refine(isIpOrCidr, { message: 'Must be an IP address or a CIDR range' });
 
 const emptyOrUrl = z.union([z.url(), z.literal('')]);
 const minorAmount = z.string().regex(/^\d+$/, 'must be a non-negative integer in minor units');

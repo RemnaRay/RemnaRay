@@ -9,9 +9,8 @@ import {
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
-import { z } from 'zod';
 
-import { isHostName, isIpOrCidr } from '../common/network-values';
+import { isContactEmail, isHostName, isIpOrCidr } from '../common/network-values';
 
 export const TLS_MODES = ['acme', 'certbot', 'custom', 'none'] as const;
 export type TlsMode = (typeof TLS_MODES)[number];
@@ -329,8 +328,6 @@ function listOf(value: unknown, valid: (value: unknown) => boolean): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => valid(item)) : [];
 }
 
-const isEmail = (value: unknown): boolean => z.email().safeParse(value).success;
-
 /**
  * Section 21.2 names the sources: `settings.domain.*`,
  * `settings.admin.ip_allowlist` and `.env`. Only non-secret keys are read, so
@@ -345,7 +342,7 @@ export function sourcesFrom(rows: SettingRow[]): ProxySources {
     ),
     acmeEmail: valueOf(
       settingValue(rows, 'domain.acme_email'),
-      isEmail,
+      isContactEmail,
       process.env.RR_ACME_EMAIL ?? '',
     ),
     extraDomains: listOf(settingValue(rows, 'domain.extra_domains'), isHostName),

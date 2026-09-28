@@ -1452,10 +1452,26 @@ nginx.conf` or `caddy validate --config /etc/caddy/.staging/Caddyfile` in
   known docs-link test), lint, format, typecheck, i18n-check (2312). VPS
   action: none.
 
-**Exact next:** package 3, the R58 follow-up — `proxy-render.js` must load
-without the application's packages (`m5.proxy` M5-004 mounts it alone); then
-R56, R57, R118 (certbot bootstrap). M5 stays NOT VERIFIED; TASK-M5-004 is
-unchanged.
+- **R58 follow-up Done (local) — the R58 repair made the renderer load
+  `zod`.** Cause: `faa343c` checked stored values in `sourcesFrom` with
+  zod schemas from `common/network-values.ts` and a zod email check, so
+  `proxy-render.js` required `zod`; `m5.proxy` M5-004 (the renderer as uid
+  1000 in a bare `node:24-alpine`, proving it reads certificate names only)
+  failed with `Cannot find module 'zod'`. It was not caught before the R58
+  commit because only `test:m5` runs it. Repair: `network-values.ts` holds
+  plain predicates (`isHostName`, `isIpOrCidr`, and `isContactEmail` for the
+  ACME contact) on `node:net` alone; the zod schemas live in
+  `settings.schemas.ts`, which the wizard's schema imports; the test mounts
+  `apps/api/dist` (the renderer with its relative modules, no
+  `node_modules`). Evidence: `m5.proxy` M5-004 red (`Cannot find module
+'zod'`) → green; M5-002 green; API 444. Checks: `pnpm test` 71/72 (the
+  known docs-link test), lint, format, typecheck, i18n-check (2312). VPS
+  action: none.
+
+**Exact next:** package 3, R56, R57, R118 — the certbot bootstrap
+(`/api/internal` answers 404 with the allowlist and limits, a domain change
+does not drop the working site, a certificate for `extra_domains`). M5 stays
+NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

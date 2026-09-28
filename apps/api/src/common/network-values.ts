@@ -1,10 +1,10 @@
 /**
  * Values the proxy renderer pastes into the nginx and Caddy configurations as
  * they are (R58): only a host name or an IP range may get there, never a
- * character that ends a directive or a block.
+ * character that ends a directive or a block. Plain predicates: the renderer
+ * uses them too, and it loads nothing but Node's own modules.
  */
 import { isIP } from 'node:net';
-import { z } from 'zod';
 
 const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/iu;
 
@@ -22,12 +22,13 @@ export function isIpOrCidr(value: unknown): value is string {
   return /^\d{1,3}$/u.test(prefix) && Number(prefix) <= (family === 4 ? 32 : 128);
 }
 
-export const hostNameSchema = z
-  .string()
-  .min(1)
-  .max(253)
-  .refine(isHostName, { message: 'Must be a host name' });
-
-export const ipOrCidrSchema = z
-  .string()
-  .refine(isIpOrCidr, { message: 'Must be an IP address or a CIDR range' });
+/** An ACME contact address: nothing a configuration could read as syntax. */
+export function isContactEmail(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 254 &&
+    /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/u.test(
+      value,
+    )
+  );
+}

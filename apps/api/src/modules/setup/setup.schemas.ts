@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
-import { hostNameSchema } from '../../common/network-values';
 import { planInputSchema } from '../plans/plans.schemas';
-import { ianaTimeZone } from '../settings/settings.schemas';
+import { hostNameSchema, ianaTimeZone } from '../settings/settings.schemas';
 
 const locale = z.enum(['ru', 'en']);
 const host = hostNameSchema;
