@@ -135,16 +135,47 @@ test('pnpm policy and Renovate exceptions are explicit', async () => {
   assert.match(npmrc, /^save-exact=false$/m);
   assert.match(npmrc, /^save-prefix=~$/m);
   assert.equal(packageManifest.packageManager, 'pnpm@11.26.0');
-  assert.deepEqual(renovate.ignoreDeps, [
-    'pnpm',
-    'prisma',
-    '@prisma/client',
-    '@prisma/adapter-pg',
-    'grammy',
-    'ioredis',
-  ]);
   assert.equal(renovate.minimumReleaseAge, '7 days');
   assert.equal(renovate.vulnerabilityAlerts.minimumReleaseAge, null);
+});
+
+// R117: `ignoreDeps` switched every update off for pnpm, Prisma, grammY and
+// ioredis — security patches included, and the "never automerge Prisma or
+// ioredis" rule never saw them — where 24.6 excludes only their next
+// majors. nginx 1.31 was not held back, there was no `github-actions` group,
+// and nothing asked Renovate for the `postgres`/`valkey` digest PRs.
+test('Renovate holds back only the majors section 24.6 names', async () => {
+  const renovate = JSON.parse(await readFile('renovate.json', 'utf8'));
+  const rules = renovate.packageRules;
+  const rule = (predicate) => rules.filter(predicate);
+  const allowed = (name, datasource) =>
+    rule(
+      (entry) =>
+        entry.allowedVersions &&
+        entry.matchPackageNames?.includes(name) &&
+        (!datasource || entry.matchDatasources?.includes(datasource)),
+    ).map((entry) => entry.allowedVersions);
+
+  assert.equal(renovate.ignoreDeps, undefined);
+  for (const [name, range] of [
+    ['pnpm', '<12'],
+    ['prisma', '<8'],
+    ['@prisma/*', '<8'],
+    ['grammy', '<2'],
+    ['ioredis', '<6'],
+  ])
+    assert.deepEqual(allowed(name), [range], name);
+  assert.deepEqual(allowed('nginx', 'docker'), ['<1.31']);
+
+  assert.ok(renovate.extends.includes('helpers:pinGitHubActionDigests'));
+  assert.equal(
+    rule((entry) => entry.matchManagers?.includes('github-actions'))[0]?.groupName,
+    'github-actions',
+  );
+  const digests = rule((entry) => entry.pinDigests === true);
+  assert.equal(digests.length, 1);
+  assert.deepEqual(digests[0].matchDatasources, ['docker']);
+  assert.deepEqual(digests[0].matchPackageNames, ['postgres', 'valkey/valkey']);
 });
 
 test('the Caddy proxy image pins the verified release and rate-limit module', async () => {

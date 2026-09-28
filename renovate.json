@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "dependencyDashboard": true,
   "minimumReleaseAge": "7 days",
   "vulnerabilityAlerts": {
@@ -8,7 +8,6 @@
     "labels": ["security"],
     "minimumReleaseAge": null
   },
-  "ignoreDeps": ["pnpm", "prisma", "@prisma/client", "@prisma/adapter-pg", "grammy", "ioredis"],
   "packageRules": [
     {
       "description": "Keep major updates behind an explicit maintainer decision",
@@ -59,6 +58,43 @@
       "description": "Group container image updates",
       "matchDatasources": ["docker"],
       "groupName": "docker-images"
+    },
+    {
+      "description": "Group GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "Section 24.6 exceptions: pnpm 12 waits for a separate decision",
+      "matchPackageNames": ["pnpm"],
+      "allowedVersions": "<12"
+    },
+    {
+      "description": "Section 24.6 exceptions: Prisma 8 waits for a separate decision",
+      "matchPackageNames": ["prisma", "@prisma/*"],
+      "allowedVersions": "<8"
+    },
+    {
+      "description": "Section 24.6 exceptions: grammY 2 waits for a separate decision",
+      "matchPackageNames": ["grammy"],
+      "allowedVersions": "<2"
+    },
+    {
+      "description": "Section 24.6 exceptions: ioredis 6 waits for a separate decision (ADR-006)",
+      "matchPackageNames": ["ioredis"],
+      "allowedVersions": "<6"
+    },
+    {
+      "description": "Section 24.6 exceptions: nginx stays on the stable 1.30 branch, never mainline 1.31",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["nginx"],
+      "allowedVersions": "<1.31"
+    },
+    {
+      "description": "Section 24.6: postgres and valkey are updated through digest pull requests",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres", "valkey/valkey"],
+      "pinDigests": true
     },
     {
       "description": "Never automerge money movement and provider clients",

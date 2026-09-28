@@ -1197,10 +1197,34 @@ push=true`); `release.yml` scans every image with Trivy (the rebuild's
   docs-link test), lint, format, typecheck, i18n-check (2312). Not verified
   until the workflows run on GitHub. VPS action: none.
 
-**Exact next:** package 3, R117 — `renovate.json` as 24.6 describes it
-(`allowedVersions` instead of `ignoreDeps`, `github-actions` group, digest
-PRs for `postgres`/`valkey`, nginx 1.30.x). M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+- **R117 Done (local) — Renovate switched off every update of pnpm, Prisma,
+  grammY and ioredis and asked for none of the updates 24.6 names.** Cause:
+  `renovate.json` put the five 24.6 exceptions in `ignoreDeps`, which
+  disables patches and security PRs too (and left the «never automerge
+  Prisma/ioredis» rule with nothing to match), where 24.6 holds back only
+  `pnpm 12`, `prisma 8`, `grammy 2`, `ioredis 6` and `nginx 1.31`; there was
+  no `github-actions` group and no digest PRs for `postgres`/`valkey`.
+  Repair: `allowedVersions` rules (`pnpm <12`, `prisma`/`@prisma/* <8`,
+  `grammy <2`, `ioredis <6`, docker `nginx <1.31`) replace `ignoreDeps`;
+  `helpers:pinGitHubActionDigests` and a `github-actions` group keep the
+  R116 pins current; `pinDigests` for docker `postgres` and
+  `valkey/valkey`. `docs/upgrade.md` says Renovate pins those two by
+  digest. Contracts checked (Context7, docs.renovatebot.com):
+  `allowedVersions` takes a range and may not share a rule with
+  `matchUpdateTypes`; docker tags take a `<` bound (Renovate's own
+  `workarounds` preset); the `github-actions` manager updates a SHA with a
+  version comment. `renovate-config-validator --strict` (latest Renovate,
+  2026-09-28) accepts the file as repository config. Evidence:
+  `tooling.test.mjs` «Renovate holds back only the majors section 24.6
+  names» red (`ignoreDeps` present) → green. Checks: `pnpm test` 69/70
+  (the known docs-link test), lint, format, typecheck, i18n-check (2312).
+  Expected after the push: Renovate's onboarding opens a pin-digests PR for
+  `postgres`/`valkey`. VPS action: none.
+
+**Exact next:** package 3, P-4 + R59 — a working rollback path (restore into
+an empty schema, `rr` keeps an explicit `RR_VERSION`, `restore.sh` does not
+start the new version, the pre-migrate dump named after the outgoing
+version, docs). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
