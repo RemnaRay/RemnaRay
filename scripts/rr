@@ -304,18 +304,33 @@ case "$command" in
       echo "tls:issue applies to RR_TLS_MODE=certbot; this deployment uses $tls_mode" >&2
       exit 1
     fi
-    domain=${RR_DOMAIN:-}
     email=${RR_ACME_EMAIL:-}
-    if [ -z "$domain" ] || [ -z "$email" ]; then
+    if [ -z "${RR_DOMAIN:-}" ] || [ -z "$email" ]; then
       echo "tls:issue requires RR_DOMAIN and RR_ACME_EMAIL in .env" >&2
       exit 2
     fi
-    echo "Issuing with certbot certonly for $domain (keeping an existing valid certificate)."
     wait_for_ready
+    # R118: one certificate for every name the site answers on — the redirect
+    # server of `extra_domains` presents it too. The renderer lists them, the
+    # configured domain first, from the settings (R57: a domain changed in the
+    # console); before its first render, `.env` names the domain.
+    domains=$(compose exec -T proxy-config cat /proxy-conf/certbot-domains 2>/dev/null || true)
+    if [ -z "$domains" ]; then domains=$RR_DOMAIN; fi
+    domain=''
+    set --
+    for name in $domains; do
+      if ! printf '%s' "$name" | grep -Eqx '[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?'; then
+        echo "Not a domain name: $name" >&2
+        exit 2
+      fi
+      if [ -z "$domain" ]; then domain=$name; fi
+      set -- "$@" -d "$name"
+    done
+    echo "Issuing with certbot certonly for $* (keeping an existing valid certificate)."
     compose stop certbot
     trap 'compose start certbot' EXIT
     compose run --rm --no-deps --entrypoint certbot certbot \
-      certonly --webroot -w /var/www/certbot -d "$domain" -m "$email" --agree-tos -n \
+      certonly --webroot -w /var/www/certbot "$@" -m "$email" --agree-tos -n \
       --cert-name "$domain" --keep-until-expiring \
       --deploy-hook 'sh /scripts/certbot.sh deploy'
     # Also sync for keep-until-expiring: Certbot does not run the deploy hook

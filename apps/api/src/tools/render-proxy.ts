@@ -22,6 +22,7 @@ import {
   TLS_MODES,
   applyRender,
   certbotCertificates,
+  certbotDomainsFile,
   certbotSite,
   customFiles,
   renderProfile,
@@ -124,6 +125,7 @@ async function main(): Promise<void> {
         certificatePresent: site.certificatePresent,
       }),
       ...customFiles(directory, profile as ProxyProfile),
+      ...(tlsMode === 'certbot' ? [certbotDomainsFile(wanted)] : []),
     ];
     const outcome = await applyRender(output, files, profile as ProxyProfile, validate);
     const note: Record<RenderOutcome, string> = {

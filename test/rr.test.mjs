@@ -31,6 +31,7 @@ fs.appendFileSync(process.env.RR_TEST_LOG, JSON.stringify(args) + '\\n');
 fs.appendFileSync(process.env.RR_TEST_LOG + '.env', JSON.stringify({ RR_VERSION: process.env.RR_VERSION, RR_REGISTRY: process.env.RR_REGISTRY }) + '\\n');
 if (process.env.RR_TEST_FAILURE && args.includes(process.env.RR_TEST_FAILURE)) process.exit(1);
 if (args[0] === 'ps' && process.env.RR_TEST_STALE_ID) console.log(process.env.RR_TEST_STALE_ID);
+if (args.includes('/proxy-conf/certbot-domains') && process.env.RR_TEST_CERTBOT_DOMAINS) console.log(process.env.RR_TEST_CERTBOT_DOMAINS);
 if (args.includes('config') && args.includes('--services')) console.log('proxy-caddy\\nproxy-nginx\\nedge\\ncertbot\\nproxy-config\\nproxy-reloader');
 // RR_TEST_IDS: {service: [container id before \`up\`, after it]}, answered in turn.
 if (args.includes('ps') && args.includes('-aq')) {
@@ -373,4 +374,25 @@ cat > /dev/null
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// R118: `tls:issue` asked for `RR_DOMAIN` alone, while the redirect server of
+// `extra_domains` presents the same certificate: HTTPS on every extra domain
+// failed on the name. It now takes the domains the renderer serves — the
+// configured domain first, then the extra ones — from `proxy-conf`, which
+// also follows a domain changed in the console (R57).
+test('tls:issue requests one certificate for the domain and its extra domains', () => {
+  const result = run(['tls:issue'], {}, '', {
+    RR_TEST_CERTBOT_DOMAINS: 'new.example.test\nwww.new.example.test\nnew.example.net',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const issue = result.calls.find((args) => args.includes('certonly'));
+  const domains = issue.flatMap((arg, index) => (issue[index - 1] === '-d' ? [arg] : []));
+  assert.deepEqual(domains, ['new.example.test', 'www.new.example.test', 'new.example.net']);
+  assert.equal(issue[issue.indexOf('--cert-name') + 1], 'new.example.test');
+
+  // A list that is not host names is not passed to certbot.
+  const odd = run(['tls:issue'], {}, '', { RR_TEST_CERTBOT_DOMAINS: 'x.example.test;rm -rf' });
+  assert.notEqual(odd.status, 0);
+  assert.ok(!odd.calls.some((args) => args.includes('certonly')));
 });

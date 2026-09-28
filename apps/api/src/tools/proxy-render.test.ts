@@ -7,6 +7,7 @@ import {
   applyRender,
   caddyHasRateLimit,
   certbotCertificatePresent,
+  certbotDomainsFile,
   certbotSite,
   customFiles,
   fill,
@@ -163,6 +164,18 @@ describe('proxy template rendering (section 21.2)', () => {
     expect(certbotSite('new.example.com', [])).toEqual({
       domain: 'new.example.com',
       certificatePresent: false,
+    });
+  });
+
+  it('lists the names the certbot certificate must cover, the domain first', () => {
+    expect(
+      certbotDomainsFile({
+        ...sources,
+        extraDomains: ['www.shop.example.com', 'shop.example.net'],
+      }),
+    ).toEqual({
+      name: 'certbot-domains',
+      content: 'shop.example.com\nwww.shop.example.com\nshop.example.net\n',
     });
   });
 

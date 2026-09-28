@@ -48,7 +48,11 @@ For builds without the module, or by preference. `RR_TLS_MODE=certbot` adds the
    HTTP.
 2. `./rr tls:issue` explicitly overrides the renewal service entrypoint and runs
    `certbot certonly --webroot`, answering the challenge from the shared
-   `certbot-webroot` volume. It uses the named domain lineage and keeps a valid
+   `certbot-webroot` volume. One certificate covers the domain and every
+   `extra_domains` entry (their redirect server presents it); the list comes
+   from the renderer (`certbot-domains` in `proxy-conf`), so it follows the
+   settings, and `.env`'s `RR_DOMAIN` before the first render. Adding an
+   extra domain later needs another `tls:issue`. It uses the named domain lineage and keeps a valid
    existing certificate until expiry. Rendering completes before the proxy is
    reloaded, and the command waits for HTTPS readiness.
 3. The certificate now exists, so the full configuration renders and

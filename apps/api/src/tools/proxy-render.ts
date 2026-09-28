@@ -468,3 +468,16 @@ export async function applyRender(
   rmSync(staging, { recursive: true, force: true });
   return 'promoted';
 }
+
+/**
+ * R118: the names one certbot certificate must cover — the configured domain
+ * first, then `extra_domains`, whose redirect server presents the same
+ * certificate. `rr tls:issue` reads it from the volume; it names the domain
+ * of the settings even while R57 keeps serving another one.
+ */
+export function certbotDomainsFile(sources: ProxySources): RenderedFile {
+  return {
+    name: 'certbot-domains',
+    content: `${[sources.domain, ...sources.extraDomains].join('\n')}\n`,
+  };
+}

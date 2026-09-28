@@ -1513,9 +1513,32 @@ issue-token` reached the API, guarded only by `X-Internal-Token`, the
   test), lint, format, typecheck, i18n-check (2312). VPS action: none (the
   stand runs `acme`).
 
-**Exact next:** package 3, R118 — `rr tls:issue` requests one certificate
-for the configured domain and its `extra_domains`. M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+- **R118 Done (local) — in certbot mode HTTPS failed on every extra domain.**
+  Cause: `rr tls:issue` requested `-d "$RR_DOMAIN"` only, while the
+  redirect server of `extra_domains` includes the same `tls-cert.inc`
+  (`/etc/letsencrypt/live/<domain>/`): `https://www.shop.com` presented the
+  certificate of `shop.com` and the browser refused it before the redirect.
+  `tls:issue` also took the domain from `.env`, never from the settings.
+  Repair: in certbot mode the renderer writes `certbot-domains` into
+  `proxy-conf` — the configured domain first, then the extra domains, from
+  the settings even while R57 serves another one; `tls:issue` reads it from
+  `proxy-config` (after `wait_for_ready`), falls back to `RR_DOMAIN`,
+  refuses anything that is not a host name, and passes one `-d` per name
+  with `--cert-name` the first. Contract checked (certbot `main.py`,
+  Context7): a changed domain set under an existing `--cert-name` asks
+  «update certificate?» with default yes, which `-n` takes. `docs/tls.md`
+  says so (a later extra domain needs another `tls:issue`). Evidence:
+  `rr.test.mjs` «tls:issue requests one certificate for the domain and its
+  extra domains» red (`[ 'shop.example.test' ]`) → green (three `-d`,
+  `--cert-name new.example.test`; a list with `;` is refused before
+  certbot runs); `proxy-render.test.ts` lists the names; the earlier
+  `tls:issue` tests unchanged. Checks: API tools 58, `pnpm test` 72/73 (the
+  known docs-link test), lint, format, typecheck, i18n-check (2312),
+  shellcheck. VPS action: none (the stand runs `acme`).
+
+**Exact next:** package 3, R29 (+ `providers.update` losing its config) and
+R67 (+ `RR_APP_KEY` = 32 bytes) — environment validation at start and key
+rotation. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
