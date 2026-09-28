@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import process from 'node:process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 
 const IMAGE = 'remnaray/backup:test';
@@ -520,3 +521,149 @@ test(
     }
   },
 );
+
+/**
+ * The optional S3 copy of section 20.5, against a real S3 server (SeaweedFS,
+ * which checks the signature) with the image's own `mcli`. A wrapper ahead of
+ * it on the PATH records every command line, as `ps` on the host shows it.
+ */
+function s3Project(name) {
+  const directory = mkdtempSync(join(tmpdir(), `rr-${name}-`));
+  const project = `rr${name}${String(process.pid)}`;
+  const composeFile = join(directory, 'compose.yaml');
+  const secret = 'rr/Secret+x9';
+  execFileSync('mkdir', [
+    '-p',
+    join(directory, 'backups'),
+    join(directory, 'wrap'),
+    join(directory, 'themes'),
+  ]);
+  writeFileSync(
+    join(directory, 's3.json'),
+    JSON.stringify({
+      identities: [
+        {
+          name: 'rr',
+          credentials: [{ accessKey: 'rrkey', secretKey: secret }],
+          actions: ['Admin', 'Read', 'Write', 'List', 'Tagging'],
+        },
+      ],
+    }),
+  );
+  writeFileSync(
+    join(directory, 'wrap', 'mcli'),
+    '#!/bin/sh\n(umask 022; printf "%s\\n" "$*" >> /argv/log)\nexec /usr/bin/mcli "$@"\n',
+    { mode: 0o755 },
+  );
+  writeFileSync(join(directory, 'themes', 'theme.json'), '{"v":1}');
+  writeFileSync(
+    composeFile,
+    `name: ${project}
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment: { POSTGRES_USER: remnaray, POSTGRES_PASSWORD: secret, POSTGRES_DB: remnaray }
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U remnaray -d remnaray']
+      interval: 1s
+      retries: 60
+  s3:
+    image: chrislusf/seaweedfs
+    command: [server, -s3, -s3.config=/etc/s3.json, -dir=/data]
+    volumes: [./s3.json:/etc/s3.json:ro]
+  backup:
+    image: ${IMAGE}
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: remnaray
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: remnaray
+      RR_BACKUP_S3_ENDPOINT: http://s3:8333
+      RR_BACKUP_S3_BUCKET: backups
+      RR_BACKUP_S3_PREFIX: shop
+      RR_BACKUP_S3_ACCESS_KEY: rrkey
+      RR_BACKUP_S3_SECRET_KEY: '${secret}'
+      PATH: /wrap:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ./backups:/backups
+      - ${SCRIPTS}:/scripts:ro
+      - ./wrap:/wrap:ro
+      - ./argv:/argv
+      - ./themes:/src/themes:ro
+    depends_on: { postgres: { condition: service_healthy } }
+`,
+  );
+  const compose = (...args) => docker(['compose', '-f', composeFile, ...args]);
+  // Straight to the server, with the credentials the test knows.
+  const s3 = (...args) =>
+    spawnSync(
+      'docker',
+      [
+        'compose',
+        '-f',
+        composeFile,
+        'run',
+        '--rm',
+        '-T',
+        '--no-deps',
+        '-e',
+        `MC_HOST_s3=http://rrkey:${secret}@s3:8333`,
+      ].concat(['--entrypoint', '/usr/bin/mcli', 'backup', ...args]),
+      { encoding: 'utf8' },
+    );
+  const start = async () => {
+    compose('up', '-d', '--wait', 'postgres');
+    compose('up', '-d', 's3');
+    for (let attempt = 0; ; attempt += 1) {
+      const made = s3('mb', '--ignore-existing', 's3/backups');
+      if (made.status === 0) break;
+      if (attempt > 60) throw new Error(`the S3 server never answered: ${made.stderr}`);
+      await sleep(1000);
+    }
+  };
+  const once = () =>
+    spawnSync('docker', ['compose', '-f', composeFile, 'run', '--rm', '-T', 'backup', 'once'], {
+      encoding: 'utf8',
+    });
+  const cleanup = () => {
+    docker(['compose', '-f', composeFile, 'down', '-v'], { expectSuccess: false });
+    docker(
+      [
+        'run',
+        '--rm',
+        '-v',
+        `${directory}:/d`,
+        '--entrypoint',
+        'rm',
+        IMAGE,
+        '-rf',
+        '/d/backups',
+        '/d/argv',
+      ],
+      {
+        expectSuccess: false,
+      },
+    );
+  };
+  return { directory, secret, compose, s3, start, once, cleanup };
+}
+
+// R111: `mcli alias set rr <endpoint> <access> <secret>` put the S3 keys on
+// the command line of a process every user of the host sees in `ps`.
+test('R111: the S3 copy never puts the keys on a command line', { timeout: 600_000 }, async () => {
+  docker(['build', '-f', 'deploy/backup/Dockerfile', '-t', IMAGE, '.']);
+  const project = s3Project('s3argv');
+  try {
+    await project.start();
+    const result = project.once();
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const listing = project.s3('ls', 's3/backups/shop/');
+    assert.match(listing.stdout, /remnaray-\d{8}-\d{4}\.dump/u, listing.stdout + listing.stderr);
+    const argv = readFileSync(join(project.directory, 'argv', 'log'), 'utf8');
+    assert.ok(argv.trim().length > 0, 'mcli was never run');
+    assert.ok(!argv.includes(project.secret), argv);
+    assert.ok(!argv.includes('rrkey'), argv);
+  } finally {
+    project.cleanup();
+  }
+});

@@ -1342,8 +1342,29 @@ others`) → green. Checks: `pnpm test` 71/72 (the known docs-link test),
   VPS action: `chmod 600 /opt/test/backups/*.dump
 /opt/test/backups/*.tar.gz` for the files written before the deploy.
 
-**Exact next:** package 3, R111 — S3 keys out of `mcli` argv. M5 stays NOT
-VERIFIED; TASK-M5-004 is unchanged.
+- **R111 Done (local) — the S3 keys were on a command line every host user
+  could read.** Cause: `upload()` ran `mcli alias set rr <endpoint>
+<access> <secret>`; container processes are visible in the host's `ps`,
+  so the keys of the backup bucket leaked for the life of that process.
+  Repair: the alias comes from `MC_HOST_rr=<scheme>://<access>:<secret>@<host>`
+  in `mcli`'s own environment (readable only by its user and root); an
+  endpoint without a scheme is taken as `https://`. Contract checked: mc
+  `cmd/config.go` `parseEnvURLStr` (Context7: the `MC_HOST_<alias>` forms,
+  keys taken raw from the userinfo, split on the last `@`), and by hand
+  against SeaweedFS with the image's `mcli` 2025-08-13 (a secret with `/`
+  and `+` works, a wrong one is refused). Evidence: `m5.backup` «R111: the
+  S3 copy never puts the keys on a command line» (SeaweedFS S3 with a real
+  signature check; a wrapper records every `mcli` command line) red
+  (`--quiet alias set rr http://s3:8333 rrkey rr/Secret+x9`) → green (the
+  dump is in the bucket, no key in any command line). A secret containing
+  `:` would be read as a session token by `mcli` (its `hostKeyTokens`
+  form); S3 secrets do not use it. Checks: `pnpm test` 71/72 (the known
+  docs-link test), lint, format, typecheck, i18n-check (2312), shellcheck
+  clean. VPS action: none (S3 is not configured on the stand).
+
+**Exact next:** package 3, R112 — an S3 or archive failure shows in
+`.last-status`, the files archive goes to S3 and has a weekly copy. M5 stays
+NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

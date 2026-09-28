@@ -67,10 +67,15 @@ upload() {
   file=$1
   [ -n "${RR_BACKUP_S3_BUCKET:-}" ] || return 0
   [ -n "${RR_BACKUP_S3_ENDPOINT:-}" ] || return 0
-  mcli --quiet alias set rr "$RR_BACKUP_S3_ENDPOINT" \
-    "${RR_BACKUP_S3_ACCESS_KEY:-}" "${RR_BACKUP_S3_SECRET_KEY:-}" >/dev/null
+  # The keys reach `mcli` through its environment (`MC_HOST_<alias>`), never
+  # a command line, which every user of the host sees in `ps` (R111).
+  case "$RR_BACKUP_S3_ENDPOINT" in
+    *://*) scheme=${RR_BACKUP_S3_ENDPOINT%%://*} host=${RR_BACKUP_S3_ENDPOINT#*://} ;;
+    *) scheme=https host=$RR_BACKUP_S3_ENDPOINT ;;
+  esac
   target="rr/$RR_BACKUP_S3_BUCKET/${RR_BACKUP_S3_PREFIX:+$RR_BACKUP_S3_PREFIX/}$(basename "$file")"
-  mcli --quiet cp "$file" "$target" >/dev/null
+  MC_HOST_rr="$scheme://${RR_BACKUP_S3_ACCESS_KEY:-}:${RR_BACKUP_S3_SECRET_KEY:-}@${host%/}" \
+    mcli --quiet cp "$file" "$target" >/dev/null
   log "uploaded $(basename "$file") to $target"
 }
 

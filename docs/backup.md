@@ -42,7 +42,9 @@ and `… rotate` applies the retention without taking one.
 
 Set `RR_BACKUP_S3_ENDPOINT` and `RR_BACKUP_S3_BUCKET` — and the keys, and
 optionally `RR_BACKUP_S3_PREFIX` — and each dump is copied with the MinIO
-client after it is written. With the variables unset the step is skipped
+client after it is written. The keys reach the client through its environment
+(`MC_HOST_rr`), never a command line another user of the host could see in
+`ps`; an endpoint without a scheme is taken as `https://`. With the variables unset the step is skipped
 silently; the local copy is the same either way. A failed upload does not fail
 the backup, because a dump on disk is better than no dump at all, and it is
 logged.
