@@ -1032,9 +1032,33 @@ source_transaction_id = $1 FOR UPDATE` and reads the reward after it; the
   `m2.payment-recovery` (refund paths) pass. Checks: API 434, lint, format,
   typecheck, i18n-check (2312). VPS action: none.
 
-**Exact next:** package 4, L-11 — a transaction and its entries carry the
-invoice amount unless the invoice is underpaid (11.2); R135 is closed by F37.
-M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R135 — closed by F37 (owner decision 2026-09-28).** No code in this
+  package: rewards only on top-ups come with the F37 model (О-12), which
+  records the deviation from 15.1–15.2. Until F37 a purchase paid at a
+  provider or from the balance still accrues a reward as 15.2 reads.
+
+- **L-11 Done (local) — a purchase's transaction amount disagreed with its
+  entries when the payment differed from the invoice.** Cause: `applyEvent`
+  wrote `transactions.amount_minor = paid` for every `paid` event, while the
+  purchase entries (`provider_clearing → user`, `user → revenue`) carried
+  the invoice amount; a payment within 2 % below the invoice, or above it,
+  left the two apart. The to-balance branches (late, top-up, plan off sale)
+  credited `paid` although 11.2 credits the invoice amount there. Repair
+  (owner decision: 11.2 literally): `credit` is what was paid only for an
+  underpaid invoice (< 98 %, EX-12); otherwise it is the invoice amount, and
+  the transaction, its entries and the `payment.to_balance` notice all carry
+  it. An overpayment is not recorded anywhere (as 11.2). The second Stars
+  charge (owner decision 2026-09-25) is unchanged. Invariant: a payment's
+  transaction amount equals each of its entries. Evidence: `m2.payment` — a
+  29 900 purchase paid 30 500, red (transaction 30 500, entries 29 900) →
+  green (29 900 both), paid 29 500 → 29 900 both; a late 5000 top-up paid
+  5100 credits 5000; a 5000 top-up paid 4000 is `underpaid` and records
+  4000; the ledger audit stays clean. Checks: `test:m2` suites 4/4, API
+  434, lint, format, typecheck, i18n-check (2312). VPS action: none.
+
+**Exact next:** package 4, L-20 — `payment_events` refuses DELETE and
+TRUNCATE (and TRUNCATE is refused on every immutable table). M5 stays NOT
+VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

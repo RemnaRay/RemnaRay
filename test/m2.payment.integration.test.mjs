@@ -592,6 +592,100 @@ test(
       );
       assert.equal(await prisma.paymentEvent.count(), events);
 
+      // Repair queue L-11 (11.2): a transaction and its entries carry the
+      // invoice amount — a payment within 2 % below it or above it counts as
+      // exact — and only an underpaid invoice (< 98 %) records what was paid.
+      const pay = async (target, eventId, paidAmountMinorRub) => {
+        const paidBody = JSON.stringify({
+          eventId,
+          providerInvoiceId: target.providerInvoiceId,
+          type: 'paid',
+          paidAmountMinorRub,
+        });
+        await service.receiveWebhook(
+          'mock',
+          Buffer.from(paidBody),
+          {
+            'x-mock-signature': createHmac('sha256', 'mock-secret').update(paidBody).digest('hex'),
+          },
+          '127.0.0.1',
+        );
+      };
+      const recorded = async (target) => {
+        const [row] = await prisma.transaction.findMany({ where: { invoiceId: target.id } });
+        const entries = await prisma.ledgerEntry.findMany({
+          where: { transactionId: row.id },
+          orderBy: { id: 'asc' },
+        });
+        return {
+          type: row.type,
+          amountMinor: row.amountMinor,
+          entries: entries.map((e) => e.amountMinor),
+        };
+      };
+      const overpaid = await service.createInvoice({
+        userId: user.id,
+        kind: 'purchase',
+        planId: plan.id,
+        provider: 'mock',
+        idempotencyKey: 'm2-overpaid',
+      });
+      await pay(overpaid, 'paid-over', '30500');
+      assert.deepEqual(await recorded(overpaid), {
+        type: 'purchase',
+        amountMinor: 29900n,
+        entries: [29900n, 29900n],
+      });
+      const nearly = await service.createInvoice({
+        userId: user.id,
+        kind: 'purchase',
+        planId: plan.id,
+        provider: 'mock',
+        idempotencyKey: 'm2-nearly',
+      });
+      await pay(nearly, 'paid-nearly', '29500');
+      assert.deepEqual(await recorded(nearly), {
+        type: 'purchase',
+        amountMinor: 29900n,
+        entries: [29900n, 29900n],
+      });
+      const balanceOf = async () =>
+        (await prisma.account.findFirstOrThrow({ where: { userId: user.id, kind: 'user' } }))
+          .balanceMinor;
+      const lateOver = await service.createInvoice({
+        userId: user.id,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'm2-late-over',
+      });
+      await repository.expire(new Date(Date.now() + 31 * 60_000));
+      const beforeLateOver = await balanceOf();
+      await pay(lateOver, 'paid-late-over', '5100');
+      assert.deepEqual(await recorded(lateOver), {
+        type: 'topup',
+        amountMinor: 5000n,
+        entries: [5000n],
+      });
+      assert.equal(await balanceOf(), beforeLateOver + 5000n);
+      const short = await service.createInvoice({
+        userId: user.id,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'm2-short',
+      });
+      await pay(short, 'paid-short', '4000');
+      assert.equal(
+        (await prisma.invoice.findUnique({ where: { id: short.id } })).status,
+        'underpaid',
+      );
+      assert.deepEqual(await recorded(short), {
+        type: 'topup',
+        amountMinor: 4000n,
+        entries: [4000n],
+      });
+
       // Repair queue P-6: every account the payment paths posted to — the
       // users, `provider_clearing`, `revenue` and `adjustment` — agrees with
       // its entries under the one sign convention.

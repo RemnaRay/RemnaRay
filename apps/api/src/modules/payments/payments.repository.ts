@@ -547,7 +547,11 @@ export class PaymentsRepository {
             provider: invoice.provider,
             revenue: !toBalance,
           });
-          const credit = paid > 0n ? paid : invoice.amountMinor;
+          // Section 11.2 (repair queue L-11): a payment within the tolerance,
+          // or above the invoice, counts as the invoice amount — the
+          // transaction, its entries and the notice all carry it; only an
+          // underpaid invoice (EX-12) credits what was actually paid.
+          const credit = underpaid && paid > 0n ? paid : invoice.amountMinor;
           await tx.invoice.update({
             where: { id: invoice.id },
             data: { status: underpaid ? 'underpaid' : 'paid', paidAt: new Date() },
