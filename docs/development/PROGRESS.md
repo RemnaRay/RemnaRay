@@ -1678,9 +1678,52 @@ VALKEYCLI_AUTH= valkey valkey-cli ping` answers `NOAUTH`.
   known docs-link test), lint, format, typecheck, i18n-check (2314). VPS
   action: none (the stand runs `acme`).
 
-**Exact next:** package 3's integration suites (`test:m1`, `test:m2`,
-`test:m4`, `test:m5`) and its PROGRESS record. M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+**Package 3 status (2026-09-29): repairs done and verified locally; NOT
+VERIFIED on CI, a release or the VPS.** 24 commits (`3d30662` … `26b4c11`):
+P-3 + L-35, R114, R115, R116, R117, P-4, R59, R60, R91, R110, R111, R112,
+R58 (+ the follow-up that keeps the renderer free of package imports), P-20,
+R56, R57, R118, R67, R29 (two parts), P-21, L-33, L-36; P-5 was done after
+package 0. After the last commit: `test:m1` 9/9 (with the new `m1.env` and
+`m1.rotate-key`), `test:m2` 8/8, `test:m5` 18/18 (with the new
+`m5.valkey-auth`), `test:m4` 6/7 — the failure is the known intermittent
+ticket-number gap of `m4.support` (queued for package 9; the second ticket
+got 4 instead of 2); the file passed twice on its own right after, and
+package 3 touched nothing in support. Unit suites: API 452, worker 41, bot
+97, web 70, config 10, queues 16, domain 14, db 9; `pnpm test` 77/78 (the
+known local-only docs-link test); lint, format, typecheck,
+`typecheck:e2e`, i18n-check (2314). The full-stack smoke
+(`deploy/ci/proxy-smoke.sh nginx`, images built locally): steps 1–9 pass —
+the stand starts with the Valkey password, the backup healthcheck ahead of
+`migrate` and the shared site locations, and a settings change goes through
+the staged validation and reloads within 15 s; step 10 (the browser suite)
+could not run on this machine — Chromium lacks `libnspr4.so` (its system
+packages need `playwright install --with-deps`) and the host resolver
+answers `rr.test` with 198.18.0.93 — so it is left to CI. Not yet verified:
+CI on GitHub (after the push); the release pipeline on a real tag (R114,
+R115, R116; `cosign verify` of P-5); Renovate's first run with the new
+`renovate.json` (R117); `pnpm test:e2e`; the caddy smoke profile; everything
+on the stand.
+
+Recorded deviations and decisions of this package: 17.2 lists seven `.env`
+variables — `VALKEY_PASSWORD` is the eighth (owner decision О-17), and
+`POSTGRES_PASSWORD` is required only without `DATABASE_URL` (R67); 20.5's
+`pg_restore --clean --if-exists` into the live database became a restore
+into a fresh database swapped in on success (P-4, the queue's decision);
+21.2's template excerpts show absolute include paths, the templates now
+include each other by relative path so a staged render validates as a set
+(P-20); the pre-migrate dump is named after the last applied migration and
+the time, in `backups/pre-migrate/` (R59, R60, R91 — `migrate` runs from the
+new image and cannot know the old image's version). Found while repairing
+and queued for package 12: `maintenance.tls-check` checks `RR_DOMAIN`, not
+`domain.main`, and does not check the certificate's name (R57).
+
+VPS actions for package 3 are in the working queue's «Действия на VPS»;
+before the deploy the stand's `.env` needs `VALKEY_PASSWORD` and loses its
+`VALKEY_URL` line (P-21), otherwise compose refuses to run.
+
+**Exact next:** F37 — «purchases only from the balance» (owner decision
+О-12): brainstorm → design → plan → implementation, one commit per stage,
+then package 5. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
