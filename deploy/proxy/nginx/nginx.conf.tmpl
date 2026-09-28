@@ -42,15 +42,15 @@ http {
 
     proxy_cache_path /var/cache/nginx/proxy levels=1:2 keys_zone=rr_static:10m max_size=512m inactive=7d use_temp_path=off;
 
-    include /etc/nginx/conf.d/ratelimits.inc;
+    include ratelimits.inc;
 
     map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 
     upstream rr_web { server web:3001; keepalive 32; }
     upstream rr_api { server api:3000; keepalive 32; }
 
-    include /etc/nginx/conf.d/tls-{{TLS_MODE}}.inc;
-    include /etc/nginx/conf.d/site.conf;
+    include tls-{{TLS_MODE}}.inc;
+    include site.conf;
 
     # Section 20.2: nginx's own counters, on loopback inside the container.
     # Nothing outside the container can reach the port, and the format is for

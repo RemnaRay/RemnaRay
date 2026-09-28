@@ -20,16 +20,16 @@ server {
     http2 on;
     server_name {{DOMAIN}};
 
-    include /etc/nginx/conf.d/tls-cert.inc;
+    include tls-cert.inc;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d; ssl_session_cache shared:rr_ssl:10m; ssl_session_tickets off;
     add_header Alt-Svc 'h3=":443"; ma=86400' always;
 
-    include /etc/nginx/conf.d/security-headers.inc;
+    include security-headers.inc;
     limit_conn rr_conn 50;
 
-    include /etc/nginx/conf.d/common-proxy.inc;
+    include common-proxy.inc;
 
     # --- provider and panel webhooks: POST only, their own limit, 256k body ---
     location ^~ /webhooks/ {
@@ -123,5 +123,5 @@ server {
 
     location = /healthz { access_log off; return 200 "ok\n"; add_header Content-Type text/plain; }
 
-    include /etc/nginx/conf.d/custom.d/*.conf;
+    include custom.d/*.conf;
 }

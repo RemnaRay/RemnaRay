@@ -6,6 +6,11 @@
  *
  * nginx is validated first: a configuration that fails `nginx -t` is never
  * applied, the previous one keeps serving and an alert is raised.
+ *
+ * P-20: before a changed render becomes live, `render-proxy` asks here, on
+ * `rr:proxy.validate`, whether the running proxy accepts the staged files;
+ * the answer goes back on `rr:proxy.validated`, and a refusal is reported
+ * like a refused reload.
  */
 import { watch, rmSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
@@ -15,6 +20,8 @@ import { dockerAgent, dockerExec, type ExecResult } from './docker-exec';
 import { REPORT_RETRY_MS, ReloadReports, reportSender } from './reload-report';
 
 const RELOAD_CHANNEL = 'rr:proxy.reload';
+const VALIDATE_CHANNEL = 'rr:proxy.validate';
+const VALIDATED_CHANNEL = 'rr:proxy.validated';
 const CERTBOT_FLAG_DIRECTORY = '/run/remnaray/certbot';
 const CERTBOT_FLAG = '.renewed';
 
@@ -30,6 +37,13 @@ export function reloadCommands(profile: string): string[][] {
         ['nginx', '-t', '-c', '/etc/nginx/conf.d/nginx.conf'],
         ['nginx', '-c', '/etc/nginx/conf.d/nginx.conf', '-s', 'reload'],
       ];
+}
+
+/** The staged render (`proxy-render.ts` `STAGING_DIRECTORY`), as the proxy sees it. */
+export function validationCommand(profile: string): string[] {
+  return profile === 'caddy'
+    ? ['caddy', 'validate', '--config', '/etc/caddy/.staging/Caddyfile', '--adapter', 'caddyfile']
+    : ['nginx', '-t', '-c', '/etc/nginx/conf.d/.staging/nginx.conf'];
 }
 
 async function main(): Promise<void> {
@@ -98,12 +112,44 @@ async function main(): Promise<void> {
   // until it is recorded.
   setInterval(() => void reports.flush(), REPORT_RETRY_MS);
 
-  const subscriber = new Redis(process.env.VALKEY_URL ?? 'redis://valkey:6379/0', {
-    maxRetriesPerRequest: null,
-  });
-  await subscriber.subscribe(RELOAD_CHANNEL);
-  subscriber.on('message', (channel) => {
+  const valkeyUrl = process.env.VALKEY_URL ?? 'redis://valkey:6379/0';
+  const publisher = new Redis(valkeyUrl, { maxRetriesPerRequest: null });
+
+  // A proxy that cannot run the check — not started yet, restarting — is
+  // `unavailable`, not a refusal: the renderer keeps the live files and asks
+  // again later.
+  const validate = async (id: string): Promise<void> => {
+    let verdict: 'ok' | 'invalid' | 'unavailable';
+    let output: string;
+    try {
+      const result = await dockerExec(container, validationCommand(profile), agent);
+      verdict = result.exitCode === 0 ? 'ok' : 'invalid';
+      output = result.output;
+    } catch (error) {
+      verdict = 'unavailable';
+      output = String(error);
+    }
+    process.stdout.write(`validation ${id}: ${verdict} ${output}\n`);
+    if (verdict === 'invalid') await reports.add(false, output);
+    await publisher.publish(VALIDATED_CHANNEL, JSON.stringify({ id, verdict }));
+  };
+
+  const subscriber = new Redis(valkeyUrl, { maxRetriesPerRequest: null });
+  await subscriber.subscribe(RELOAD_CHANNEL, VALIDATE_CHANNEL);
+  subscriber.on('message', (channel, message) => {
     if (channel === RELOAD_CHANNEL) void reload(RELOAD_CHANNEL);
+    if (channel === VALIDATE_CHANNEL) {
+      let id: unknown;
+      try {
+        ({ id } = JSON.parse(message) as { id?: unknown });
+      } catch {
+        return;
+      }
+      if (typeof id === 'string' && id.length <= 100)
+        void validate(id).catch((error: unknown) => {
+          process.stderr.write(`Proxy validation failed: ${String(error)}\n`);
+        });
+    }
   });
 
   // certbot's `--deploy-hook` touches this file after a renewal; a graceful

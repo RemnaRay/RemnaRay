@@ -168,3 +168,140 @@ test(
     }
   },
 );
+
+/**
+ * P-20: the renderer stages a changed configuration and asks the reloader to
+ * validate it in the running proxy before it becomes live. A Docker Engine
+ * stand-in that answers every exec at once with the exit code the test sets,
+ * or refuses to create one, as the Engine does for a stopped container.
+ */
+function answeringEngine(socketPath) {
+  const state = { commands: [], exitCode: 0, createStatus: 201 };
+  let next = 0;
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const url = request.url ?? '';
+      response.setHeader('content-type', 'application/json');
+      if (/\/containers\/[^/]+\/exec$/u.test(url)) {
+        state.commands.push(JSON.parse(Buffer.concat(chunks).toString('utf8')).Cmd);
+        if (state.createStatus !== 201) {
+          response.writeHead(state.createStatus);
+          response.end('{"message":"container is not running"}');
+          return;
+        }
+        next += 1;
+        response.writeHead(201);
+        response.end(JSON.stringify({ Id: `exec${String(next)}` }));
+        return;
+      }
+      response.writeHead(200);
+      response.end(/\/start$/u.test(url) ? '' : JSON.stringify({ ExitCode: state.exitCode }));
+    });
+  });
+  return {
+    state,
+    listen: () => new Promise((done) => server.listen(socketPath, done)),
+    close: () => new Promise((done) => server.close(done)),
+  };
+}
+
+test(
+  'P-20: proxy-reloader validates a staged configuration and answers the renderer',
+  { timeout: 120_000 },
+  async () => {
+    const valkey = await new GenericContainer('valkey/valkey:9.1-alpine')
+      .withExposedPorts(6379)
+      .start();
+    const directory = mkdtempSync(join(tmpdir(), 'rr-validate-'));
+    const engine = answeringEngine(join(directory, 'docker.sock'));
+    await engine.listen();
+    const reports = [];
+    const api = createServer((request, response) => {
+      const chunks = [];
+      request.on('data', (chunk) => chunks.push(chunk));
+      request.on('end', () => {
+        reports.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        response.setHeader('content-type', 'application/json');
+        response.end('{"recorded":true}');
+      });
+    });
+    await new Promise((done) => api.listen(0, '127.0.0.1', done));
+    const valkeyUrl = `redis://${valkey.getHost()}:${String(valkey.getMappedPort(6379))}/0`;
+    const reloader = spawn(
+      'node',
+      ['apps/api/dist/tools/proxy-reloader.js', '--profile', 'nginx'],
+      {
+        env: {
+          ...process.env,
+          VALKEY_URL: valkeyUrl,
+          DOCKER_SOCKET: join(directory, 'docker.sock'),
+          RR_PROXY_CONTAINER: 'proxy',
+          INTERNAL_API_URL: `http://127.0.0.1:${String(api.address().port)}`,
+          RR_INTERNAL_TOKEN: 'proxy-reloader-test',
+        },
+        stdio: 'pipe',
+      },
+    );
+    const log = [];
+    for (const stream of [reloader.stdout, reloader.stderr])
+      stream.on('data', (chunk) => log.push(String(chunk)));
+    // The renderer's side: ask, and read the answer from the reply channel.
+    const answers = spawn(
+      'docker',
+      ['exec', '-i', valkey.getId(), 'valkey-cli', 'subscribe', 'rr:proxy.validated'],
+      { stdio: 'pipe' },
+    );
+    const replies = [];
+    answers.stdout.on('data', (chunk) => replies.push(String(chunk)));
+    const verdict = async (id) => {
+      await valkey.exec(['valkey-cli', 'publish', 'rr:proxy.validate', JSON.stringify({ id })]);
+      await waitFor(() => replies.join('').includes(`"id":"${id}"`), 10_000, `the answer to ${id}`);
+      // Without a terminal `valkey-cli` prints each message field on a line.
+      const line = replies
+        .join('')
+        .split('\n')
+        .find((entry) => entry.startsWith('{') && entry.includes(`"id":"${id}"`));
+      return JSON.parse(line).verdict;
+    };
+
+    try {
+      await waitFor(
+        () => log.join('').includes('watching rr:proxy.reload'),
+        30_000,
+        'the reloader',
+      );
+      await waitFor(
+        () => replies.join('').includes('rr:proxy.validated'),
+        10_000,
+        'the subscription',
+      );
+
+      assert.equal(await verdict('a'), 'ok');
+      assert.deepEqual(engine.state.commands.at(-1), [
+        'nginx',
+        '-t',
+        '-c',
+        '/etc/nginx/conf.d/.staging/nginx.conf',
+      ]);
+
+      engine.state.exitCode = 1;
+      assert.equal(await verdict('b'), 'invalid');
+      // A refusal is recorded and raises `proxy.config_invalid`, as a refused
+      // reload does.
+      await waitFor(() => reports.some((report) => report.ok === false), 10_000, 'the report');
+
+      engine.state.createStatus = 409;
+      assert.equal(await verdict('c'), 'unavailable');
+      assert.equal(reports.filter((report) => report.ok === false).length, 1);
+    } finally {
+      answers.kill('SIGTERM');
+      reloader.kill('SIGTERM');
+      await new Promise((done) => api.close(done));
+      await engine.close();
+      rmSync(directory, { recursive: true, force: true });
+      await valkey.stop();
+    }
+  },
+);

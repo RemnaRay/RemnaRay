@@ -1411,9 +1411,51 @@ others`) → green. Checks: `pnpm test` 71/72 (the known docs-link test),
   format, typecheck, i18n-check (2312). VPS action: none (the stand's
   values are valid host names).
 
-**Exact next:** package 3, P-20 — the proxy rendered into a temporary
-directory, switched only after `nginx -t`/`caddy validate`, with a
-last-known-good. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **P-20 Done (local) — a render the proxy refused was already live, so the
+  proxy failed at its next start.** Cause: `render-proxy` wrote every render
+  straight into the live `proxy-conf` files and only then published
+  `rr:proxy.reload`; a refused `nginx -t` was reported and the running
+  process kept its configuration, but the files on disk were the refused
+  ones — after a host reboot or `rr up` the proxy did not start, the console
+  with it (reproduced by the verification with `allow 10.0.0.1/33;`), and
+  only psql could repair it; `docs/proxy.md` claimed the opposite. Repair:
+  the live files are the last configuration known to be good. A render that
+  changes them is written to `.staging/` in the same volume and
+  `render-proxy` asks `proxy-reloader` (`rr:proxy.validate` →
+  `rr:proxy.validated`) to run `nginx -t -c /etc/nginx/conf.d/.staging/
+nginx.conf` or `caddy validate --config /etc/caddy/.staging/Caddyfile` in
+  the running proxy; `ok` promotes it (atomic renames) and publishes the
+  reload, `invalid` keeps the live files and is reported like a refused
+  reload (audit, `proxy.config_invalid`), `unavailable` (no proxy yet, or
+  nobody subscribed) keeps them and retries every 15 s. The very first
+  render, with nothing live, is written directly; `rr proxy:render` exits
+  1 when refused or unchecked. The templates include each other by relative
+  path (nginx resolves them against the `-c` file's directory, Caddy
+  against the Caddyfile's — both checked in the images), so the staged
+  files are validated as a set; the `custom.d` READMEs and `docs/proxy.md`
+  say so. Recorded: the spec's template excerpts (21.2) show absolute
+  include paths; the relative ones name the same files. Evidence:
+  `proxy-render.test.ts` — first render written, a refused one keeps the
+  live files and the staged copy is what was checked, `unavailable` keeps
+  them, `ok` promotes and clears the staging, relative includes — red
+  (`applyRender` missing) → green; `m5.proxy-reloader` «P-20:
+  proxy-reloader validates a staged configuration…» (fake Engine: exit 0 →
+  `ok` with the staging command, exit 1 → `invalid` and a report, 409 →
+  `unavailable`, no report) red (no answer) → green; `m5.proxy` M5-002
+  with the real nginx image, renderer and reloader — an owner's broken
+  `custom.d` file with a domain change is refused, the live `site.conf`
+  keeps the previous domain, a fresh `nginx -t` on the live files passes,
+  and after removing the file the next change goes live — red on the old
+  code (the refused `fourth.example.test` was live) → green; the rest of
+  `m5.proxy` (Caddy's relative `import` included) green except M5-004,
+  broken by R58 (next entry). Checks: API 444, `pnpm test` 71/72 (the
+  known docs-link test), lint, format, typecheck, i18n-check (2312). VPS
+  action: none.
+
+**Exact next:** package 3, the R58 follow-up — `proxy-render.js` must load
+without the application's packages (`m5.proxy` M5-004 mounts it alone); then
+R56, R57, R118 (certbot bootstrap). M5 stays NOT VERIFIED; TASK-M5-004 is
+unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

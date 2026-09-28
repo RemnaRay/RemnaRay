@@ -9,12 +9,12 @@ server {
 
     location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type text/plain; }
 
-    include /etc/nginx/conf.d/security-headers.inc;
-    include /etc/nginx/conf.d/common-proxy.inc;
+    include security-headers.inc;
+    include common-proxy.inc;
 
     location ^~ /api/ { limit_req zone=rr_api burst=30 nodelay; proxy_pass http://rr_api; }
     location ^~ /setup { limit_req zone=rr_auth burst=30 nodelay; proxy_pass http://rr_web; }
     location / { limit_req zone=rr_general burst=50 nodelay; proxy_pass http://rr_web; }
 
-    include /etc/nginx/conf.d/custom.d/*.conf;
+    include custom.d/*.conf;
 }

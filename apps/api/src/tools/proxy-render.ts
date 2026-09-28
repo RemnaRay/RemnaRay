@@ -4,6 +4,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -225,7 +226,7 @@ server {
     listen 443 ssl;
     http2 on;
     server_name ${extra};
-    include /etc/nginx/conf.d/tls-cert.inc;
+    include tls-cert.inc;
     return 301 https://${domain}$request_uri;
 }
 `;
@@ -386,4 +387,59 @@ export function writeAtomically(outputDirectory: string, files: RenderedFile[]):
     changed = true;
   }
   return changed;
+}
+
+/**
+ * P-20: where a changed render waits for the running proxy to validate it,
+ * inside the shared volume (`/etc/nginx/conf.d/.staging`,
+ * `/etc/caddy/.staging`). The templates include each other by relative path,
+ * so the staged main file includes the staged files.
+ */
+export const STAGING_DIRECTORY = '.staging';
+
+/** The file each proxy is started with. */
+export function mainFile(profile: ProxyProfile): string {
+  return profile === 'caddy' ? 'Caddyfile' : 'nginx.conf';
+}
+
+/** What the reloader answers about a staged render. */
+export type Verdict = 'ok' | 'invalid' | 'unavailable';
+
+export type RenderOutcome = 'unchanged' | 'written' | 'promoted' | 'refused' | 'pending';
+
+/**
+ * P-20: the live files are the last configuration known to be good. A render
+ * that changes them is staged and validated by the running proxy first:
+ * accepted, it replaces them; refused, they stay (the reloader reports the
+ * refusal); with nothing to validate it (the proxy not running yet), they
+ * stay until it can. Only the very first render, with nothing live to keep,
+ * is written straight away.
+ */
+export async function applyRender(
+  outputDirectory: string,
+  files: RenderedFile[],
+  profile: ProxyProfile,
+  validate: () => Promise<Verdict>,
+): Promise<RenderOutcome> {
+  const staging = resolve(outputDirectory, STAGING_DIRECTORY);
+  if (!existsSync(resolve(outputDirectory, mainFile(profile)))) {
+    writeAtomically(outputDirectory, files);
+    return 'written';
+  }
+  const changed = files.some((file) => {
+    const target = resolve(outputDirectory, file.name);
+    return !existsSync(target) || readFileSync(target, 'utf8') !== file.content;
+  });
+  if (!changed) {
+    rmSync(staging, { recursive: true, force: true });
+    return 'unchanged';
+  }
+  rmSync(staging, { recursive: true, force: true });
+  writeAtomically(staging, files);
+  const verdict = await validate();
+  if (verdict === 'invalid') return 'refused';
+  if (verdict === 'unavailable') return 'pending';
+  writeAtomically(outputDirectory, files);
+  rmSync(staging, { recursive: true, force: true });
+  return 'promoted';
 }

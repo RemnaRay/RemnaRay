@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyRender,
   caddyHasRateLimit,
   certbotCertificatePresent,
   customFiles,
@@ -92,7 +93,13 @@ describe('proxy template rendering (section 21.2)', () => {
           'tls-cert.inc',
         ].sort(),
       );
-      expect(files.get('nginx.conf')).toContain(`include /etc/nginx/conf.d/tls-${mode}.inc;`);
+      // Relative to the main file, so a staged render includes its own
+      // files when it is validated (P-20).
+      expect(files.get('nginx.conf')).toContain(`include tls-${mode}.inc;`);
+      expect(files.get('nginx.conf')).toContain('include site.conf;');
+      expect(files.get('site.conf')).toContain('include custom.d/*.conf;');
+      for (const content of files.values())
+        expect(content).not.toMatch(/include \/etc\/nginx\/conf\.d/u);
       expect(files.get('nginx.conf')).toContain('set_real_ip_from 172.28.0.0/16;');
       expect(files.get('site.conf')).toContain('server_name shop.example.com;');
       expect(files.get('site.conf')).not.toContain('{{');
@@ -521,5 +528,79 @@ describe('the Caddy admin API (R137)', () => {
     expect(caddyfile).toMatch(/^\tadmin localhost:2019$/mu);
     expect(caddyfile).not.toContain('0.0.0.0:2019');
     expect(caddyfile).toMatch(/^:2020 \{\n\tmetrics\n\}$/mu);
+  });
+
+  // P-20: the render used to go straight into the live volume, and a refused
+  // `nginx -t` was only logged — the proxy then failed to start at the next
+  // reboot or `rr up`, with the console behind it. A changed render is now
+  // staged, validated by the running proxy, and only then made live; the
+  // live files are the last configuration known to be good.
+  describe('a changed render becomes live only once validated', () => {
+    const live = (directory: string) => readFileSync(resolve(directory, 'nginx.conf'), 'utf8');
+    const staged = (directory: string) => resolve(directory, '.staging', 'nginx.conf');
+    const good = [
+      { name: 'nginx.conf', content: 'good' },
+      { name: 'custom.d/a.conf', content: 'a' },
+    ];
+    const next = [
+      { name: 'nginx.conf', content: 'next' },
+      { name: 'custom.d/a.conf', content: 'a' },
+    ];
+    const never = () => Promise.reject(new Error('no validation expected'));
+
+    it('writes the first render, when nothing is live yet', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'rr-proxy-'));
+      try {
+        expect(await applyRender(directory, good, 'nginx', never)).toBe('written');
+        expect(live(directory)).toBe('good');
+        expect(await applyRender(directory, good, 'nginx', never)).toBe('unchanged');
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps the live files when the proxy refuses the staged ones', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'rr-proxy-'));
+      try {
+        writeAtomically(directory, good);
+        let seen = '';
+        const outcome = await applyRender(directory, next, 'nginx', () => {
+          seen = readFileSync(staged(directory), 'utf8');
+          return Promise.resolve('invalid');
+        });
+        expect(outcome).toBe('refused');
+        expect(seen).toBe('next');
+        expect(live(directory)).toBe('good');
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps the live files while no proxy can validate', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'rr-proxy-'));
+      try {
+        writeAtomically(directory, good);
+        expect(
+          await applyRender(directory, next, 'nginx', () => Promise.resolve('unavailable')),
+        ).toBe('pending');
+        expect(live(directory)).toBe('good');
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('makes a validated render live and clears the staging', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'rr-proxy-'));
+      try {
+        writeAtomically(directory, good);
+        expect(await applyRender(directory, next, 'nginx', () => Promise.resolve('ok'))).toBe(
+          'promoted',
+        );
+        expect(live(directory)).toBe('next');
+        expect(existsSync(resolve(directory, '.staging'))).toBe(false);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
   });
 });

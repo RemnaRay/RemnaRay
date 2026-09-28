@@ -15,12 +15,28 @@ settings.admin.ip_allowlist ─┼─► proxy-config ──► proxy-conf volum
 ```
 
 - `proxy-config` runs `dist/tools/render-proxy.js --watch`. It renders
-  `deploy/proxy/<profile>` into the shared `proxy-conf` volume, writing each
-  file to a `.tmp` name and renaming it, so nginx never reads a half-written
-  file. It publishes `rr:proxy.reload` only when the output actually changed.
+  `deploy/proxy/<profile>` for the shared `proxy-conf` volume. The files there
+  are the last configuration known to be good, and only a validated render
+  replaces them: a render that changes them is written to `.staging/` in the
+  same volume, and `proxy-config` asks `proxy-reloader` (`rr:proxy.validate`)
+  to check it in the running proxy — `nginx -t -c
+/etc/nginx/conf.d/.staging/nginx.conf` or `caddy validate --config
+/etc/caddy/.staging/Caddyfile`. The templates include each other by
+  relative path, so the staged files are checked together. Accepted, the
+  render replaces the live files (each written to a `.tmp` name and renamed,
+  so nginx never reads a half-written file) and `rr:proxy.reload` follows.
+  Refused, the live files stay, the refusal is reported like a refused reload
+  (below), and `.staging/` is left for inspection. With no running proxy to
+  ask — the first seconds of `rr up` — the live files stay, the proxy starts
+  on them, and the render is tried again every 15 s. Only the very first
+  render, with nothing live yet, is written straight away. `rr proxy:render`
+  exits non-zero when its render was refused or could not be checked.
 - `proxy-reloader` is the only container with the docker socket, mounted
-  read-only. On `rr:proxy.reload` it runs `nginx -t` inside `proxy-nginx` and
-  reloads only if that passes, so a broken render never takes the site down.
+  read-only. On `rr:proxy.validate` it runs the check above and answers on
+  `rr:proxy.validated` (`ok`, `invalid`, or `unavailable` when the proxy
+  cannot run it). On `rr:proxy.reload` it runs `nginx -t` inside
+  `proxy-nginx` and reloads only if that passes, so a broken render never
+  takes the site down — not now, and not at the proxy's next start.
   One reload runs at a time; a request that arrives during it is applied
   right after it, and any number of them make one more reload.
   Every outcome is reported to `POST /api/internal/v1/system/proxy-reload-result`,

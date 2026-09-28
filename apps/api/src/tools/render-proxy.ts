@@ -1,9 +1,15 @@
 /**
  * `proxy-config` (section 21.2): renders `deploy/proxy/<profile>` into the
- * shared `proxy-conf` volume, atomically, and asks `proxy-reloader` to apply
- * it. With `--watch` it re-renders on `rr:settings.changed` and publishes
- * `rr:proxy.reload` only when the output actually changed.
+ * shared `proxy-conf` volume and asks `proxy-reloader` to apply it. With
+ * `--watch` it re-renders on `rr:settings.changed`.
+ *
+ * P-20: a render that changes the live files is staged first and validated by
+ * the running proxy (`rr:proxy.validate`, answered on `rr:proxy.validated`);
+ * only an accepted one replaces them and is reloaded. The live files are the
+ * last configuration known to be good, so a refused render can never keep the
+ * proxy — and the console behind it — from starting again.
  */
+import { randomUUID } from 'node:crypto';
 import { rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
@@ -14,17 +20,25 @@ import {
   PROXY_PROFILES,
   PROXY_SETTING_KEYS,
   TLS_MODES,
+  applyRender,
   certbotCertificatePresent,
   customFiles,
   renderProfile,
   sourcesFrom,
-  writeAtomically,
   type ProxyProfile,
+  type RenderOutcome,
   type TlsMode,
+  type Verdict,
 } from './proxy-render';
 
 const SETTINGS_CHANNEL = 'rr:settings.changed';
 const RELOAD_CHANNEL = 'rr:proxy.reload';
+const VALIDATE_CHANNEL = 'rr:proxy.validate';
+const VALIDATED_CHANNEL = 'rr:proxy.validated';
+/** `nginx -t` takes well under a second; this covers a busy host. */
+const VALIDATION_TIMEOUT_MS = 10_000;
+/** How soon a render nobody could validate is tried again. */
+const RETRY_MS = 15_000;
 
 function flag(name: string, fallback: string): string {
   const index = process.argv.indexOf(`--${name}`);
@@ -54,8 +68,43 @@ async function main(): Promise<void> {
   const db = createPrismaClient();
   const valkeyUrl = process.env.VALKEY_URL ?? 'redis://valkey:6379/0';
   const publisher = new Redis(valkeyUrl, { maxRetriesPerRequest: null });
+  const subscriber = new Redis(valkeyUrl, { maxRetriesPerRequest: null });
 
-  const render = async (announce: boolean): Promise<void> => {
+  // The reloader's answers, by request.
+  const waiting = new Map<string, (verdict: Verdict) => void>();
+  await subscriber.subscribe(VALIDATED_CHANNEL);
+  subscriber.on('message', (channel, message) => {
+    if (channel !== VALIDATED_CHANNEL) return;
+    try {
+      const { id, verdict } = JSON.parse(message) as { id?: string; verdict?: Verdict };
+      if (id && verdict) waiting.get(id)?.(verdict);
+    } catch {
+      // Not an answer this process can read.
+    }
+  });
+
+  const validate = async (): Promise<Verdict> => {
+    const id = randomUUID();
+    const answered = new Promise<Verdict>((done) => {
+      const timer = setTimeout(() => {
+        done('unavailable');
+      }, VALIDATION_TIMEOUT_MS);
+      waiting.set(id, (verdict) => {
+        clearTimeout(timer);
+        done(verdict);
+      });
+    });
+    try {
+      // Nobody listening: no reloader to ask.
+      if ((await publisher.publish(VALIDATE_CHANNEL, JSON.stringify({ id }))) === 0)
+        return 'unavailable';
+      return await answered;
+    } finally {
+      waiting.delete(id);
+    }
+  };
+
+  const render = async (): Promise<RenderOutcome> => {
     const rows = await db.setting.findMany({ where: { key: { in: PROXY_SETTING_KEYS } } });
     const sources = sourcesFrom(rows);
     const files = [
@@ -66,30 +115,64 @@ async function main(): Promise<void> {
       }),
       ...customFiles(directory, profile as ProxyProfile),
     ];
-    const changed = writeAtomically(output, files);
-    process.stdout.write(
-      `${changed ? 'rendered' : 'unchanged'} ${profile}/${tlsMode} for ${sources.domain}\n`,
-    );
-    if (changed && announce)
+    const outcome = await applyRender(output, files, profile as ProxyProfile, validate);
+    const note: Record<RenderOutcome, string> = {
+      unchanged: 'unchanged',
+      written: 'rendered',
+      promoted: 'rendered and validated',
+      refused: 'refused by the proxy; the running configuration stays',
+      pending: 'not validated yet (no running proxy); the current configuration stays',
+    };
+    process.stdout.write(`${profile}/${tlsMode} for ${sources.domain}: ${note[outcome]}\n`);
+    if (outcome === 'promoted')
       await publisher.publish(RELOAD_CHANNEL, JSON.stringify({ at: Date.now() }));
+    return outcome;
   };
 
-  await render(false);
-
   if (!watch) {
+    const outcome = await render();
+    // `rr proxy:render` then asks for a reload of what is live.
+    if (outcome === 'refused' || outcome === 'pending') process.exitCode = 1;
+    subscriber.disconnect();
     await publisher.quit();
     await db.$disconnect();
     return;
   }
 
-  const subscriber = new Redis(valkeyUrl, { maxRetriesPerRequest: null });
-  await subscriber.subscribe(SETTINGS_CHANNEL);
-  subscriber.on('message', (channel) => {
-    if (channel !== SETTINGS_CHANNEL) return;
-    void render(true).catch((error: unknown) => {
-      process.stderr.write(`Proxy render failed: ${String(error)}\n`);
-    });
+  // One render at a time; a change during one makes one more. A render
+  // nobody could validate is tried again until the proxy is there.
+  let running = false;
+  let requested = false;
+  let retry: NodeJS.Timeout | undefined;
+  const request = async (): Promise<void> => {
+    requested = true;
+    if (running) return;
+    running = true;
+    try {
+      while (requested) {
+        requested = false;
+        clearTimeout(retry);
+        retry = undefined;
+        const outcome = await render().catch((error: unknown) => {
+          process.stderr.write(`Proxy render failed: ${String(error)}\n`);
+          return 'pending' as const;
+        });
+        // Cleared above when another render follows at once.
+        if (outcome === 'pending') retry = setTimeout(() => void request(), RETRY_MS);
+      }
+    } finally {
+      running = false;
+    }
+  };
+
+  await request();
+
+  const changes = new Redis(valkeyUrl, { maxRetriesPerRequest: null });
+  await changes.subscribe(SETTINGS_CHANNEL);
+  changes.on('message', (channel) => {
+    if (channel === SETTINGS_CHANNEL) void request();
   });
+  // The live files are there and good: the proxy may start on them.
   writeFileSync('/tmp/proxy-config-ready', 'ready\n');
   process.stdout.write(`watching ${SETTINGS_CHANNEL}\n`);
 }

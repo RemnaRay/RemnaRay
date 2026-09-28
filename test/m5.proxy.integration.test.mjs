@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -44,7 +44,15 @@ function selfSigned(directory) {
   ]);
 }
 
-async function renderInto(output, mode, domain, databaseUrl, valkeyUrl, watch) {
+async function renderInto(
+  output,
+  mode,
+  domain,
+  databaseUrl,
+  valkeyUrl,
+  watch,
+  templates = TEMPLATES,
+) {
   const child = spawn(
     'node',
     [
@@ -54,7 +62,7 @@ async function renderInto(output, mode, domain, databaseUrl, valkeyUrl, watch) {
       '--tls',
       mode,
       '--templates',
-      TEMPLATES,
+      templates,
       '--out',
       output,
       ...(watch ? ['--watch'] : []),
@@ -164,6 +172,9 @@ test(
       await new Promise((done) => stub.listen(0, '127.0.0.1', done));
       const stubUrl = `http://127.0.0.1:${String(stub.address().port)}`;
 
+      // A copy, so the test can add a file of the owner's to `custom.d`.
+      const templates = mkdtempSync(join(tmpdir(), 'rr-templates-'));
+      cpSync(TEMPLATES, templates, { recursive: true });
       const watcher = await renderInto(
         output,
         'acme',
@@ -171,6 +182,7 @@ test(
         databaseUrl,
         valkeyUrl,
         true,
+        templates,
       );
       const proxy = docker([
         'run',
@@ -243,11 +255,58 @@ test(
         await prisma.$disconnect();
         assert.deepEqual(reports, [{ ok: true }, { ok: true }], reloaderLog.join(''));
         assert.match(reloaderLog.join(''), /not recorded yet: 503/u);
+
+        // P-20: a render nginx refuses — here an owner's `custom.d` file —
+        // never becomes live. It used to be written over the live files and
+        // only then refused, so the next start of the proxy failed.
+        writeFileSync(join(templates, 'nginx/custom.d/broken.conf'), 'no_such_directive on;\n');
+        await changeDomain('fourth.example.test');
+        await waitFor(() => reports.some((report) => report.ok === false), 15_000);
+        assert.match(
+          readFileSync(join(output, 'site.conf'), 'utf8'),
+          /server_name third\.example\.test;/u,
+        );
+        assert.match(
+          readFileSync(join(output, '.staging', 'site.conf'), 'utf8'),
+          /server_name fourth\.example\.test;/u,
+        );
+        // What a restarted proxy reads is still a configuration it accepts.
+        const restarted = docker(
+          [
+            'run',
+            '--rm',
+            '--add-host',
+            'web:127.0.0.1',
+            '--add-host',
+            'api:127.0.0.1',
+            '-v',
+            `${output}:/etc/nginx/conf.d:ro`,
+            IMAGE,
+            'nginx',
+            '-t',
+            '-c',
+            '/etc/nginx/conf.d/nginx.conf',
+          ],
+          { expectSuccess: false },
+        );
+        assert.match(restarted, /test is successful/u, restarted);
+
+        // Removed again, the next render validates and goes live.
+        rmSync(join(templates, 'nginx/custom.d/broken.conf'));
+        await changeDomain('fifth.example.test');
+        await waitFor(
+          () =>
+            readFileSync(join(output, 'site.conf'), 'utf8').includes(
+              'server_name fifth.example.test;',
+            ),
+          15_000,
+        );
       } finally {
         reloader.kill('SIGTERM');
         watcher.child?.kill('SIGTERM');
         stub.close();
         docker(['rm', '-f', proxy], { expectSuccess: false });
+        rmSync(templates, { recursive: true, force: true });
       }
     } finally {
       rmSync(certs, { recursive: true, force: true });
