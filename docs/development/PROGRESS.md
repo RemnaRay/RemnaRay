@@ -1146,9 +1146,35 @@ compose config` resolves it — «every long-running core service restarts…»
   66/67 (the known docs-link test), lint, format, typecheck, i18n-check
   (2312). VPS action: none.
 
-**Exact next:** package 3, R115 (+ trivy in `release.yml`) — floating tags
-move only after every image is built and scanned. M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+- **R115 Done (local) — a partly failed release moved the floating tags of
+  the images that did build, unscanned.** Cause: each matrix job of
+  `release.yml` (`fail-fast: false`) pushed `X.Y.Z`, `X.Y` and `X` itself
+  and nothing scanned a release; one failed image left `app:1` new and
+  `web:1` old, which a deployment on `RR_VERSION=1` pulled together. The
+  rebuild pushed `X.Y.Z-<run id>` before its Trivy scan and left it behind
+  when the scan failed. Repair: both workflows push by digest under no
+  tag (`outputs: type=image,…,push-by-digest=true,name-canonical=true,
+push=true`); `release.yml` scans every image with Trivy (the rebuild's
+  gate: CRITICAL/HIGH, fixed only), signs and attests it, and hands the
+  digest on as an artifact; a new `tags` job (`needs: images`, so it runs
+  only when all five succeeded) checks all five digests are there, then
+  publishes `X.Y.Z` (`rc` for a candidate, `X.Y`/`X` by
+  `floating-tags.sh`) with `imagetools create` from the digest and
+  refuses a tag that names another digest; the GitHub Release waits for
+  it. The rebuild tags from `IMAGE@DIGEST`. `docs/upgrade.md` says so.
+  Contracts checked (Context7): build-push-action passes `outputs` to
+  `--output` and returns the manifest-list digest; download-artifact
+  `pattern` + `merge-multiple`. Evidence: `tooling.test.mjs` «release tags
+  are published only after every image is built and scanned» (the publish
+  step run with a fake `docker`: 15 tags for a final release, `X.Y.Z-rc.N`
+  and `rc` for a candidate, refusal with four digests or a foreign digest)
+  red on the old workflows (no push by digest) → green; actionlint clean.
+  Checks: `pnpm test` 67/68 (the known docs-link test), lint, format,
+  typecheck, i18n-check (2312). Not verified until a tag runs on GitHub.
+  VPS action: none.
+
+**Exact next:** package 3, R116 — actions pinned by SHA, permissions per
+job. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

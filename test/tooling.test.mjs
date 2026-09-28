@@ -525,14 +525,11 @@ test('the release and rebuild workflows move the floating tags by that rule', as
     // The script reads the release tags, which only a full fetch brings.
     assert.match(workflow, /uses: actions\/checkout@v7\n {8}with:\n {10}fetch-depth: 0\n/u);
   }
-  assert.match(
-    release,
-    /pattern=\{\{major\}\}\.\{\{minor\}\},enable=\$\{\{ steps\.floating\.outputs\.minor == 'true' \}\}/u,
-  );
-  assert.match(
-    release,
-    /pattern=\{\{major\}\},enable=\$\{\{ steps\.floating\.outputs\.major == 'true' \}\}/u,
-  );
+  // The images job decides; the tags job moves them.
+  assert.match(release, /^ {6}minor: \$\{\{ steps\.floating\.outputs\.minor \}\}$/mu);
+  assert.match(release, /^ {6}major: \$\{\{ steps\.floating\.outputs\.major \}\}$/mu);
+  assert.match(release, /MOVE_MINOR: \$\{\{ needs\.images\.outputs\.minor \}\}/u);
+  assert.match(release, /MOVE_MAJOR: \$\{\{ needs\.images\.outputs\.major \}\}/u);
   // The rebuild decides on the default branch, before it checks out the old
   // release, whose tree may not carry the script.
   assert.ok(rebuild.indexOf('Decide the floating tags') < rebuild.indexOf('Checkout that release'));
@@ -910,5 +907,134 @@ test('a release is marked latest only when it is the highest final version', asy
     assert.equal(latest('2.0.0'), 'true');
   } finally {
     await rm(repository, { recursive: true, force: true });
+  }
+});
+
+// A job's block (`  name:` at two spaces under `jobs:`) of a workflow.
+const workflowJob = (workflow, name) =>
+  new RegExp(`\\n {2}${name}:\\n([\\s\\S]*?)(?=\\n {2}[\\w-]+:\\n|$)`, 'u').exec(workflow)?.[1] ??
+  '';
+
+// R115: every image of the matrix pushed `X.Y.Z`, `X.Y` and `X` from its own
+// job with `fail-fast: false`, unscanned. One image failing left `app:1` new
+// and `web:1` old — a deployment on `RR_VERSION=1` pulled both. The rebuild
+// pushed `X.Y.Z-<run id>` before its scan and left it behind when the scan
+// failed. Now every image is pushed by digest, scanned and signed; the tags
+// are published by one job after all of them succeeded.
+test('release tags are published only after every image is built and scanned', async () => {
+  const release = await readFile('.github/workflows/release.yml', 'utf8');
+  const rebuild = await readFile('.github/workflows/rebuild.yml', 'utf8');
+  const images = workflowJob(release, 'images');
+  const tags = workflowJob(release, 'tags');
+
+  for (const [name, workflow] of [
+    ['release images', images],
+    ['rebuild', rebuild],
+  ]) {
+    const build = /- name: Build[^\n]*\n {8}id: push\n((?: {8,}.*\n)+)/u.exec(workflow)?.[1] ?? '';
+    assert.match(
+      build,
+      /outputs: type=image,name=\$\{\{ env\.REGISTRY \}\}\/\$\{\{ steps\.ns\.outputs\.owner \}\}\/\$\{\{ matrix\.image \}\},push-by-digest=true,name-canonical=true,push=true\n/u,
+      name,
+    );
+    assert.doesNotMatch(build, /^ {10}(tags|push):/mu, `${name} pushes a tag`);
+    const scan =
+      /- name: Scan the [^\n]*\n {8}uses: aquasecurity\/trivy-action@\S+(?: # \S+)?\n {8}with:\n((?: {10}.*\n)+)/u.exec(
+        workflow,
+      )?.[1] ?? '';
+    assert.match(
+      scan,
+      /image-ref: \$\{\{ env\.REGISTRY \}\}\/\$\{\{ steps\.ns\.outputs\.owner \}\}\/\$\{\{ matrix\.image \}\}@\$\{\{ steps\.push\.outputs\.digest \}\}\n/u,
+      name,
+    );
+    assert.match(scan, /exit-code: '1'\n/u, name);
+    assert.ok(
+      workflow.indexOf('- name: Scan the') < workflow.indexOf('- name: Sign the image'),
+      name,
+    );
+  }
+  assert.doesNotMatch(rebuild, /github\.run_id/u);
+  assert.match(rebuild, /source="\$\{IMAGE\}@\$\{DIGEST\}"/u);
+
+  // The release's images job tags nothing; one job publishes every tag once
+  // all five images are through, and the GitHub Release waits for it.
+  assert.doesNotMatch(images, /\{\{major\}\}|value=rc/u);
+  assert.match(tags, /^ {4}needs: images$/mu);
+  assert.match(workflowJob(release, 'release'), /^ {4}needs: \[images, tags\]$/mu);
+
+  // The publishing step, run with a fake `docker` for a final release that
+  // moves both floating tags and for a candidate.
+  const script = /- name: Publish the tags\n(?: {8}(?!run:).*\n)* {8}run: \|\n((?: {10}.*\n|\n)+)/u
+    .exec(tags)?.[1]
+    .replace(/^ {10}/gmu, '');
+  assert.ok(script, 'no publishing step');
+  const directory = await mkdtemp(join(tmpdir(), 'rr-release-tags-'));
+  try {
+    await writeFile(
+      join(directory, 'docker'),
+      `#!/bin/sh
+echo "$*" >> "$FAKE_LOG"
+case "$*" in
+  *'imagetools inspect'*) echo "\\"\${FAKE_PUBLISHED:-$(cat "$FAKE_LAST")}\\"" ;;
+  *'imagetools create'*) for last; do :; done; echo "\${last#*@}" > "$FAKE_LAST" ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const digests = join(directory, 'digests');
+    execFileSync('mkdir', ['-p', digests]);
+    const publish = async (env, present = ['app', 'web', 'nginx', 'caddy', 'backup']) => {
+      execFileSync('sh', ['-c', `rm -f ${digests}/* ${directory}/log`]);
+      for (const image of present) await writeFile(join(digests, image), `sha256:${image}`);
+      try {
+        execFileSync('bash', ['-e', '-c', script], {
+          cwd: directory,
+          env: {
+            PATH: `${directory}:${process.env.PATH}`,
+            REGISTRY: 'ghcr.io',
+            OWNER: 'remnaray',
+            FAKE_LOG: join(directory, 'log'),
+            FAKE_LAST: join(directory, 'last'),
+            ...env,
+          },
+          stdio: 'ignore',
+        });
+      } catch {
+        return 'refused';
+      }
+      return (await readFile(join(directory, 'log'), 'utf8'))
+        .split('\n')
+        .filter((line) => line.startsWith('buildx imagetools create'))
+        .map((line) => line.replace('buildx imagetools create --tag ', ''));
+    };
+    const final = { VERSION: '1.2.3', MOVE_MINOR: 'true', MOVE_MAJOR: 'true', PRERELEASE: 'false' };
+    const created = await publish(final);
+    assert.equal(created.length, 15);
+    for (const image of ['app', 'web', 'nginx', 'caddy', 'backup'])
+      for (const tag of ['1.2.3', '1.2', '1'])
+        assert.ok(
+          created.includes(
+            `ghcr.io/remnaray/${image}:${tag} ghcr.io/remnaray/${image}@sha256:${image}`,
+          ),
+          `${image}:${tag}`,
+        );
+    assert.deepEqual(
+      (
+        await publish({
+          VERSION: '1.3.0-rc.1',
+          MOVE_MINOR: 'false',
+          MOVE_MAJOR: 'false',
+          PRERELEASE: 'true',
+        })
+      )
+        .filter((line) => line.startsWith('ghcr.io/remnaray/app:'))
+        .map((line) => line.split(' ')[0]),
+      ['ghcr.io/remnaray/app:1.3.0-rc.1', 'ghcr.io/remnaray/app:rc'],
+    );
+    // A missing digest or a tag that names another digest stops it.
+    assert.equal(await publish(final, ['app', 'web', 'nginx', 'caddy']), 'refused');
+    assert.equal(await publish({ ...final, FAKE_PUBLISHED: 'sha256:other' }), 'refused');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

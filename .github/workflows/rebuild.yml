@@ -118,6 +118,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # By digest, under no tag: a rebuild whose scan fails leaves nothing
+      # behind that a deployment could pull by name (R115).
       - name: Build it again, from scratch
         id: push
         uses: docker/build-push-action@v7
@@ -126,18 +128,16 @@ jobs:
           file: ${{ matrix.file }}
           build-args: RR_APP_VERSION=${{ steps.release.outputs.result }}
           platforms: linux/amd64,linux/arm64
-          push: true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           pull: true
           no-cache: true
           sbom: true
           provenance: mode=max
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}:${{ steps.release.outputs.result }}-${{ github.run_id }}
 
       - name: Scan the rebuilt image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}:${{ steps.release.outputs.result }}-${{ github.run_id }}
+          image-ref: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
@@ -171,7 +171,7 @@ jobs:
           tags="${VERSION}-$(date -u '+%Y%m%d')"
           if [ "$MOVE_MINOR" = true ]; then tags="$tags ${VERSION%.*}"; fi
           if [ "$MOVE_MAJOR" = true ]; then tags="$tags ${VERSION%%.*}"; fi
-          source="${IMAGE}:${VERSION}-${{ github.run_id }}"
+          source="${IMAGE}@${DIGEST}"
           for tag in $tags; do
             docker buildx imagetools create --tag "${IMAGE}:${tag}" "$source"
             # The signature covers one digest; a tag naming another would

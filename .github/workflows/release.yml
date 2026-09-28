@@ -3,6 +3,10 @@
 # with the changelog. A pre-release
 # `vX.Y.Z-rc.N` publishes under `rc` and never moves the floating major tag,
 # so an owner following `RR_VERSION=1` is not upgraded onto a candidate.
+#
+# Every image is pushed by digest, scanned and signed first; the tags are
+# published by one job once all five are through (R115), so a failed image
+# or scan never leaves `RR_VERSION=1` resolving to a mix of two releases.
 name: release
 
 # Only the two forms 24.4 names; `v*` also let `v1.2`, `v1.2.3-beta` and
@@ -43,7 +47,10 @@ jobs:
           - image: backup
             file: deploy/backup/Dockerfile
     outputs:
+      version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      minor: ${{ steps.floating.outputs.minor }}
+      major: ${{ steps.floating.outputs.major }}
       latest: ${{ steps.floating.outputs.latest }}
     steps:
       # All history, for the release tags `floating-tags.sh` compares with.
@@ -92,22 +99,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `X.Y.Z` always; `X.Y` and `X` only for a final release that is the
-      # newest of its line, so neither a candidate nor a patch to an older
-      # minor becomes what `RR_VERSION=1` resolves to.
-      - name: Work out the tags
+      # The labels only: the `tags` job below publishes the tags.
+      - name: Work out the labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}
-          flavor: latest=false
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.floating.outputs.minor == 'true' }}
-            type=semver,pattern={{major}},enable=${{ steps.floating.outputs.major == 'true' }}
-            type=raw,value=rc,enable=${{ steps.version.outputs.prerelease == 'true' }}
 
-      - name: Build and push
+      # By digest, under no tag: nothing is published until the scan below
+      # and the other four images are through.
+      - name: Build and push by digest
         id: push
         uses: docker/build-push-action@v7
         with:
@@ -115,17 +116,26 @@ jobs:
           file: ${{ matrix.file }}
           build-args: RR_APP_VERSION=${{ steps.version.outputs.version }}
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
           cache-from: type=gha,scope=release-${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=release-${{ matrix.image }}
 
+      # The gate `rebuild.yml` and `nightly.yml` apply: an image with a fixable
+      # critical or high vulnerability is never tagged.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
       # Section 24.4 p. 3: a `cosign` signature, keyless, bound to this
       # workflow's GitHub identity and recorded in the Sigstore transparency
-      # log. By digest, which every tag of this image points at.
+      # log. By digest, which every tag of this image will point at.
       - name: Install cosign
         uses: sigstore/cosign-installer@v4.1.2
 
@@ -148,10 +158,87 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+      - name: Keep the digest for the tags job
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p digests
+          printf '%s' "$DIGEST" > "digests/${{ matrix.image }}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image }}
+          path: digests/${{ matrix.image }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs only when every image succeeded. `X.Y.Z` always (`X.Y.Z-rc.N` and
+  # `rc` for a candidate); `X.Y` and `X` only for a final release that is the
+  # newest of its line, so neither a candidate nor a patch to an older minor
+  # becomes what `RR_VERSION=1` resolves to.
+  tags:
+    name: publish the tags
+    runs-on: ubuntu-latest
+    needs: images
+    steps:
+      - name: Name the registry namespace
+        id: ns
+        run: |
+          printf 'owner=%s\n' "$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Download the digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the tags
+        env:
+          OWNER: ${{ steps.ns.outputs.owner }}
+          VERSION: ${{ needs.images.outputs.version }}
+          PRERELEASE: ${{ needs.images.outputs.prerelease }}
+          MOVE_MINOR: ${{ needs.images.outputs.minor }}
+          MOVE_MAJOR: ${{ needs.images.outputs.major }}
+        run: |
+          tags="$VERSION"
+          if [ "$PRERELEASE" = true ]; then tags="$tags rc"; fi
+          if [ "$MOVE_MINOR" = true ]; then tags="$tags ${VERSION%.*}"; fi
+          if [ "$MOVE_MAJOR" = true ]; then tags="$tags ${VERSION%%.*}"; fi
+          # All five digests first: a missing one publishes nothing.
+          for image in app web nginx caddy backup; do
+            test -s "digests/$image"
+          done
+          for image in app web nginx caddy backup; do
+            name="${REGISTRY}/${OWNER}/${image}"
+            digest=$(cat "digests/$image")
+            for tag in $tags; do
+              docker buildx imagetools create --tag "${name}:${tag}" "${name}@${digest}"
+              # The signature covers one digest; a tag naming another would
+              # be published unsigned.
+              published=$(docker buildx imagetools inspect "${name}:${tag}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+              if [ "$published" != "$digest" ]; then
+                echo "${name}:${tag} is ${published}, not the signed ${digest}" >&2
+                exit 1
+              fi
+            done
+          done
+
   release:
     name: github release
     runs-on: ubuntu-latest
-    needs: images
+    needs: [images, tags]
     steps:
       - name: Checkout
         uses: actions/checkout@v7

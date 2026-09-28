@@ -84,9 +84,15 @@ restore the pre-migrate dump first:
 The base images move faster than the application. Every Monday the five images
 are rebuilt on the current `node`, `nginx`, `caddy` and `postgres` bases,
 scanned, and published as `X.Y.Z-<yyyymmdd>` with the floating `X.Y` and `X`
-tags moved onto them. A manual rebuild of an older version moves only the
-floating tags it is still the newest of. The application version does not change and neither does the changelog,
-so `docker compose pull` on a quiet week still picks up the patched base.
+tags moved onto them. The rebuild takes the highest published release, and a
+manual rebuild of an older version moves only the floating tags it is still
+the newest of. The application version does not change and neither does the
+changelog, so `docker compose pull` on a quiet week still picks up the patched
+base.
+
+Neither a release nor a rebuild tags an image before it has passed the
+vulnerability scan, and a release publishes its tags only once all five images
+are through, so `RR_VERSION=1` never resolves to a half-published release.
 
 `postgres` and `valkey` are pinned by tag and updated through a pull request on
 this repository. A PostgreSQL minor inside 18.x is safe to take; a major change

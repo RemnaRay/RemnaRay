@@ -145,18 +145,16 @@ test('the release workflows exist and publish on a version tag', async () => {
 
   // The acceptance: a tag `v0.9.0-rc.1` publishes images.
   assert.match(release, /^ {6}- 'v\[0-9\]\+\.\[0-9\]\+\.\[0-9\]\+-rc\.\[0-9\]\+'$/mu);
-  assert.match(release, /push: true/u);
+  assert.match(release, /push-by-digest=true,name-canonical=true,push=true/u);
   for (const image of ['app', 'web', 'nginx', 'caddy'])
     assert.match(release, new RegExp(`- image: ${image}\\n`, 'u'), `${image} is never published`);
-  // A candidate must not become what `RR_VERSION=1` resolves to.
+  // A candidate is published under `rc` and must not become what
+  // `RR_VERSION=1` resolves to: `floating-tags.sh` answers false for it
+  // (tooling.test.mjs), and the tags job moves `X` only on its answer.
+  assert.match(release, /if \[ "\$PRERELEASE" = true \]; then tags="\$tags rc"; fi/u);
   assert.match(
     release,
-    /type=raw,value=rc,enable=\$\{\{ steps\.version\.outputs\.prerelease == 'true' \}\}/u,
-  );
-  // `floating-tags.sh` answers false for a candidate (tooling.test.mjs).
-  assert.match(
-    release,
-    /pattern=\{\{major\}\},enable=\$\{\{ steps\.floating\.outputs\.major == 'true' \}\}/u,
+    /if \[ "\$MOVE_MAJOR" = true \]; then tags="\$tags \$\{VERSION%%\.\*\}"; fi/u,
   );
   assert.match(release, /platforms: linux\/amd64,linux\/arm64/u);
   assert.match(release, /sbom: true/u);
