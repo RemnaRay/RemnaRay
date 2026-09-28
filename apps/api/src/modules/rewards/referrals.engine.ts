@@ -46,6 +46,13 @@ async function post(
 ): Promise<{ id: string }> {
   const debit = await accountId(tx, input.debitKind, input.debitUserId);
   const credit = await accountId(tx, input.creditKind, input.creditUserId);
+  // Section 11.7: both accounts locked in `id` order before either moves.
+  // Inside a payment the payment already holds them; the console's reversal
+  // (15.4) takes them here.
+  await tx.$queryRawUnsafe(
+    `SELECT id FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+    [debit, credit],
+  );
   const transaction = await tx.transaction.create({
     data: {
       userId: input.userId,
@@ -220,6 +227,13 @@ export async function reverseReferralReward(
   refundedMinor: bigint,
   sourceAmountMinor: bigint,
 ): Promise<bigint> {
+  // Repair queue R17: the reward row is the lock. A second reversal of the
+  // same reward — the console's, or a refund's — waits here and then reads
+  // what the first one left, never the state both started from.
+  await tx.$queryRawUnsafe(
+    `SELECT id FROM referral_rewards WHERE source_transaction_id = $1::uuid FOR UPDATE`,
+    sourceTransactionId,
+  );
   const reward = await tx.referralReward.findUnique({
     where: { sourceTransactionId },
   });

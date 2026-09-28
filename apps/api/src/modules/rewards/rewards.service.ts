@@ -89,11 +89,18 @@ export class RewardsService implements RewardHooksPort {
     });
   }
 
-  /** Manual reversal from the admin console (section 15.4). */
+  /**
+   * Manual reversal from the admin console (section 15.4). The source
+   * transaction is locked first, as a refund locks it (repair queue R17):
+   * both then take the accounts and the reward row in the same order and
+   * never deadlock; the second finds the first's reversal.
+   */
   async reverseReward(rewardId: string): Promise<{ reversedMinor: number }> {
     return this.infra.db.$transaction(async (tx) => {
       const reward = await tx.referralReward.findUnique({ where: { id: rewardId } });
       if (!reward || reward.status === 'reversed') return { reversedMinor: 0 };
+      await tx.$queryRaw`
+        SELECT id FROM transactions WHERE id = ${reward.sourceTransactionId}::uuid FOR UPDATE`;
       const source = await tx.transaction.findUnique({
         where: { id: reward.sourceTransactionId },
       });

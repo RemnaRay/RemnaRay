@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import process from 'node:process';
 import { Buffer } from 'node:buffer';
+import { setTimeout as delay } from 'node:timers/promises';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 
 const noCache = {
@@ -287,6 +288,74 @@ test(
           })
         ).balanceMinor,
         0n,
+      );
+
+      // Repair queue R17: a manual reversal (15.4) racing another reversal
+      // of the same reward waits for it and then finds nothing left, instead
+      // of reversing the reward twice. Transaction A reverses and holds its
+      // commit; B, the console's reversal, starts meanwhile.
+      const raceReferrer = await prisma.user.create({
+        data: { telegramId: 995000021n, language: 'ru', referralCode: 'RACEREF1' },
+      });
+      const raceReferee = await prisma.user.create({
+        data: { telegramId: 995000022n, language: 'ru', referralCode: 'RACEREE1' },
+      });
+      await prisma.referralAttribution.create({
+        data: {
+          refereeId: raceReferee.id,
+          referrerId: raceReferrer.id,
+          source: 'telegram',
+          code: 'RACEREF1',
+          status: 'pending',
+        },
+      });
+      const raceInvoice = await payments.createInvoice({
+        userId: raceReferee.id,
+        kind: 'purchase',
+        planId: plan.id,
+        provider: 'mock',
+        idempotencyKey: 'ref-race',
+      });
+      await payInvoice(payments, raceInvoice, 29900);
+      const raceSource = await prisma.transaction.findFirstOrThrow({
+        where: { userId: raceReferee.id, type: 'purchase' },
+      });
+      const raceReward = await prisma.referralReward.findUniqueOrThrow({
+        where: { sourceTransactionId: raceSource.id },
+      });
+      const { reverseReferralReward } =
+        await import('../apps/api/dist/modules/rewards/referrals.engine.js');
+      let commitA = () => undefined;
+      const gate = new Promise((resolve) => {
+        commitA = resolve;
+      });
+      const reversalA = prisma.$transaction(
+        async (tx) => {
+          const amount = await reverseReferralReward(
+            tx,
+            raceSource.id,
+            raceSource.amountMinor,
+            raceSource.amountMinor,
+          );
+          await gate;
+          return amount;
+        },
+        { timeout: 30_000 },
+      );
+      await delay(1000);
+      const reversalB = rewards.reverseReward(raceReward.id);
+      await delay(1000);
+      commitA();
+      const [firstAmount, consoleResult] = await Promise.all([reversalA, reversalB]);
+      assert.equal(firstAmount, 5980n);
+      assert.deepEqual(consoleResult, { reversedMinor: 0 });
+      assert.deepEqual(
+        (
+          await prisma.transaction.findMany({
+            where: { userId: raceReferrer.id, type: 'referral_reversal' },
+          })
+        ).map((row) => row.amountMinor),
+        [5980n],
       );
 
       // AC-155: a promocode with max_uses = 1 sells exactly one slot.

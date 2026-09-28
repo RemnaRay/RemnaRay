@@ -1011,9 +1011,30 @@ Owner decisions taken while planning this package (2026-09-28):
   clean; red (`reversed` after the first refund) → green. Checks: API 434,
   lint, format, typecheck, i18n-check (2312). VPS action: none (О-20).
 
-**Exact next:** package 4, R17 — the reward row locked for a reversal, the
-manual path taking the source transaction first. M5 stays NOT VERIFIED;
-TASK-M5-004 is unchanged.
+- **R17 Done (local) — a manual reversal racing another reversal of the
+  same reward reversed it twice.** Cause: `RewardsService.reverseReward`
+  (console, 15.4) and `reverseReferralReward` read the reward without a
+  lock and posted unconditionally; two tabs (different `Idempotency-Key`s)
+  or a console reversal next to a refund of the source both read the
+  reward's pre-reversal state and both debited the referrer (no unique
+  constraint stops a second `referral_reversal`). The engine's `post` also
+  moved both accounts without locking them in order. Repair:
+  `reverseReferralReward` starts with `SELECT … FROM referral_rewards WHERE
+source_transaction_id = $1 FOR UPDATE` and reads the reward after it; the
+  console path locks the source transaction first, as `refund` does, so
+  both take the source, the accounts and the reward in one order; the
+  engine's `post` locks both accounts `ORDER BY id FOR UPDATE` (11.7; a
+  payment already holds them). Invariant: a reward's reversals never exceed
+  it, however the reversals interleave. Evidence: `m4.rewards` — transaction
+  A reverses a 5980 reward and holds its commit while the console's
+  reversal B starts; red (B reversed 5980 again, two reversals) → green (B
+  waits, then reverses 0; one reversal of 5980). `m2.payment` and
+  `m2.payment-recovery` (refund paths) pass. Checks: API 434, lint, format,
+  typecheck, i18n-check (2312). VPS action: none.
+
+**Exact next:** package 4, L-11 — a transaction and its entries carry the
+invoice amount unless the invoice is underpaid (11.2); R135 is closed by F37.
+M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
