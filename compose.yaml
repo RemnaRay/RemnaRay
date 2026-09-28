@@ -90,6 +90,11 @@ services:
     command: [node, /app/dist/tools/migrate.js]
     restart: 'no'
     read_only: false
+    # It runs as uid 1000, and a clone made as root leaves `./backups` root's:
+    # the `backup` service (root) prepares this directory for it (R60).
+    environment:
+      <<: *app-environment
+      RR_BACKUP_DIR: /backups/pre-migrate
     volumes:
       - ./themes:/themes:ro
       - ./locales:/locales:ro
@@ -97,6 +102,7 @@ services:
       - ./backups:/backups
     depends_on:
       postgres: { condition: service_healthy }
+      backup: { condition: service_healthy, required: false }
 
   api:
     <<: *app-common
@@ -340,6 +346,13 @@ services:
     networks: [rr_net]
     depends_on:
       postgres: { condition: service_healthy }
+    # Healthy once `backups/pre-migrate` belongs to uid 1000, which `migrate`
+    # waits for.
+    healthcheck:
+      test: [CMD-SHELL, 'test "$$(stat -c %u /backups/pre-migrate)" = 1000']
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
     logging: { driver: json-file, options: { max-size: '50m', max-file: '5' } }

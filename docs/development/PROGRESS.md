@@ -1274,9 +1274,30 @@ depend on it`, exit 1) → green (only the dump's rows and tables, no
   (2312). VPS action: none (a rollback on the stand follows the new
   `docs/upgrade.md`).
 
-**Exact next:** package 3, R60 — `./backups` writable for `migrate`
-(uid 1000); then R91 (migration headers fail-closed, `POSTGRES_PORT`, no
-overwrite of a good dump). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R60 Done (local) — an upgrade with an irreversible migration failed
+  when `./backups` belonged to root.** Cause: `migrate` runs as `node`
+  (uid 1000) and wrote the pre-migrate dump into `./backups`, which a clone
+  made as root (`sudo git clone`, the usual VPS) leaves `root:root 0755`:
+  `pg_dump` got `Permission denied`, `migrate` exited 1 and `api`, `bot`,
+  `worker` and `web` never started. Repair: the `backup` service (root)
+  creates `backups/pre-migrate` owned by uid 1000, mode 700, when it starts
+  and reports healthy only then; `migrate` writes there
+  (`RR_BACKUP_DIR=/backups/pre-migrate`) and waits for `backup` to be
+  healthy with `required: false` (compose ≥ 2.20: a start without a
+  deployment profile skips it). The host directory keeps its owner. Docs
+  name the new path. Contract checked: `depends_on.required` (Docker
+  compose reference, Context7). Evidence: `m5.backup` «R60: migrate can
+  write its pre-migrate dump into a root-owned ./backups» (the deployment's
+  compose file, `./backups` chowned to root, `up --wait backup`, a write as
+  uid 1000 into `migrate`'s directory) red (no dependency; a uid-1000 write
+  into the root-owned `/backups` is `Permission denied`) → green. Checks:
+  `pnpm test` 71/72 (the known docs-link test), worker 41, lint, format,
+  typecheck, i18n-check (2312). VPS action: none needed after the deploy
+  (`ls -ld /opt/test/backups/pre-migrate` shows uid 1000).
+
+**Exact next:** package 3, R91 — migration headers fail-closed,
+`POSTGRES_PORT`/`DATABASE_URL` for `pg_dump`, no overwrite of a good dump.
+M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

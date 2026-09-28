@@ -92,11 +92,21 @@ once() {
   status ok "$(basename "$dump")" "$size"
 }
 
+# `migrate` runs as `node` (uid 1000 in `node:24-alpine`) and writes its
+# pre-migrate dump here; `./backups` itself is whoever cloned the repository's,
+# often root (R60). The service's healthcheck waits for this.
+prepare() {
+  mkdir -p "$BACKUP_DIR/pre-migrate"
+  chown 1000:1000 "$BACKUP_DIR/pre-migrate"
+  chmod 700 "$BACKUP_DIR/pre-migrate"
+}
+
 case "${1:-run}" in
   once) once ;;
   rotate) rotate ;;
   run)
     mkdir -p "$BACKUP_DIR" /etc/crontabs
+    prepare
     echo "0 3 * * * /scripts/backup-entrypoint.sh once >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
     log 'scheduled the daily dump at 03:00 UTC'
     exec crond -f -l 8

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -398,6 +398,109 @@ volumes:
       docker(['compose', '-f', composeFile, '--profile', 'nginx', 'down', '-v'], {
         expectSuccess: false,
       });
+    }
+  },
+);
+
+/**
+ * R60: `migrate` runs as uid 1000 and writes the pre-migrate dump under
+ * `./backups`, which a clone made as root (`sudo git clone`, the usual VPS)
+ * leaves `root:root 0755`: `pg_dump` got `Permission denied`, `migrate`
+ * exited 1 and nothing behind it started — exactly at an upgrade with an
+ * irreversible migration. The `backup` service, which runs as root, prepares
+ * `backups/pre-migrate` for uid 1000 and is healthy only once it has; the
+ * deployment's own compose file is used, from a directory owned by root.
+ */
+test(
+  'R60: migrate can write its pre-migrate dump into a root-owned ./backups',
+  { timeout: 600_000 },
+  async () => {
+    docker(['build', '-f', 'deploy/backup/Dockerfile', '-t', IMAGE, '.']);
+    const directory = mkdtempSync(join(tmpdir(), 'rr-backups-owner-'));
+    const project = `rrowner${String(process.pid)}`;
+    const compose = (...args) =>
+      docker(['compose', '-p', project, '--project-directory', directory, ...args]);
+    try {
+      cpSync('compose.yaml', join(directory, 'compose.yaml'));
+      cpSync('deploy', join(directory, 'deploy'), { recursive: true });
+      writeFileSync(
+        join(directory, '.env'),
+        `${readFileSync('.env.example', 'utf8')}\nPOSTGRES_PASSWORD=secret\nRR_BACKUP_IMAGE=${IMAGE}\n`,
+      );
+      // `./backups` as a root clone leaves it.
+      docker([
+        'run',
+        '--rm',
+        '-v',
+        `${directory}:/deployment`,
+        '--entrypoint',
+        'sh',
+        IMAGE,
+        '-c',
+        'mkdir -p /deployment/backups && chown 0:0 /deployment/backups && chmod 755 /deployment/backups',
+      ]);
+
+      const config = JSON.parse(compose('config', '--format', 'json').replace(/^[^{]*/u, ''));
+      const migrate = config.services.migrate;
+      assert.equal(migrate.depends_on.backup?.condition, 'service_healthy');
+      // Only a deployment profile starts `backup`; without one it is skipped.
+      assert.equal(migrate.depends_on.backup.required, false);
+      const target = migrate.environment.RR_BACKUP_DIR;
+      assert.ok(target?.startsWith('/backups/'), `migrate writes into ${String(target)}`);
+
+      compose('--profile', 'nginx', 'up', '-d', '--wait', 'backup');
+      // What `migrate` does, as the user it runs as, on the same mount.
+      const write = spawnSync(
+        'docker',
+        [
+          'run',
+          '--rm',
+          '--user',
+          '1000:1000',
+          '-v',
+          `${join(directory, 'backups')}:/backups`,
+          '--entrypoint',
+          'sh',
+          IMAGE,
+          '-c',
+          `touch ${target}/probe.dump`,
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(write.status, 0, write.stderr);
+    } finally {
+      docker(
+        [
+          'compose',
+          '-p',
+          project,
+          '--project-directory',
+          directory,
+          '--profile',
+          'nginx',
+          'down',
+          '-v',
+        ],
+        {
+          expectSuccess: false,
+        },
+      );
+      docker(
+        [
+          'run',
+          '--rm',
+          '-v',
+          `${directory}:/deployment`,
+          '--entrypoint',
+          'rm',
+          IMAGE,
+          '-rf',
+          '/deployment/backups',
+        ],
+        {
+          expectSuccess: false,
+        },
+      );
     }
   },
 );
