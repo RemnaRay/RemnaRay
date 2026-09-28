@@ -1167,3 +1167,16 @@ test('Valkey requires a password that no command line carries', async () => {
   assert.match(init, /^VALKEY_PASSWORD=\$valkey_password$/mu);
   assert.doesNotMatch(init, /^VALKEY_URL=/mu);
 });
+
+// L-33: `:ro` on a unix socket stops nothing — a client connected through it
+// drives the whole Docker API (checked: `docker volume create` succeeds). The
+// compose file and the proxy guide called it a restriction; they now say
+// what the reloader really holds.
+test('the documentation does not present the read-only docker socket as a limit', async () => {
+  const compose = await readFile('compose.yaml', 'utf8');
+  const proxy = await readFile('docs/proxy.md', 'utf8');
+  assert.doesNotMatch(compose, /read-only socket still appl/u);
+  assert.doesNotMatch(compose, /docker socket, and it is read-only/u);
+  assert.doesNotMatch(proxy, /docker socket, mounted\s+read-only/u);
+  for (const text of [compose, proxy]) assert.match(text, /`:ro`[^.]*does not limit/u);
+});

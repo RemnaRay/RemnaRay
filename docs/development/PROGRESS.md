@@ -1651,8 +1651,23 @@ rr:rotate-key --old --new` as 17.1 names it, or the keys in
   Valkey survive (the data volume is kept) and `docker compose exec -e
 VALKEYCLI_AUTH= valkey valkey-cli ping` answers `NOAUTH`.
 
-**Exact next:** package 3, L-33 (docs on `docker.sock` `:ro`) and L-36
-(pin `certbot`). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **L-33 Done (local) — the docs called the `:ro` docker socket a
+  restriction.** Cause: `compose.yaml` («the read-only socket still
+  applies») and `docs/proxy.md` («mounted read-only») presented `:ro` as a
+  limit; on a unix socket it limits nothing — a client connected through it
+  drives the whole Docker API (checked here: `docker volume create` through
+  an `:ro` mount succeeds), so `proxy-reloader` is as privileged as root on
+  the host. Repair (docs only, as the queue has it): both say so, and why
+  only this container holds the socket (RemnaRay's own code, no published
+  port, only `exec` in the proxy container). The `:ro` mount stays, as 21.6
+  names it. Evidence: `tooling.test.mjs` «the documentation does not present
+  the read-only docker socket as a limit» red → green. Checks: `pnpm test`
+  76/77 (the known docs-link test), lint, format, typecheck, i18n-check
+  (2314). VPS action: none.
+
+**Exact next:** package 3, L-36 (pin `certbot`), then the package's
+integration suites and its PROGRESS record. M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

@@ -310,7 +310,9 @@ services:
     logging: { driver: json-file, options: { max-size: '50m', max-file: '5' } }
     profiles: [caddy]
 
-  # The only container with the docker socket, and it is read-only.
+  # The only container with the docker socket (section 21.6). L-33: `:ro` on
+  # a unix socket does not limit the Docker API behind it — this container is
+  # as privileged as root on the host, which is why nothing else has it.
   proxy-reloader:
     <<: *app-common
     command: [node, dist/tools/proxy-reloader.js, --profile, '${RR_PROXY_PROFILE:-nginx}']
@@ -325,7 +327,8 @@ services:
     # The socket is owned by root and by a group whose id differs from host to
     # host, so an unprivileged user cannot be given access portably — and a
     # container that may drive the Docker API is already as privileged as the
-    # host. `no-new-privileges` and the read-only socket still apply.
+    # host. `no-new-privileges` applies; the `:ro` of the mount does not limit
+    # the API (see above).
     user: '0:0'
     read_only: false
     volumes:

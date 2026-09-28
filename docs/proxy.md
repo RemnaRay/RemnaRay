@@ -31,8 +31,13 @@ settings.admin.ip_allowlist ─┼─► proxy-config ──► proxy-conf volum
   on them, and the render is tried again every 15 s. Only the very first
   render, with nothing live yet, is written straight away. `rr proxy:render`
   exits non-zero when its render was refused or could not be checked.
-- `proxy-reloader` is the only container with the docker socket, mounted
-  read-only. On `rr:proxy.validate` it runs the check above and answers on
+- `proxy-reloader` is the only container with the docker socket. The mount
+  is `:ro` (section 21.6), but `:ro` on a unix socket does not limit what a
+  client may ask the Docker API — through it the reloader could start any
+  container, so it is as privileged as root on the host. That is why only
+  this container has the socket, it runs nothing but RemnaRay's own
+  `proxy-reloader.js`, publishes no port and calls nothing but `exec` in the
+  proxy container. On `rr:proxy.validate` it runs the check above and answers on
   `rr:proxy.validated` (`ok`, `invalid`, or `unavailable` when the proxy
   cannot run it). On `rr:proxy.reload` it runs `nginx -t` inside
   `proxy-nginx` and reloads only if that passes, so a broken render never
