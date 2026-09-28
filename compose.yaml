@@ -17,7 +17,9 @@ x-app-common: &app-common
     # encodes the password; a URL assembled here would break on `@`, `/` or
     # `#` in it. An explicit DATABASE_URL still wins.
     DATABASE_URL: ${DATABASE_URL:-}
-    VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379/0}
+    # P-21: with the password of `.env`; an explicit VALKEY_URL (an external
+    # Valkey) still wins.
+    VALKEY_URL: ${VALKEY_URL:-redis://:${VALKEY_PASSWORD}@valkey:6379/0}
   networks: [rr_net]
   restart: unless-stopped
   volumes:
@@ -56,21 +58,24 @@ services:
     security_opt: [no-new-privileges:true]
     logging: { driver: json-file, options: { max-size: '50m', max-file: '5' } }
 
+  # P-21 (owner decision О-17): a password, so another container on `rr_net`
+  # cannot write sessions or queue jobs. The server reads it from a file
+  # written here — a `--requirepass` argument is visible to every user of the
+  # host in `ps` — and `valkey-cli` (the healthcheck, `rr proxy:reload`) from
+  # VALKEYCLI_AUTH. The image's entrypoint still drops to the `valkey` user.
   valkey:
     image: valkey/valkey:9.1-alpine
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required in .env (scripts/init-env.sh makes one)}
+      VALKEYCLI_AUTH: ${VALKEY_PASSWORD}
     command:
-      [
-        valkey-server,
-        --save,
-        '60',
-        '1000',
-        --appendonly,
-        yes,
-        --maxmemory,
-        256mb,
-        --maxmemory-policy,
-        noeviction,
-      ]
+      - sh
+      - -c
+      - >-
+        umask 077 && printf 'requirepass %s\n' "$$VALKEY_PASSWORD" > /tmp/valkey-auth.conf &&
+        chown valkey /tmp/valkey-auth.conf &&
+        exec docker-entrypoint.sh valkey-server /tmp/valkey-auth.conf
+        --save 60 1000 --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     volumes: [valkeydata:/data]
     networks: [rr_net]
     healthcheck:

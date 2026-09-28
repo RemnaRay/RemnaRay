@@ -29,6 +29,11 @@ const envSchema = z
     POSTGRES_DB: z.string().min(1).default('remnaray'),
     DATABASE_URL: z.url().optional(),
     VALKEY_URL: z.url().default('redis://valkey:6379/0'),
+    // P-21: the compose Valkey's password; compose builds VALKEY_URL from it.
+    VALKEY_PASSWORD: z
+      .string()
+      .regex(/^[A-Za-z0-9._~-]+$/u, 'letters, digits, ".", "_", "~" and "-" only')
+      .optional(),
     RR_VERSION: z.string().min(1).default('latest'),
     RR_EXTERNAL_HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(8080),
     RR_TRUSTED_PROXIES: z.string().default('172.28.0.0/16'),
@@ -52,6 +57,17 @@ const envSchema = z
         code: 'custom',
         path: ['POSTGRES_PASSWORD'],
         message: 'required unless DATABASE_URL is set',
+      });
+    }
+
+    // P-21: a VALKEY_URL line left in an older `.env` names the compose
+    // Valkey without the password it now requires; every call would fail.
+    const valkey = new URL(value.VALKEY_URL);
+    if (value.VALKEY_PASSWORD && valkey.hostname === 'valkey' && !valkey.password) {
+      context.addIssue({
+        code: 'custom',
+        path: ['VALKEY_URL'],
+        message: 'names the compose Valkey without VALKEY_PASSWORD; remove it from .env',
       });
     }
 

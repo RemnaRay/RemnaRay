@@ -105,4 +105,21 @@ describe('loadEnv', () => {
       expect(message).not.toContain('secret-key-value');
     }
   });
+
+  // P-21: an `.env` from before the password still names the compose Valkey
+  // without it; every connection would then be refused with NOAUTH.
+  it('refuses a VALKEY_URL for the compose Valkey without its password', () => {
+    expect(() =>
+      loadEnv({ ...valid, VALKEY_PASSWORD: 'p4ss', VALKEY_URL: 'redis://valkey:6379/0' }),
+    ).toThrow('VALKEY_URL');
+    expect(
+      loadEnv({ ...valid, VALKEY_PASSWORD: 'p4ss', VALKEY_URL: 'redis://:p4ss@valkey:6379/0' })
+        .VALKEY_URL,
+    ).toBe('redis://:p4ss@valkey:6379/0');
+    // An external Valkey is the owner's own business.
+    expect(
+      loadEnv({ ...valid, VALKEY_PASSWORD: 'p4ss', VALKEY_URL: 'redis://cache.internal:6379/0' })
+        .VALKEY_URL,
+    ).toBe('redis://cache.internal:6379/0');
+  });
 });

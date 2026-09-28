@@ -1,8 +1,8 @@
 # Initial setup wizard
 
-RemnaRay ships unconfigured. The owner fills seven variables in `.env`, starts
-the stack and finishes the rest in the browser: `https://<domain>/setup`
-(section 17.4, FR-171).
+RemnaRay ships unconfigured. The owner fills the variables of `.env`
+(`scripts/init-env.sh` writes them), starts the stack and finishes the rest in
+the browser: `https://<domain>/setup` (section 17.4, FR-171).
 
 ## The gate
 

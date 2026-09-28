@@ -18,6 +18,13 @@ git pull                      # the compose files and the proxy templates
 docker compose ps
 ```
 
+An `.env` written before Valkey had a password (P-21) needs one line and loses
+another before the first `up`: add `VALKEY_PASSWORD=` with a value of letters
+and digits (`openssl rand -hex 24`), and delete the `VALKEY_URL=` line if it
+names `redis://valkey:6379/0` — the applications then build the URL with the
+password. Compose refuses to run without `VALKEY_PASSWORD`, and a left-over
+`VALKEY_URL` stops `api`, `worker` and `bot` at start with its name.
+
 `up` pulls on its own only for a tag that is not a release's (such as `dev`);
 for a release tag it starts whatever image is on the server, which is why the
 upgrade asks for `--pull` (or a `docker compose pull` of its own).

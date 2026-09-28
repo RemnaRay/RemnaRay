@@ -1619,8 +1619,40 @@ rr:rotate-key --old --new` as 17.1 names it, or the keys in
   (optionally rotate the stand's key with `./scripts/rr rotate-key` after
   the deploy; by О-20 the stand is recreated anyway).
 
-**Exact next:** package 3, P-21 — a Valkey password (О-17). M5 stays NOT
-VERIFIED; TASK-M5-004 is unchanged.
+- **P-21 Done (local) — Valkey accepted any client on the compose network.**
+  Cause: `valkey` ran without a password on the flat `rr_net`; code run in
+  any container there (the web process, say) could write
+  `rr:asess:<sid>` with `totpVerified` or queue BullMQ jobs. Repair (owner
+  decision О-17): `.env` has `VALKEY_PASSWORD` (`init-env.sh` generates 48
+  hex characters; the smoke stand one of its own); compose refuses to run
+  without it; the server gets `requirepass` from a file written in the
+  container (`umask 077`, owned by `valkey`) and the image's entrypoint
+  still drops to the `valkey` user — a `--requirepass` argument would show
+  in the host's `ps`; `valkey-cli` (healthcheck, `rr proxy:reload`)
+  authenticates through `VALKEYCLI_AUTH`; the applications' `VALKEY_URL`
+  is `redis://:<password>@valkey:6379/0` unless `.env` names another one.
+  The env check (R67) accepts `VALKEY_PASSWORD` of URL-safe characters and
+  stops a process whose `VALKEY_URL` names the compose Valkey without a
+  password (an `.env` line from before). `.env.example`, `docs/install.md`
+  (an eighth variable — recorded deviation from 17.2's seven, by О-17),
+  `docs/upgrade.md` (what an existing `.env` needs) and `docs/setup.md`
+  follow. Every client connects with an ioredis URL, so the password
+  reaches BullMQ too. Evidence: `tooling.test.mjs` «Valkey requires a
+  password that no command line carries» red → green; `env.test.ts` (the
+  left-over `VALKEY_URL`) red → green; new `m5.valkey-auth` (in
+  `test:m5`), the compose `valkey` itself: `SET` without the password →
+  `NOAUTH` — red (accepted) → green; `PING` with it; no process argument
+  carries it; compose without `VALKEY_PASSWORD` fails naming it;
+  `m1.database-url` (init-env + compose) green. Checks: `pnpm test` 75/76
+  (the known docs-link test), config 10, lint, format, typecheck,
+  i18n-check (2314), shellcheck. VPS action: before the deploy add
+  `VALKEY_PASSWORD=<openssl rand -hex 24>` to `/opt/test/.env` and delete
+  its `VALKEY_URL=redis://valkey:6379/0` line; after `rr up` sessions in
+  Valkey survive (the data volume is kept) and `docker compose exec -e
+VALKEYCLI_AUTH= valkey valkey-cli ping` answers `NOAUTH`.
+
+**Exact next:** package 3, L-33 (docs on `docker.sock` `:ro`) and L-36
+(pin `certbot`). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

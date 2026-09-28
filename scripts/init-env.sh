@@ -35,6 +35,8 @@ esac
 app_key=$(openssl rand -base64 32 | tr -d '\n')
 internal_token=$(openssl rand -base64 32 | tr -d '\n')
 setup_token=$(openssl rand -base64 24 | tr -d '\n')
+# P-21: the compose Valkey's password; hex, so it needs no escaping in a URL.
+valkey_password=$(openssl rand -hex 24)
 # Used only with --profile monitoring; Grafana refuses to start without one.
 grafana_password=$(openssl rand -hex 16)
 
@@ -49,7 +51,7 @@ RR_INTERNAL_TOKEN=$internal_token
 POSTGRES_PASSWORD='$postgres_password'
 POSTGRES_USER=remnaray
 POSTGRES_DB=remnaray
-VALKEY_URL=redis://valkey:6379/0
+VALKEY_PASSWORD=$valkey_password
 RR_TRUSTED_PROXIES=172.28.0.0/16
 RR_EXTERNAL_HTTP_PORT=8080
 RR_LOG_LEVEL=info

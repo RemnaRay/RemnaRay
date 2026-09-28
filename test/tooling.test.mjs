@@ -1145,3 +1145,25 @@ test('the api, worker and bot check the environment before anything else', async
     assert.match(main, /^checkEnvironment\(\);$/mu, app);
   }
 });
+
+// P-21 (owner decision О-17): Valkey ran without a password on the flat
+// `rr_net`, so any container there — a compromised web process — could write
+// an admin session with `totpVerified` or queue BullMQ jobs. The password is
+// in `.env`; the server reads it from a file, never from its command line,
+// which every user of the host sees in `ps`.
+test('Valkey requires a password that no command line carries', async () => {
+  const { services } = await resolvedCompose();
+  const password = /^VALKEY_PASSWORD=(.+)$/mu.exec(await readFile('.env.example', 'utf8'))?.[1];
+  assert.ok(password, '.env.example has no VALKEY_PASSWORD');
+  const valkey = services.valkey;
+  assert.equal(valkey.environment.VALKEYCLI_AUTH, password);
+  assert.ok(!valkey.command.some((part) => part.includes(password)), valkey.command.join(' '));
+  assert.match(valkey.command.join(' '), /requirepass/u);
+  for (const name of ['api', 'bot', 'worker', 'proxy-config', 'proxy-reloader'].filter(
+    (service) => services[service],
+  ))
+    assert.equal(services[name].environment.VALKEY_URL, `redis://:${password}@valkey:6379/0`, name);
+  const init = await readFile('scripts/init-env.sh', 'utf8');
+  assert.match(init, /^VALKEY_PASSWORD=\$valkey_password$/mu);
+  assert.doesNotMatch(init, /^VALKEY_URL=/mu);
+});

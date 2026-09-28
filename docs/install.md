@@ -103,7 +103,7 @@ package public at Packages → Package settings avoids that.
 `RR_REGISTRY` and `RR_VERSION` are what a release deployment uses too — they
 simply default to the published images.
 
-## The seven variables
+## The variables
 
 Everything else is configured from the administration console and lives in the
 database. `.env` carries only secrets and infrastructure:
@@ -117,6 +117,12 @@ database. `.env` carries only secrets and infrastructure:
 | `RR_SETUP_TOKEN`    | one-time, for the wizard                                     |
 | `RR_INTERNAL_TOKEN` | how the bot and the worker authenticate to the API           |
 | `POSTGRES_PASSWORD` | the database password                                        |
+| `VALKEY_PASSWORD`   | Valkey's password; the applications build their URL from it  |
+
+`VALKEY_PASSWORD` is the eighth (section 17.2 lists seven; the owner's
+decision О-17 added it): Valkey no longer accepts a client without it, so
+another container on the compose network cannot write a session or queue a
+job. `init-env.sh` generates it; compose refuses to start without it.
 
 `api`, `worker` and `bot` check `.env` when they start: a missing or malformed
 variable — `RR_APP_KEY` must be 32 bytes in base64, `openssl rand -base64 32`
