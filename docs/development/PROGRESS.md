@@ -1173,8 +1173,34 @@ push=true`); `release.yml` scans every image with Trivy (the rebuild's
   typecheck, i18n-check (2312). Not verified until a tag runs on GitHub.
   VPS action: none.
 
-**Exact next:** package 3, R116 — actions pinned by SHA, permissions per
-job. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+- **R116 Done (local) — actions ran from movable tags with write tokens
+  granted to whole workflows.** Cause: every `uses:` named a tag, third-party
+  ones included, in jobs holding `packages: write` and `id-token: write`; a
+  rewritten tag (the tj-actions class of attack) could sign and publish an
+  image under `ghcr.io/remnaray/*:1`. The permissions sat at workflow level,
+  so the release's GitHub Release job could sign images and the nightly
+  `pnpm install` (lifecycle scripts of dependencies) ran with
+  `issues: write` and `security-events: write`. Repair: every action is
+  pinned to the commit its current tag names, with the tag as the comment
+  (the form Renovate's `helpers:pinGitHubActionDigests` updates; commits
+  resolved with `gh api repos/<action>/commits/<tag>` on 2026-09-28, no tag
+  changed); every workflow grants only `contents: read`; the signing jobs
+  (`release` images, `rebuild`) get `packages`/`id-token`/`attestations`,
+  the release's tags job `packages: write`, the GitHub Release job
+  `contents: write`, `images.yml` `packages: write`, the nightly Trivy job
+  `security-events: write` and the ZAP job `issues: write` (its report
+  issue); the audit job has read only. Evidence: `tooling.test.mjs` «every
+  action is pinned to a commit and every write permission belongs to a
+  job» red (`ci.yml: actions/checkout@v7`) → green; the older workflow
+  tests read the pinned form; actionlint reports only the four SC2016
+  notes it reported before. Checks: `pnpm test` 68/69 (the known
+  docs-link test), lint, format, typecheck, i18n-check (2312). Not verified
+  until the workflows run on GitHub. VPS action: none.
+
+**Exact next:** package 3, R117 — `renovate.json` as 24.6 describes it
+(`allowedVersions` instead of `ignoreDeps`, `github-actions` group, digest
+PRs for `postgres`/`valkey`, nginx 1.30.x). M5 stays NOT VERIFIED;
+TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 

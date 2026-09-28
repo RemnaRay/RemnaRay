@@ -6,10 +6,10 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+# Every job asks for what it uses; the workflow grants no more than reading
+# the repository (R116).
 permissions:
   contents: read
-  issues: write
-  security-events: write
 
 jobs:
   audit:
@@ -17,13 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.21.0
           cache: pnpm
@@ -37,6 +37,10 @@ jobs:
   trivy:
     name: trivy / ${{ matrix.image }}
     runs-on: ubuntu-latest
+    # The findings go to code scanning.
+    permissions:
+      contents: read
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -54,13 +58,13 @@ jobs:
             file: deploy/backup/Dockerfile
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build ${{ matrix.image }}
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.file }}
@@ -70,7 +74,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
 
       - name: Scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: remnaray/${{ matrix.image }}:nightly
           format: sarif
@@ -79,7 +83,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload the findings
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}
@@ -87,15 +91,19 @@ jobs:
   zap:
     name: zap-baseline
     runs-on: ubuntu-latest
+    # The action opens or updates an issue with its report.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.21.0
           cache: pnpm
@@ -122,7 +130,7 @@ jobs:
           RR_SMOKE_KEEP=true RR_SMOKE_NO_BROWSER=true deploy/ci/proxy-smoke.sh nginx
 
       - name: Scan the running stand
-        uses: zaproxy/action-baseline@v0.14.0
+        uses: zaproxy/action-baseline@7c4deb10e6261301961c86d65d54a516394f9aed # v0.14.0
         with:
           target: https://rr.test
           cmd_options: '-I -j'

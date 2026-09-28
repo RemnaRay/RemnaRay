@@ -17,11 +17,10 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
 
+# Every job asks for what it uses; the workflow grants no more than reading
+# the repository (R116).
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
 
 env:
   REGISTRY: ghcr.io
@@ -30,6 +29,11 @@ jobs:
   images:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +59,7 @@ jobs:
     steps:
       # All history, for the release tags `floating-tags.sh` compares with.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -87,13 +91,13 @@ jobs:
           printf 'owner=%s\n' "$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -102,7 +106,7 @@ jobs:
       # The labels only: the `tags` job below publishes the tags.
       - name: Work out the labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}
 
@@ -110,7 +114,7 @@ jobs:
       # and the other four images are through.
       - name: Build and push by digest
         id: push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.file }}
@@ -126,7 +130,7 @@ jobs:
       # The gate `rebuild.yml` and `nightly.yml` apply: an image with a fixable
       # critical or high vulnerability is never tagged.
       - name: Scan the image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}
           severity: CRITICAL,HIGH
@@ -137,7 +141,7 @@ jobs:
       # workflow's GitHub identity and recorded in the Sigstore transparency
       # log. By digest, which every tag of this image will point at.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign the image with cosign
         env:
@@ -152,7 +156,7 @@ jobs:
       # A build provenance attestation besides the signature (`gh attestation
       # verify`); it is not the cosign signature section 24.4 asks for.
       - name: Attest the provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -166,7 +170,7 @@ jobs:
           printf '%s' "$DIGEST" > "digests/${{ matrix.image }}"
 
       - name: Upload the digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ matrix.image }}
           path: digests/${{ matrix.image }}
@@ -181,6 +185,8 @@ jobs:
     name: publish the tags
     runs-on: ubuntu-latest
     needs: images
+    permissions:
+      packages: write
     steps:
       - name: Name the registry namespace
         id: ns
@@ -188,17 +194,17 @@ jobs:
           printf 'owner=%s\n' "$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Download the digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: digest-*
           path: digests
           merge-multiple: true
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -239,9 +245,11 @@ jobs:
     name: github release
     runs-on: ubuntu-latest
     needs: [images, tags]
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { fetch-depth: 0 }
 
       - name: Take this version's section out of the changelog
@@ -259,7 +267,7 @@ jobs:
           fi
 
       - name: Publish the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           body_path: notes.md
           prerelease: ${{ needs.images.outputs.prerelease == 'true' }}

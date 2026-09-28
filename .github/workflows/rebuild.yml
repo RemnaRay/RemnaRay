@@ -15,11 +15,10 @@ on:
         description: The released version to rebuild (for example 1.2.3).
         required: false
 
+# Every job asks for what it uses; the workflow grants no more than reading
+# the repository (R116).
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 env:
   REGISTRY: ghcr.io
@@ -28,6 +27,11 @@ jobs:
   rebuild:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -50,7 +54,7 @@ jobs:
       # (24.5) would keep the current line from being rebuilt (R114).
       - name: Find the latest release
         id: release
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const asked = context.payload.inputs?.version;
@@ -87,7 +91,7 @@ jobs:
       # release tag: a manual rebuild of an older version must not move
       # `X.Y` or `X` back onto it.
       - name: Checkout the default branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -96,7 +100,7 @@ jobs:
         run: scripts/floating-tags.sh '${{ steps.release.outputs.result }}' >> "$GITHUB_OUTPUT"
 
       - name: Checkout that release
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: v${{ steps.release.outputs.result }}
 
@@ -106,13 +110,13 @@ jobs:
           printf 'owner=%s\n' "$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -122,7 +126,7 @@ jobs:
       # behind that a deployment could pull by name (R115).
       - name: Build it again, from scratch
         id: push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.file }}
@@ -135,7 +139,7 @@ jobs:
           provenance: mode=max
 
       - name: Scan the rebuilt image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}
           severity: CRITICAL,HIGH
@@ -146,7 +150,7 @@ jobs:
       # workflow's GitHub identity and recorded in the Sigstore transparency
       # log. By digest, once the scan is clean; the tags below must name it.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign the image with cosign
         env:
@@ -184,7 +188,7 @@ jobs:
           done
 
       - name: Attest the provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.push.outputs.digest }}

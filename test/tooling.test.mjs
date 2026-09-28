@@ -453,11 +453,15 @@ test('every workflow scans with the one Trivy action tag that exists', async () 
   // `aquasecurity/trivy-action` tags are `v`-prefixed; `@0.28.0` does not
   // exist, so a workflow that used it failed at the scan and published
   // nothing. The nightly was corrected to v0.36.0; the rebuild kept 0.28.0.
-  const workflows = ['.github/workflows/nightly.yml', '.github/workflows/rebuild.yml'];
+  const workflows = [
+    '.github/workflows/nightly.yml',
+    '.github/workflows/rebuild.yml',
+    '.github/workflows/release.yml',
+  ];
   const tags = new Set();
   for (const path of workflows)
     for (const match of (await readFile(path, 'utf8')).matchAll(
-      /aquasecurity\/trivy-action@(\S+)/gu,
+      /aquasecurity\/trivy-action@[0-9a-f]{40} # (\S+)/gu,
     ))
       tags.add(match[1]);
   assert.deepEqual([...tags], ['v0.36.0']);
@@ -523,7 +527,10 @@ test('the release and rebuild workflows move the floating tags by that rule', as
       /run: scripts\/floating-tags\.sh '\$\{\{ steps\.\w+\.outputs\.\w+ \}\}' >> "\$GITHUB_OUTPUT"/u,
     );
     // The script reads the release tags, which only a full fetch brings.
-    assert.match(workflow, /uses: actions\/checkout@v7\n {8}with:\n {10}fetch-depth: 0\n/u);
+    assert.match(
+      workflow,
+      /uses: actions\/checkout@[0-9a-f]{40} # v7\n {8}with:\n {10}fetch-depth: 0\n/u,
+    );
   }
   // The images job decides; the tags job moves them.
   assert.match(release, /^ {6}minor: \$\{\{ steps\.floating\.outputs\.minor \}\}$/mu);
@@ -709,9 +716,9 @@ test('the release and rebuild workflows sign every image with cosign', async () 
     ['rebuild', rebuild],
   ]) {
     // Keyless signing takes the workflow's OIDC token.
-    assert.match(workflow, /^ {2}id-token: write$/mu);
+    assert.match(workflow, /^ {6}id-token: write$/mu);
     // v4 of the installer is what installs cosign 3; the tag exists.
-    assert.match(workflow, /uses: sigstore\/cosign-installer@v4\.1\.2\n/u);
+    assert.match(workflow, /uses: sigstore\/cosign-installer@[0-9a-f]{40} # v4\.1\.2\n/u);
     // By digest, never by tag.
     assert.match(workflow, /cosign sign --yes "\$\{IMAGE\}@\$\{DIGEST\}"/u);
     assert.match(workflow, /DIGEST: \$\{\{ steps\.push\.outputs\.digest \}\}/u);
@@ -1037,4 +1044,59 @@ esac
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// R116: every action ran from a movable tag, third-party ones included, in
+// jobs that held `packages: write` and `id-token: write` — a rewritten tag
+// (the tj-actions attack, 2025) could sign and publish an image under
+// `ghcr.io/remnaray/*:1`. The permissions were granted to the whole
+// workflow, so `pnpm install` in the nightly audit ran with
+// `security-events: write` and `issues: write`. Now each action is pinned to
+// a commit with its tag as the comment Renovate updates, the workflow grants
+// only `contents: read`, and each job asks for what it uses.
+test('every action is pinned to a commit and every write permission belongs to a job', async () => {
+  const workflows = [];
+  for await (const path of glob('.github/workflows/*.yml'))
+    workflows.push([path, await readFile(path, 'utf8')]);
+  assert.ok(workflows.length >= 5);
+  for (const [path, workflow] of workflows) {
+    for (const [, reference] of workflow.matchAll(/^\s*(?:- )?uses: (.+)$/gmu))
+      assert.match(
+        reference,
+        /^[\w.-]+\/[\w./-]+@[0-9a-f]{40} # v\d[\w.-]*$/u,
+        `${path}: ${reference}`,
+      );
+    assert.match(workflow, /\npermissions:\n {2}contents: read\n\n/u, `${path} top level`);
+    for (const [, scope] of workflow.matchAll(/^ {2}([\w-]+): write$/gmu))
+      assert.fail(`${path} grants ${scope}: write to every job`);
+  }
+  const job = (path, name) => workflowJob(workflows.find(([file]) => file.endsWith(path))[1], name);
+  const permissions = (block) =>
+    Object.fromEntries(
+      [
+        ...(/^ {4}permissions:\n((?: {6}.*\n)+)/mu.exec(block)?.[1] ?? '').matchAll(
+          /([\w-]+): (\w+)/gu,
+        ),
+      ].map(([, scope, level]) => [scope, level]),
+    );
+  const signer = {
+    contents: 'read',
+    packages: 'write',
+    'id-token': 'write',
+    attestations: 'write',
+  };
+  assert.deepEqual(permissions(job('release.yml', 'images')), signer);
+  assert.deepEqual(permissions(job('release.yml', 'tags')), { packages: 'write' });
+  assert.deepEqual(permissions(job('release.yml', 'release')), { contents: 'write' });
+  assert.deepEqual(permissions(job('rebuild.yml', 'rebuild')), signer);
+  assert.deepEqual(permissions(job('images.yml', 'images')), {
+    contents: 'read',
+    packages: 'write',
+  });
+  assert.deepEqual(permissions(job('nightly.yml', 'audit')), {});
+  assert.deepEqual(permissions(job('nightly.yml', 'trivy')), {
+    contents: 'read',
+    'security-events': 'write',
+  });
+  assert.deepEqual(permissions(job('nightly.yml', 'zap')), { contents: 'read', issues: 'write' });
 });
