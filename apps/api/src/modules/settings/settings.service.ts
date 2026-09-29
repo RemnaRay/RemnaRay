@@ -3,6 +3,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { decryptSetting, encryptSetting } from './settings.crypto';
 import {
   RETIRED_SETTING_KEYS,
+  RETIRED_SETTING_VALUES,
   settingDefinitions,
   settingKey,
   settingRegistry,
@@ -16,6 +17,12 @@ import { type SettingsRepositoryPort, type SettingWrite } from './settings.repos
 import { type SettingsChangedEvent, type SettingsEventBusPort } from './settings.events';
 
 export type SettingsActor = { id?: string } | undefined;
+
+/** A value a release retired, as what replaced it (an older export still imports). */
+function currentValue(key: string, value: unknown): unknown {
+  const retired = RETIRED_SETTING_VALUES.get(key);
+  return retired && value === retired.from ? retired.to : value;
+}
 
 @Injectable()
 export class SettingsService implements OnModuleInit, OnModuleDestroy {
@@ -101,7 +108,7 @@ export class SettingsService implements OnModuleInit, OnModuleDestroy {
           if (!this.cache.has(fullKey)) throw new Error(`Cannot preserve unset secret ${fullKey}`);
           continue;
         }
-        const parsed = definition.schema.parse(value);
+        const parsed = definition.schema.parse(currentValue(fullKey, value));
 
         writes.push({
           key: fullKey,
@@ -144,8 +151,9 @@ export class SettingsService implements OnModuleInit, OnModuleDestroy {
     const current = await this.flat(false);
     const diff: { key: string; from: unknown; to: unknown }[] = [];
     for (const [group, values] of Object.entries(parsed.settings)) {
-      for (const [name, next] of Object.entries(values)) {
+      for (const [name, value] of Object.entries(values)) {
         const key = `${group}.${name}`;
+        const next = currentValue(key, value);
         const definition = settingDefinitions.get(key);
         if (!definition) continue;
         const from = current[key];

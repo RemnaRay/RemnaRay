@@ -556,6 +556,15 @@ export const settingRegistry: SettingDefinition[] = [
  */
 export const RETIRED_SETTING_KEYS: ReadonlySet<string> = new Set(['referral.count_topups']);
 
+/**
+ * Values a release retired, mapped to what replaced them — as the migration
+ * rewrote the stored rows (F37, 0014: the old default receipt template). Every
+ * older export carries these (it writes defaults too) and still imports.
+ */
+export const RETIRED_SETTING_VALUES: ReadonlyMap<string, { from: unknown; to: unknown }> = new Map([
+  ['fiscal.item_name_template', { from: 'Subscription {plan}', to: DEFAULT_ITEM_NAME_TEMPLATE }],
+]);
+
 export const settingDefinitions = new Map(
   settingRegistry.map((definition) => [`${definition.group}.${definition.name}`, definition]),
 );

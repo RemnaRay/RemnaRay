@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { encryptSetting } from './settings.crypto';
+import { settingRegistry } from './settings.schemas';
 import { SettingsService } from './settings.service';
 import type { SettingsChangedEvent, SettingsEventBusPort } from './settings.events';
 import type { SettingsRepositoryPort, SettingWrite, StoredSetting } from './settings.repository';
@@ -196,6 +197,38 @@ describe('SettingsService', () => {
     // A key no release ever had is still refused.
     await expect(service.set({ referral: { counts_topups: true } })).rejects.toThrow(
       'Unknown setting key: referral.counts_topups',
+    );
+  });
+
+  // Spec §2 / ADR-021: every pre-F37 export carries the old default receipt
+  // template (the export writes defaults too); it imports as the new default.
+  it('imports a full pre-F37 export with the old default receipt template', async () => {
+    const repository = new MemoryRepository();
+    const service = new SettingsService(repository, new MemoryEventBus(), appKey);
+    await service.onModuleInit();
+    // A configured shop: every secret is set, so the export carries `{ set: true }`.
+    for (const definition of settingRegistry.filter((item) => item.secret))
+      await service.set({ [definition.group]: { [definition.name]: definition.defaultValue } });
+    const exported = await service.exportSnapshot();
+    exported.settings.fiscal = {
+      ...exported.settings.fiscal,
+      item_name_template: 'Subscription {plan}',
+    };
+    exported.settings.referral = { ...exported.settings.referral, count_topups: false };
+
+    // The dry run shows no change for the template the import rewrites.
+    expect((await service.diff(exported)).map((item) => item.key)).not.toContain(
+      'fiscal.item_name_template',
+    );
+    await expect(service.importSnapshot(exported)).resolves.toBeUndefined();
+
+    expect(await service.get('fiscal.item_name_template')).toBe('Пополнение баланса (#{number})');
+    expect(repository.values.find((item) => item.key === 'fiscal.item_name_template')?.value).toBe(
+      'Пополнение баланса (#{number})',
+    );
+    // A template the owner customised with `{plan}` is still refused.
+    await expect(service.set({ fiscal: { item_name_template: 'VPN {plan}' } })).rejects.toThrow(
+      'Only {number} and {brand} are allowed.',
     );
   });
 
