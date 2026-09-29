@@ -168,7 +168,6 @@ test('M4 console changes reach the panel', { timeout: 240_000 }, async () => {
       holdHours: 0,
       maxRewardsPerDay: 10,
       minSourceAmountMinor: 0n,
-      countTopups: false,
     };
     const limits = { days: 3, trafficGb: 10, deviceLimit: 2, squads: [] };
     for (const round of [1, 2]) {

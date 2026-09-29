@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 
 import { decryptSetting, encryptSetting } from './settings.crypto';
 import {
+  RETIRED_SETTING_KEYS,
   settingDefinitions,
   settingKey,
   settingRegistry,
@@ -70,13 +71,19 @@ export class SettingsService implements OnModuleInit, OnModuleDestroy {
     const writes: SettingWrite[] = [];
     const changedKeys: string[] = [];
 
-    for (const [groupName, groupPatch] of Object.entries(parsedPatch)) {
+    for (const [groupName, requested] of Object.entries(parsedPatch)) {
       if (!settingsGroups.includes(groupName as SettingsGroup)) {
         throw new Error(`Unknown settings group: ${groupName}`);
       }
       const group = groupName as SettingsGroup;
       const knownNames = new Set(
         settingRegistry.filter((item) => item.group === group).map((item) => item.name),
+      );
+      // A key a release removed is skipped, so an older export still imports.
+      const groupPatch = Object.fromEntries(
+        Object.entries(requested).filter(
+          ([name]) => !RETIRED_SETTING_KEYS.has(settingKey(group, name)),
+        ),
       );
       for (const name of Object.keys(groupPatch)) {
         if (!knownNames.has(name)) throw new Error(`Unknown setting key: ${groupName}.${name}`);

@@ -39,7 +39,6 @@ const programSchema = z.object({
   hold_hours: z.number(),
   max_rewards_per_day: z.number(),
   min_source_amount_minor: z.string(),
-  count_topups: z.boolean(),
   invitee_bonus: z.object({ type: z.string(), value: z.number() }),
   invitee_bonus_trigger: z.string(),
 });
@@ -257,17 +256,6 @@ export default function ReferralsAdminClient() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            checked={program.count_topups}
-                            disabled={!canWrite}
-                            type="checkbox"
-                            onChange={(event) => {
-                              setDraft({ ...program, count_topups: event.target.checked });
-                            }}
-                          />
-                          {t('referrals.countTopups')}
-                        </label>
                         {canWrite ? (
                           <div className="flex items-end">
                             <Button

@@ -420,11 +420,6 @@ export const settingRegistry: SettingDefinition[] = [
       defaultValue: '0',
       description: 'Minimum source payment.',
     },
-    count_topups: {
-      schema: z.boolean(),
-      defaultValue: false,
-      description: 'Count balance top-ups for rewards.',
-    },
   }),
   ...definitions('notifications', {
     expiring_days: {
@@ -554,6 +549,12 @@ export const settingRegistry: SettingDefinition[] = [
     },
   }),
 ];
+
+/**
+ * Keys a release removed. An older settings export may still carry them; the
+ * import skips them instead of refusing the whole file (F37: `count_topups`).
+ */
+export const RETIRED_SETTING_KEYS: ReadonlySet<string> = new Set(['referral.count_topups']);
 
 export const settingDefinitions = new Map(
   settingRegistry.map((definition) => [`${definition.group}.${definition.name}`, definition]),

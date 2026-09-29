@@ -274,7 +274,6 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
         'referral.hold_hours': 0,
         'referral.max_rewards_per_day': 20,
         'referral.min_source_amount_minor': '0',
-        'referral.count_topups': true,
         'trial.days': 3,
         'trial.traffic_gb': 10,
         'trial.device_limit': 1,

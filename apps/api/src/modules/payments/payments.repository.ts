@@ -409,12 +409,7 @@ export class PaymentsRepository {
     );
     await paymentSucceeded(tx, transaction, invoice);
     await this.rewards?.onInvoiceSettled(tx, invoice.id);
-    await this.rewards?.onPaid(tx, {
-      id: transaction.id,
-      userId: invoice.userId,
-      type: 'purchase',
-      amountMinor: invoice.amountMinor,
-    });
+    // F37 (R135): a purchase spends a top-up that was already a reward source.
     await tx.outboxJob.create({
       data: {
         queue: 'panel',

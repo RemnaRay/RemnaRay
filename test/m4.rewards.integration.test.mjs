@@ -35,7 +35,7 @@ async function payInvoice(service, invoice, amountMinor) {
 }
 
 test(
-  'M4 rewards: AC-152 single first-purchase reward, AC-153 reversal, AC-155 promo race',
+  'M4 rewards: AC-152 single first-top-up reward, AC-153 reversal, AC-155 promo race',
   { timeout: 300_000 },
   async () => {
     const postgres = await new PostgreSqlContainer('postgres:18-alpine')
@@ -64,7 +64,7 @@ test(
 
       const prisma = createPrismaClient(databaseUrl);
       const infra = { db: prisma, redis: noCache };
-      const settings = settingsStub({
+      const values = {
         'referral.enabled': true,
         'referral.mode': 'percent_first',
         'referral.percent': 20,
@@ -75,7 +75,6 @@ test(
         'referral.hold_hours': 24,
         'referral.max_rewards_per_day': 20,
         'referral.min_source_amount_minor': '0',
-        'referral.count_topups': false,
         'trial.days': 3,
         'trial.traffic_gb': 10,
         'trial.device_limit': 1,
@@ -89,7 +88,8 @@ test(
         'bot.username': 'bot',
         'domain.main': 'shop.test',
         'subscription.user_can_remove_devices': false,
-      });
+      };
+      const settings = settingsStub(values);
       const rewards = new RewardsService(infra, settings);
       const registry = new PaymentProviderRegistry();
       registry.register(new MockPaymentProvider());
@@ -120,33 +120,80 @@ test(
           priceMinor: 29900n,
         },
       });
+      const cheap = await prisma.plan.create({
+        data: {
+          slug: 'm4-cheap',
+          name: { ru: 'Дёшево', en: 'Cheap' },
+          durationDays: 1,
+          squads: ['01a0b9f0-e699-7032-9841-6d516d4591ad'],
+          priceMinor: 5000n,
+        },
+      });
+      // F37 (ADR-021): money comes in only as a top-up at a provider, and a
+      // plan is bought from the balance.
+      const { BalanceProvider } =
+        await import('../apps/api/dist/modules/payments/builtin-providers.js');
+      registry.register(new BalanceProvider());
+      const topUp = async (userId, amountMinor, idempotencyKey) => {
+        const invoice = await payments.createInvoice({
+          userId,
+          kind: 'topup',
+          provider: 'mock',
+          amountMinor,
+          idempotencyKey,
+        });
+        await payInvoice(payments, invoice, Number(amountMinor));
+        return invoice;
+      };
+      const transactionOf = (invoice) =>
+        prisma.transaction.findFirstOrThrow({ where: { invoiceId: invoice.id } });
+      const rewardOf = async (invoice) =>
+        prisma.referralReward.findUniqueOrThrow({
+          where: { sourceTransactionId: (await transactionOf(invoice)).id },
+        });
+      const rewardCount = async (refereeId) =>
+        prisma.referralReward.count({
+          where: {
+            attributionId: (
+              await prisma.referralAttribution.findUniqueOrThrow({ where: { refereeId } })
+            ).id,
+          },
+        });
 
-      // AC-152: two purchases, only the first accrues a reward.
-      const first = await payments.createInvoice({
+      // AC-152, F37: the first top-up is the first paid event — percent_first
+      // pays 20 % of it.
+      const topup = await payments.createInvoice({
+        userId: referee.id,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 29900n,
+        idempotencyKey: 'f37-first-topup',
+        target: { planId: plan.id, kind: 'purchase' },
+      });
+      await payInvoice(payments, topup, 29900);
+      const topupTransaction = await transactionOf(topup);
+      assert.equal(topupTransaction.type, 'topup');
+      const reward = await rewardOf(topup);
+      assert.equal(reward.amountMinor, 5980n);
+      assert.equal(reward.status, 'held');
+      assert.equal(
+        (await prisma.referralAttribution.findUnique({ where: { refereeId: referee.id } })).status,
+        'converted',
+      );
+
+      // A second top-up is no longer the first: nothing more.
+      await topUp(referee.id, 29900n, 'ref-second');
+      // R135: the purchase from that balance is not a second source.
+      const bought = await payments.createInvoice({
         userId: referee.id,
         kind: 'purchase',
         planId: plan.id,
-        provider: 'mock',
-        idempotencyKey: 'ref-first',
+        provider: 'balance',
+        idempotencyKey: 'f37-buy',
       });
-      await payInvoice(payments, first, 29900);
-      const second = await payments.createInvoice({
-        userId: referee.id,
-        kind: 'purchase',
-        planId: plan.id,
-        provider: 'mock',
-        idempotencyKey: 'ref-second',
-      });
-      await payInvoice(payments, second, 29900);
-
-      const rewardRows = await prisma.referralReward.findMany();
-      assert.equal(rewardRows.length, 1, 'only the first purchase accrues');
-      assert.equal(rewardRows[0].amountMinor, 5980n);
-      assert.equal(rewardRows[0].status, 'held');
-      const attribution = await prisma.referralAttribution.findUnique({
-        where: { refereeId: referee.id },
-      });
-      assert.equal(attribution.status, 'converted');
+      assert.equal(bought.status, 'paid');
+      assert.equal(await rewardCount(referee.id), 1, 'only the first top-up accrues');
+      assert.equal(await prisma.referralReward.count(), 1);
 
       const referrerAccount = await prisma.account.findFirst({
         where: { kind: 'user', userId: referrer.id },
@@ -160,18 +207,6 @@ test(
       assert.equal(await ledger.available(referrer.id), 0n);
       // Paying from the balance obeys the same rule: the 59.80 on the account
       // is all held, so a 50.00 plan cannot be bought with it.
-      const { BalanceProvider } =
-        await import('../apps/api/dist/modules/payments/builtin-providers.js');
-      registry.register(new BalanceProvider());
-      const cheap = await prisma.plan.create({
-        data: {
-          slug: 'm4-cheap',
-          name: { ru: 'Дёшево', en: 'Cheap' },
-          durationDays: 1,
-          squads: ['01a0b9f0-e699-7032-9841-6d516d4591ad'],
-          priceMinor: 5000n,
-        },
-      });
       await assert.rejects(
         payments.createInvoice({
           userId: referrer.id,
@@ -202,16 +237,18 @@ test(
         currency: 'RUB',
       });
 
-      // AC-153: refunding the source reverses the reward and the balance.
-      const sourceTransaction = await prisma.transaction.findFirst({
-        where: { userId: referee.id, type: 'purchase' },
-        orderBy: { createdAt: 'asc' },
+      // AC-153 under F37: the reward's source is the top-up, which is never
+      // refunded (FR-066 refunds purchases), and refunding the purchase from
+      // the balance leaves the reward alone — it was never its source. The
+      // console's reversal (15.4) takes the reward and the balance back.
+      await payments.refund((await transactionOf(bought)).id, 29900n, 'customer request');
+      assert.equal((await rewardOf(topup)).status, 'held');
+      await assert.rejects(payments.refund(topupTransaction.id, 29900n, 'customer request'), {
+        name: 'PaymentError',
+        code: 'REFUND_NOT_PURCHASE',
       });
-      await payments.refund(sourceTransaction.id, 29900n, 'customer request');
-      const reversed = await prisma.referralReward.findUnique({
-        where: { sourceTransactionId: sourceTransaction.id },
-      });
-      assert.equal(reversed.status, 'reversed');
+      assert.deepEqual(await rewards.reverseReward(reward.id), { reversedMinor: 5980 });
+      assert.equal((await rewardOf(topup)).status, 'reversed');
       const reversal = await prisma.transaction.findFirst({
         where: { userId: referrer.id, type: 'referral_reversal' },
       });
@@ -231,7 +268,8 @@ test(
       // Repair queue R16 (15.2): partial refunds reverse the reward in step —
       // 10 % of the source reverses 10 % of the reward and the reward stays
       // held; refunding the rest reverses the rest, and only then is it
-      // `reversed`.
+      // `reversed`. Under F37 a top-up source is never refunded, so this is
+      // the refund hook itself, as a refund of a source still calls it.
       const partialReferrer = await prisma.user.create({
         data: { telegramId: 995000011n, language: 'ru', referralCode: 'PARTREF1' },
       });
@@ -247,17 +285,9 @@ test(
           status: 'pending',
         },
       });
-      const partialInvoice = await payments.createInvoice({
-        userId: partialReferee.id,
-        kind: 'purchase',
-        planId: plan.id,
-        provider: 'mock',
-        idempotencyKey: 'ref-partial',
-      });
-      await payInvoice(payments, partialInvoice, 29900);
-      const partialSource = await prisma.transaction.findFirstOrThrow({
-        where: { userId: partialReferee.id, type: 'purchase' },
-      });
+      const partialSource = await transactionOf(
+        await topUp(partialReferee.id, 29900n, 'ref-partial'),
+      );
       const reversalsOf = async () =>
         (
           await prisma.transaction.findMany({
@@ -265,7 +295,9 @@ test(
             orderBy: { id: 'asc' },
           })
         ).map((row) => row.amountMinor);
-      await payments.refund(partialSource.id, 2990n, 'partial');
+      const refunded = (refundedMinor) =>
+        prisma.$transaction((tx) => rewards.onRefund(tx, partialSource, refundedMinor));
+      await refunded(2990n);
       assert.deepEqual(await reversalsOf(), [598n]);
       assert.equal(
         (
@@ -275,7 +307,7 @@ test(
         ).status,
         'held',
       );
-      await payments.refund(partialSource.id, 26910n, 'the rest');
+      await refunded(29900n);
       assert.deepEqual(await reversalsOf(), [598n, 5382n]);
       const fullyReversed = await prisma.referralReward.findUniqueOrThrow({
         where: { sourceTransactionId: partialSource.id },
@@ -309,20 +341,9 @@ test(
           status: 'pending',
         },
       });
-      const raceInvoice = await payments.createInvoice({
-        userId: raceReferee.id,
-        kind: 'purchase',
-        planId: plan.id,
-        provider: 'mock',
-        idempotencyKey: 'ref-race',
-      });
-      await payInvoice(payments, raceInvoice, 29900);
-      const raceSource = await prisma.transaction.findFirstOrThrow({
-        where: { userId: raceReferee.id, type: 'purchase' },
-      });
-      const raceReward = await prisma.referralReward.findUniqueOrThrow({
-        where: { sourceTransactionId: raceSource.id },
-      });
+      const raceInvoice = await topUp(raceReferee.id, 29900n, 'ref-race');
+      const raceSource = await transactionOf(raceInvoice);
+      const raceReward = await rewardOf(raceInvoice);
       const { reverseReferralReward } =
         await import('../apps/api/dist/modules/rewards/referrals.engine.js');
       let commitA = () => undefined;
@@ -358,85 +379,181 @@ test(
         [5980n],
       );
 
-      // AC-155: a promocode with max_uses = 1 sells exactly one slot.
+      // F37 percent_all: every top-up is a source, and a purchase from the
+      // balance still is not.
+      const allReferrer = await prisma.user.create({
+        data: { telegramId: 995000031n, language: 'ru', referralCode: 'ALLREF01' },
+      });
+      const allReferee = await prisma.user.create({
+        data: { telegramId: 995000032n, language: 'ru', referralCode: 'ALLREE01' },
+      });
+      await prisma.referralAttribution.create({
+        data: {
+          refereeId: allReferee.id,
+          referrerId: allReferrer.id,
+          source: 'telegram',
+          code: 'ALLREF01',
+          status: 'pending',
+        },
+      });
+      values['referral.mode'] = 'percent_all';
+      const allFirst = await topUp(allReferee.id, 10000n, 'all-first');
+      const allSecond = await topUp(allReferee.id, 10000n, 'all-second');
+      assert.equal((await rewardOf(allFirst)).amountMinor, 2000n);
+      assert.equal((await rewardOf(allSecond)).amountMinor, 2000n);
+      const allBought = await payments.createInvoice({
+        userId: allReferee.id,
+        kind: 'purchase',
+        planId: cheap.id,
+        provider: 'balance',
+        idempotencyKey: 'all-buy',
+      });
+      assert.equal(allBought.status, 'paid');
+      assert.equal(await rewardCount(allReferee.id), 2);
+      assert.equal(
+        (await prisma.account.findFirstOrThrow({ where: { kind: 'user', userId: allReferrer.id } }))
+          .balanceMinor,
+        4000n,
+      );
+
+      // F37 first_paid: the invitee's bonus comes with the first top-up, once.
+      const bonusReferrer = await prisma.user.create({
+        data: { telegramId: 995000041n, language: 'ru', referralCode: 'BONREF01' },
+      });
+      const bonusReferee = await prisma.user.create({
+        data: { telegramId: 995000042n, language: 'ru', referralCode: 'BONREE01' },
+      });
+      await prisma.referralAttribution.create({
+        data: {
+          refereeId: bonusReferee.id,
+          referrerId: bonusReferrer.id,
+          source: 'telegram',
+          code: 'BONREF01',
+          status: 'pending',
+        },
+      });
+      values['referral.mode'] = 'percent_first';
+      values['referral.invitee_bonus'] = { type: 'balance', value: 5000 };
+      const bonuses = () =>
+        prisma.transaction.findMany({ where: { userId: bonusReferee.id, type: 'promo_bonus' } });
+      await topUp(bonusReferee.id, 10000n, 'bonus-topup');
+      assert.deepEqual(
+        (await bonuses()).map((row) => row.amountMinor),
+        [5000n],
+      );
+      await payments.createInvoice({
+        userId: bonusReferee.id,
+        kind: 'purchase',
+        planId: cheap.id,
+        provider: 'balance',
+        idempotencyKey: 'bonus-buy',
+      });
+      assert.equal((await bonuses()).length, 1);
+      assert.equal(
+        (
+          await prisma.account.findFirstOrThrow({
+            where: { kind: 'user', userId: bonusReferee.id },
+          })
+        ).balanceMinor,
+        10000n + 5000n - 5000n,
+      );
+      values['referral.invitee_bonus'] = { type: 'none', value: 0 };
+
+      // AC-155: a promocode with max_uses = 1 sells exactly one slot. F37:
+      // the buyers top up first and buy from the balance, where the slot is
+      // taken and applied in the one request.
       const me = new MeService(infra, settings, {}, payments, {}, {});
       const promocode = await prisma.promocode.create({
         data: { code: 'ONLYONE1', type: 'discount_percent', value: 10n, maxUses: 1 },
       });
       const buyers = [];
       for (let index = 0; index < 2; index += 1) {
-        buyers.push(
-          await prisma.user.create({
-            data: {
-              telegramId: BigInt(995100000 + index),
-              language: 'ru',
-              referralCode: `PROMOB${String(index)}`,
-            },
-          }),
-        );
+        const buyer = await prisma.user.create({
+          data: {
+            telegramId: BigInt(995100000 + index),
+            language: 'ru',
+            referralCode: `PROMOB${String(index)}`,
+          },
+        });
+        await topUp(buyer.id, 100000n, `promo-topup-${String(index)}`);
+        buyers.push(buyer);
       }
       const attempts = await Promise.allSettled(
         buyers.map((buyer, index) =>
           me.createInvoice(
             buyer.id,
-            { kind: 'purchase', planId: plan.id, provider: 'mock', promocode: 'ONLYONE1' },
+            { kind: 'purchase', planId: plan.id, provider: 'balance', promocode: 'ONLYONE1' },
             `promo-${String(index)}`,
           ),
         ),
       );
       const accepted = attempts.filter((item) => item.status === 'fulfilled');
       const rejected = attempts.filter((item) => item.status === 'rejected');
-      assert.equal(accepted.length + rejected.length, 2);
-      const reservations = await prisma.promocodeRedemption.count({
-        where: { promocodeId: promocode.id, status: 'reserved' },
+      assert.equal(accepted.length, 1, 'exactly one buyer gets the slot');
+      assert.equal(
+        rejected[0].reason.response.error.code,
+        'PROMO_EXHAUSTED',
+        'the loser is rejected with PROMO_EXHAUSTED',
+      );
+      const taken = await prisma.promocodeRedemption.findMany({
+        where: { promocodeId: promocode.id, status: { not: 'released' } },
       });
-      assert.ok(reservations <= 1, 'at most one reservation may exist');
-
-      if (accepted.length === 1) {
-        assert.equal(
-          rejected[0].reason.response.error.code,
-          'PROMO_EXHAUSTED',
-          'the loser is rejected with PROMO_EXHAUSTED',
-        );
-      }
+      assert.equal(taken.length, 1, 'one redemption holds the slot');
 
       // A third attempt always fails once the slot is taken.
       const third = await prisma.user.create({
         data: { telegramId: 995100099n, language: 'ru', referralCode: 'PROMOB99' },
       });
+      await topUp(third.id, 100000n, 'promo-topup-third');
       await assert.rejects(
         me.createInvoice(
           third.id,
-          { kind: 'purchase', planId: plan.id, provider: 'mock', promocode: 'ONLYONE1' },
+          { kind: 'purchase', planId: plan.id, provider: 'balance', promocode: 'ONLYONE1' },
           'promo-third',
         ),
         (error) => error.response.error.code === 'PROMO_EXHAUSTED',
       );
 
-      // Settlement moves the reservation to applied and bumps used_count.
-      const reserved = await prisma.promocodeRedemption.findFirst({
-        where: { promocodeId: promocode.id, status: 'reserved' },
-      });
-      if (reserved) {
-        const invoice = await prisma.invoice.findUnique({ where: { id: reserved.invoiceId } });
-        await payInvoice(payments, invoice, Number(invoice.amountMinor));
-        const applied = await prisma.promocodeRedemption.findUnique({ where: { id: reserved.id } });
-        assert.equal(applied.status, 'applied');
-        const used = await prisma.promocode.findUnique({ where: { id: promocode.id } });
-        assert.equal(used.usedCount, 1);
-      }
+      // Settlement applied the reservation and bumped used_count.
+      assert.equal(taken[0].status, 'applied');
+      assert.equal(taken[0].invoiceId, accepted[0].value.id);
+      assert.equal(
+        (await prisma.promocode.findUnique({ where: { id: promocode.id } })).usedCount,
+        1,
+      );
 
       // Section 11.4: an invoice that expires gives its promocode slot back.
       // Expiry only changed the status, so the one use stayed reserved for
-      // ever and every later buyer was told PROMO_EXHAUSTED.
-      await prisma.promocode.create({
+      // ever and every later buyer was told PROMO_EXHAUSTED. F37: only a
+      // provider purchase written before F37 can still hold a reservation
+      // past its request; the trigger of 0014 refuses such a new row, so it
+      // is off for the one insert.
+      const expiring = await prisma.promocode.create({
         data: { code: 'EXPIRES1', type: 'discount_percent', value: 10n, maxUses: 1 },
       });
-      const abandoned = await me.createInvoice(
-        buyers[0].id,
-        { kind: 'purchase', planId: plan.id, provider: 'mock', promocode: 'EXPIRES1' },
-        'promo-abandoned',
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE invoices DISABLE TRIGGER invoices_provider_topup',
       );
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO invoices (id, user_id, kind, plan_id, provider, status, amount_minor, discount_minor, promocode_id, currency, idempotency_key, expires_at, provider_invoice_id)
+         VALUES (uuidv7(), $1::uuid, 'purchase', $2::uuid, 'mock', 'pending', 26910, 2990, $3::uuid, 'RUB', 'promo-abandoned', now() + interval '10 minutes', 'legacy-promo')`,
+        buyers[0].id,
+        plan.id,
+        expiring.id,
+      );
+      await prisma.$executeRawUnsafe('ALTER TABLE invoices ENABLE TRIGGER invoices_provider_topup');
+      const abandoned = await prisma.invoice.findUniqueOrThrow({
+        where: { idempotencyKey: 'promo-abandoned' },
+      });
+      await prisma.promocodeRedemption.create({
+        data: {
+          promocodeId: expiring.id,
+          userId: buyers[0].id,
+          invoiceId: abandoned.id,
+          appliedValueMinor: 2990n,
+          status: 'reserved',
+        },
+      });
       await repository.expire(new Date(Date.now() + 31 * 60_000));
       assert.equal(
         (await prisma.promocodeRedemption.findFirst({ where: { invoiceId: abandoned.id } })).status,
@@ -444,10 +561,10 @@ test(
       );
       const retaken = await me.createInvoice(
         buyers[1].id,
-        { kind: 'purchase', planId: plan.id, provider: 'mock', promocode: 'EXPIRES1' },
+        { kind: 'purchase', planId: plan.id, provider: 'balance', promocode: 'EXPIRES1' },
         'promo-retaken',
       );
-      assert.ok(retaken.id);
+      assert.equal(retaken.status, 'paid');
 
       // Section 9.2 Idempotency-Key: the same request replays the invoice
       // without reserving the promocode again; another user presenting the
@@ -455,7 +572,12 @@ test(
       const replayCode = await prisma.promocode.create({
         data: { code: 'REPLAY01', type: 'discount_percent', value: 10n, maxUses: 1 },
       });
-      const body = { kind: 'purchase', planId: plan.id, provider: 'mock', promocode: 'REPLAY01' };
+      const body = {
+        kind: 'purchase',
+        planId: plan.id,
+        provider: 'balance',
+        promocode: 'REPLAY01',
+      };
       const original = await me.createInvoice(buyers[0].id, body, 'shared-key');
       const again = await me.createInvoice(buyers[0].id, body, 'shared-key');
       assert.equal(again.id, original.id);
@@ -510,40 +632,34 @@ test(
         50000n - 26910n,
       );
 
-      // A failure after the invoice was created (here the poll job's outbox
-      // insert) must not release a reservation that already names the
-      // invoice: the invoice keeps its discount, and payment applies it.
-      const failingDb = new Proxy(prisma, {
-        get(target, property) {
-          if (property === 'outboxJob')
-            return { create: () => Promise.reject(new Error('outbox unavailable')) };
-          return Reflect.get(target, property);
-        },
-      });
-      const failingInfra = { ...infra, db: failingDb };
-      const failing = new MeService(
-        failingInfra,
-        settings,
-        {},
-        new PaymentsService(failingInfra, repository, registry, settings),
-        {},
-        {},
-      );
+      // A purchase whose debit fails gives its slot back: the invoice never
+      // came to be, so no reservation may outlive the request (F37: a top-up
+      // never reserves one, so this is the only way a slot is left behind).
       const linkedCode = await prisma.promocode.create({
         data: { code: 'LINKED01', type: 'discount_percent', value: 10n, maxUses: 1 },
       });
+      const short = await prisma.user.create({
+        data: { telegramId: 995100300n, language: 'ru', referralCode: 'PROMOS01' },
+      });
       await assert.rejects(
-        failing.createInvoice(
-          buyers[1].id,
-          { kind: 'purchase', planId: plan.id, provider: 'mock', promocode: 'LINKED01' },
+        me.createInvoice(
+          short.id,
+          { kind: 'purchase', planId: plan.id, provider: 'balance', promocode: 'LINKED01' },
           'promo-linked',
         ),
+        (error) => error.response.error.code === 'INSUFFICIENT_FUNDS',
       );
       const linked = await prisma.promocodeRedemption.findFirst({
         where: { promocodeId: linkedCode.id },
       });
-      assert.ok(linked.invoiceId, 'the reservation names the invoice');
-      assert.equal(linked.status, 'reserved');
+      assert.equal(linked.invoiceId, null);
+      assert.equal(linked.status, 'released');
+      const linkedAgain = await me.createInvoice(
+        buyers[1].id,
+        { kind: 'purchase', planId: plan.id, provider: 'balance', promocode: 'LINKED01' },
+        'promo-linked-again',
+      );
+      assert.equal(linkedAgain.status, 'paid');
 
       // Repair queue P-6: rewards, reversals, the invitee bonus and the
       // purchases they came from leave every account in agreement with its

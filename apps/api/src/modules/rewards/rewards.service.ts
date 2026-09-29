@@ -34,7 +34,6 @@ export class RewardsService implements RewardHooksPort {
       minSourceAmountMinor: BigInt(
         String(await this.settings.get('referral.min_source_amount_minor')),
       ),
-      countTopups: Boolean(await this.settings.get('referral.count_topups')),
     };
   }
 

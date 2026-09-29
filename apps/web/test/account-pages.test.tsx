@@ -250,9 +250,9 @@ describe('the referral terms (FR-152, section 15)', () => {
     expect(markup).toContain('Приглашённый получает 3 дня доступа.');
   });
 
-  it('states a reward on every payment for percent_all', async () => {
+  it('states a reward on every top-up for percent_all', async () => {
     const markup = await renderPage(ReferralsClient, summary({ mode: 'percent_all' }));
-    expect(markup).toContain('Вы получаете 20% от каждой оплаты приглашённого.');
+    expect(markup).toContain('Вы получаете 20% от каждого пополнения приглашённого.');
     expect(markup).not.toContain('Приглашённый получает');
   });
 });

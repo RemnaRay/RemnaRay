@@ -179,6 +179,26 @@ describe('SettingsService', () => {
     expect(repository.replaceCalls).toHaveLength(1);
   });
 
+  it('imports an export that still carries a retired key (F37: referral.count_topups)', async () => {
+    const repository = new MemoryRepository();
+    const service = new SettingsService(repository, new MemoryEventBus(), appKey);
+    await service.onModuleInit();
+
+    await expect(
+      service.importSnapshot({
+        version: 1,
+        settings: { referral: { count_topups: true, percent: 30 } },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(await service.get('referral.percent')).toBe(30);
+    expect(repository.values.map((item) => item.key)).not.toContain('referral.count_topups');
+    // A key no release ever had is still refused.
+    await expect(service.set({ referral: { counts_topups: true } })).rejects.toThrow(
+      'Unknown setting key: referral.counts_topups',
+    );
+  });
+
   it('invalidates only the keys announced by another process', async () => {
     const repository = new MemoryRepository();
     const events = new MemoryEventBus();

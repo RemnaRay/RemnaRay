@@ -174,7 +174,6 @@
   "admin.referrals.holdHours": "Hold, hours",
   "admin.referrals.maxPerDay": "Daily reward limit",
   "admin.referrals.minSource": "Minimum source amount",
-  "admin.referrals.countTopups": "Count top-ups",
   "admin.referrals.inviteeBonusType": "Invitee bonus",
   "admin.referrals.inviteeBonusValue": "Bonus value",
   "admin.referrals.inviteeBonusTrigger": "When to grant",

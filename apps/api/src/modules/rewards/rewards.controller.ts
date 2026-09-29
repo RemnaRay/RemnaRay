@@ -45,7 +45,6 @@ const programSchema = z.object({
   hold_hours: z.number().int().min(0).max(720).optional(),
   max_rewards_per_day: z.number().int().min(0).optional(),
   min_source_amount_minor: z.string().regex(/^\d+$/).optional(),
-  count_topups: z.boolean().optional(),
   reason: z.string().min(3).max(500).optional(),
 });
 

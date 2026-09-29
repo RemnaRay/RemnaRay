@@ -2,7 +2,8 @@ import { queuePanelSync } from '../remnawave/panel-jobs';
 import { emitWebhook, minor, subscriptionData } from '../webhooks/outgoing';
 import type { ReferralConfig, SourceTransaction, TrialLimits, Tx } from './rewards.types';
 
-const SOURCE_TYPES = new Set(['purchase', 'topup']);
+/** F37 (ADR-021): money received is the source — a top-up; a purchase spends it. */
+const SOURCE_TYPES = new Set(['topup']);
 
 async function accountId(tx: Tx, kind: string, userId?: string): Promise<string> {
   if (kind === 'user' && userId) {
@@ -97,7 +98,6 @@ export async function accrueReferralReward(
 ): Promise<{ rewardId: string; amountMinor: bigint } | null> {
   if (!config.enabled) return null;
   if (!SOURCE_TYPES.has(source.type)) return null;
-  if (source.type === 'topup' && !config.countTopups) return null;
   if (source.amountMinor < config.minSourceAmountMinor) return null;
 
   const attribution = await tx.referralAttribution.findUnique({

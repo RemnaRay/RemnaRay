@@ -13,7 +13,6 @@ export type ReferralConfig = {
   holdHours: number;
   maxRewardsPerDay: number;
   minSourceAmountMinor: bigint;
-  countTopups: boolean;
 };
 
 export type TrialLimits = {
