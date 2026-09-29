@@ -32,9 +32,11 @@ function toNumber(value: unknown): number {
 /**
  * F37 (ADR-021): money comes in only as provider top-ups — «Поступления». A
  * purchase spends it from the balance — «Продажи» are purchases less refunds.
- * The difference stays on the customers' balances (the liability widget).
+ * The difference stays on the customers' balances (the liability widget). A
+ * purchase at a provider exists only before F37; it brought money in, and the
+ * history keeps counting it (after F37 the filter matches top-ups alone).
  */
-const RECEIVED = Prisma.sql`status = 'completed' AND type = 'topup'
+const RECEIVED = Prisma.sql`status = 'completed' AND type IN ('purchase', 'topup')
   AND provider IS NOT NULL AND provider <> 'balance'`;
 
 /**

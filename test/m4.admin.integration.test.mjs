@@ -121,6 +121,16 @@ test(
             currency: 'RUB',
             provider: 'balance',
           },
+          // Written before F37: a plan bought at the provider directly. It
+          // brought money in and was a sale — history keeps counting it so.
+          {
+            userId: created[2].id,
+            type: 'purchase',
+            status: 'completed',
+            amountMinor: 19900n,
+            currency: 'RUB',
+            provider: 'robokassa',
+          },
           {
             userId: created[3].id,
             type: 'referral_reward',
@@ -130,8 +140,9 @@ test(
           },
         ],
       });
-      const receivedTopups = 29900n + 29900n + 50000n;
-      const purchasedMinor = 3n * 29900n;
+      const providerPurchaseMinor = 19900n;
+      const receivedMinor = 29900n + 29900n + 50000n + providerPurchaseMinor;
+      const purchasedMinor = 3n * 29900n + providerPurchaseMinor;
       const refundedMinor = 10000n;
       const topup = await prisma.invoice.create({
         data: {
@@ -204,16 +215,17 @@ test(
       const overview = await dashboard.overview({ from: from.toISOString(), to: to.toISOString() });
 
       // AC-142: independent SQL control for every aggregate. Receipts are the
-      // money providers brought in (F37): top-ups only.
+      // money providers brought in: top-ups, and the provider purchases
+      // written before F37 (ADR-021).
       const [control] = await prisma.$queryRaw`
         SELECT
           (SELECT COALESCE(SUM(amount_minor), 0)
              FROM transactions
-            WHERE status = 'completed' AND type = 'topup'
+            WHERE status = 'completed' AND type IN ('purchase', 'topup')
               AND provider IS NOT NULL AND provider <> 'balance'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS receipts,
           (SELECT COUNT(*) FROM transactions
-            WHERE status = 'completed' AND type = 'topup'
+            WHERE status = 'completed' AND type IN ('purchase', 'topup')
               AND provider IS NOT NULL AND provider <> 'balance'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS payments,
           (SELECT COUNT(*) FROM users WHERE created_at BETWEEN ${from} AND ${to})::bigint AS new_users,
@@ -225,7 +237,7 @@ test(
             WHERE type = 'referral_reward' AND status = 'completed'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS rewards`;
 
-      assert.equal(overview.receipts.amountMinor, Number(receivedTopups));
+      assert.equal(overview.receipts.amountMinor, Number(receivedMinor));
       assert.equal(overview.payments, Number(control.payments));
       assert.equal(overview.newUsers, Number(control.new_users));
       assert.equal(overview.trialsIssued, Number(control.trials));
@@ -233,12 +245,12 @@ test(
       assert.equal(overview.userBalanceLiability.amountMinor, Number(control.liability));
       assert.equal(overview.referralRewards.amountMinor, Number(control.rewards));
       assert.equal(overview.receipts.amountMinor, Number(control.receipts));
-      // Sales: purchases from the balance less refunds.
+      // Sales: purchases (from the balance, and the provider ones before F37) less refunds.
       assert.equal(overview.sales.amountMinor, Number(purchasedMinor - refundedMinor));
       assert.equal('revenue' in overview, false);
       assert.equal('lateInvoicePayments' in (await dashboard.attention()), false);
-      assert.equal(overview.payments, 3);
-      assert.equal(overview.averagePayment.amountMinor, Math.floor(109800 / 3));
+      assert.equal(overview.payments, 4);
+      assert.equal(overview.averagePayment.amountMinor, Math.floor(Number(receivedMinor) / 4));
       assert.equal(overview.expiringInThreeDays, 1);
       assert.equal(overview.trialConversionPercent, 50);
       assert.deepEqual(
@@ -246,6 +258,7 @@ test(
         [
           ['yookassa', 50000],
           ['mock', 59800],
+          ['robokassa', 19900],
         ].sort((left, right) => right[1] - left[1]),
       );
 
