@@ -8,7 +8,7 @@ import { URL } from 'node:url';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 
 test(
-  'M2 payment core is idempotent and credits late payments to balance',
+  'M2 payment core is idempotent and every provider payment tops the balance up',
   { timeout: 240_000 },
   async () => {
     const postgres = await new PostgreSqlContainer('postgres:18-alpine')
@@ -55,52 +55,99 @@ test(
           priceMinor: 29900n,
         },
       });
+      const paidAt = async (invoice, eventId, amount) => {
+        const body = JSON.stringify({
+          eventId,
+          providerInvoiceId: invoice.providerInvoiceId,
+          type: 'paid',
+          paidAmountMinorRub: String(amount),
+        });
+        await service.receiveWebhook(
+          'mock',
+          Buffer.from(body),
+          { 'x-mock-signature': createHmac('sha256', 'mock-secret').update(body).digest('hex') },
+          '127.0.0.1',
+        );
+      };
+      const balanceOf = async (userId) =>
+        (await prisma.account.findFirst({ where: { kind: 'user', userId } }))?.balanceMinor ?? 0n;
+
+      // F37: a provider invoice for a plan is a numbered top-up; paying it
+      // credits the balance and activates nothing.
       const invoice = await service.createInvoice({
+        userId: user.id,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 29900n,
+        idempotencyKey: 'm2-paid',
+        target: { planId: plan.id, kind: 'purchase' },
+      });
+      assert.equal(invoice.number, '99-00001');
+      assert.equal(invoice.targetPlanId, plan.id);
+      await paidAt(invoice, 'paid-1', 29900);
+      await paidAt(invoice, 'paid-1', 29900); // EX-03: the same event again
+      assert.equal((await prisma.invoice.findUnique({ where: { id: invoice.id } })).status, 'paid');
+      const credited = await prisma.transaction.findMany({ where: { invoiceId: invoice.id } });
+      assert.deepEqual(
+        credited.map((row) => row.type),
+        ['topup'],
+      );
+      assert.equal(await prisma.ledgerEntry.count({ where: { transactionId: credited[0].id } }), 1);
+      assert.equal(await balanceOf(user.id), 29900n);
+      assert.equal(await prisma.subscription.count({ where: { userId: user.id } }), 0);
+      const notice = await prisma.outboxJob.findFirst({
+        where: { jobId: `notify:payment.to_balance:${invoice.id}` },
+      });
+      assert.equal(notice.payload.params.number, '99-00001');
+      assert.equal(notice.payload.params.hasPlan, 'yes');
+      assert.equal(notice.payload.params.buyInvoice, invoice.id);
+
+      // The second step: the purchase from the balance activates the plan.
+      const bought = await service.createInvoice({
         userId: user.id,
         kind: 'purchase',
         planId: plan.id,
-        provider: 'mock',
-        idempotencyKey: 'm2-paid',
+        provider: 'balance',
+        idempotencyKey: 'm2-buy',
       });
-      const body = JSON.stringify({
-        eventId: 'paid-1',
-        providerInvoiceId: invoice.providerInvoiceId,
-        type: 'paid',
-        paidAmountMinorRub: '29900',
-      });
-      const signature = createHmac('sha256', 'mock-secret').update(body).digest('hex');
-      await service.receiveWebhook(
-        'mock',
-        Buffer.from(body),
-        { 'x-mock-signature': signature },
-        '127.0.0.1',
-      );
-      await service.receiveWebhook(
-        'mock',
-        Buffer.from(body),
-        { 'x-mock-signature': signature },
-        '127.0.0.1',
-      );
-      assert.equal((await prisma.invoice.findUnique({ where: { id: invoice.id } })).status, 'paid');
-      assert.equal(await prisma.transaction.count({ where: { invoiceId: invoice.id } }), 1);
-      assert.equal(
-        await prisma.ledgerEntry.count({
-          where: {
-            transactionId: {
-              in: (
-                await prisma.transaction.findMany({
-                  where: { invoiceId: invoice.id },
-                  select: { id: true },
-                })
-              ).map((row) => row.id),
-            },
-          },
-        }),
-        2,
-      );
+      assert.equal(await balanceOf(user.id), 0n);
       assert.equal(
         (await prisma.subscription.findFirst({ where: { userId: user.id } })).status,
         'active',
+      );
+
+      // A second provider invoice takes the next number of the same provider.
+      const next = await service.createInvoice({
+        userId: user.id,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'm2-next',
+      });
+      assert.equal(next.number, '99-00002');
+      // A replay takes no number.
+      const again = await service.createInvoice({
+        userId: user.id,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'm2-next',
+      });
+      assert.equal(again.id, next.id);
+      assert.equal(
+        (await prisma.invoiceCounter.findUnique({ where: { provider: 'mock' } })).last,
+        2n,
+      );
+      // A purchase at a provider is refused.
+      await assert.rejects(
+        service.createInvoice({
+          userId: user.id,
+          kind: 'purchase',
+          planId: plan.id,
+          provider: 'mock',
+          idempotencyKey: 'm2-refused',
+        }),
+        /BALANCE_ONLY/,
       );
 
       const topup = await service.createInvoice({
@@ -249,7 +296,7 @@ test(
         code: 'REFUND_NOT_PURCHASE',
       });
       // AC-066: 100 of 299, then 200 more is refused and nothing moves.
-      const purchase = await prisma.transaction.findFirst({ where: { invoiceId: invoice.id } });
+      const purchase = await prisma.transaction.findFirst({ where: { invoiceId: bought.id } });
       await repository.refund(purchase.id, 10000n, 'partial');
       await assert.rejects(repository.refund(purchase.id, 20000n, 'too much'), {
         name: 'PaymentError',
@@ -266,14 +313,21 @@ test(
         balanceBeforeRefunds + 10000n,
       );
 
+      // EX-02, AC-065 under F37: a top-up for a plan paid after it expired is
+      // an ordinary top-up — the balance, no activation and no alert.
       const late = await service.createInvoice({
         userId: user.id,
         kind: 'topup',
         provider: 'mock',
         amountMinor: 5000n,
         idempotencyKey: 'm2-late',
+        target: { planId: plan.id, kind: 'purchase' },
       });
       await repository.expire(new Date(Date.now() + 31 * 60_000));
+      const beforeLate = await balanceOf(user.id);
+      const subscriptionBeforeLate = await prisma.subscription.findFirst({
+        where: { userId: user.id },
+      });
       const lateBody = JSON.stringify({
         eventId: 'paid-late',
         providerInvoiceId: late.providerInvoiceId,
@@ -290,6 +344,19 @@ test(
       assert.equal(
         await prisma.transaction.count({ where: { invoiceId: late.id, type: 'topup' } }),
         1,
+      );
+      assert.equal(await balanceOf(user.id), beforeLate + 5000n);
+      assert.deepEqual(
+        await prisma.subscription.findFirst({ where: { userId: user.id } }),
+        subscriptionBeforeLate,
+      );
+      assert.equal(
+        await prisma.outboxJob.count({ where: { jobId: `notify:payment.to_balance:${late.id}` } }),
+        1,
+      );
+      assert.equal(
+        await prisma.outboxJob.count({ where: { jobId: { startsWith: 'alert:payment.late:' } } }),
+        0,
       );
 
       // EX-03: a second `paid` event under another id for an invoice already
@@ -310,14 +377,15 @@ test(
       );
       assert.equal(await prisma.transaction.count({ where: { invoiceId: invoice.id } }), 1);
 
-      // Owner decision 2026-09-25: a payment for an invoice the user canceled
-      // is handled like EX-02 — to the balance, no activation, an alert.
+      // Owner decision 2026-09-25 under F37: a payment for a top-up the user
+      // canceled is an ordinary top-up — to the balance, no activation, no alert.
       const canceled = await service.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: plan.id,
+        kind: 'topup',
         provider: 'mock',
+        amountMinor: 29900n,
         idempotencyKey: 'm2-canceled',
+        target: { planId: plan.id, kind: 'purchase' },
       });
       await prisma.invoice.update({ where: { id: canceled.id }, data: { status: 'canceled' } });
       const balanceBefore = await prisma.account
@@ -360,9 +428,9 @@ test(
       );
       assert.equal(
         await prisma.outboxJob.count({
-          where: { jobId: `alert:payment.after_cancel:${canceled.id}` },
+          where: { jobId: { startsWith: 'alert:payment.after_cancel:' } },
         }),
-        1,
+        0,
       );
 
       // EX-06/FR-023 through the balance: the unused time is paid out as the
@@ -435,9 +503,9 @@ test(
       try {
         const polled = await service.createInvoice({
           userId: user.id,
-          kind: 'purchase',
-          planId: plan.id,
+          kind: 'topup',
           provider: 'cryptobot',
+          amountMinor: 29900n,
           idempotencyKey: 'm2-poll',
         });
         // A fresh service per poll: `recheck` allows one poll per 10 s.
@@ -457,15 +525,15 @@ test(
           where: { invoiceId: polled.id },
         });
         assert.equal(polledTransactions.length, 1);
-        assert.equal(polledTransactions[0].type, 'purchase');
+        assert.equal(polledTransactions[0].type, 'topup');
 
         // EX-12 through a poll: the rouble amount the provider reports is
         // compared with the invoice instead of being taken as paid in full.
         const short = await service.createInvoice({
           userId: user.id,
-          kind: 'purchase',
-          planId: plan.id,
+          kind: 'topup',
           provider: 'cryptobot',
+          amountMinor: 29900n,
           idempotencyKey: 'm2-poll-short',
         });
         cryptoStatus = { status: 'paid', amount: '150.00', fiat: 'RUB' };
@@ -505,9 +573,9 @@ test(
         });
         const robokassa = await service.createInvoice({
           userId: user.id,
-          kind: 'purchase',
-          planId: plan.id,
+          kind: 'topup',
           provider: 'robokassa',
+          amountMinor: 29900n,
           idempotencyKey: 'm2-robokassa',
         });
         const row = await prisma.invoice.findUnique({ where: { id: robokassa.id } });
@@ -595,22 +663,6 @@ test(
       // Repair queue L-11 (11.2): a transaction and its entries carry the
       // invoice amount — a payment within 2 % below it or above it counts as
       // exact — and only an underpaid invoice (< 98 %) records what was paid.
-      const pay = async (target, eventId, paidAmountMinorRub) => {
-        const paidBody = JSON.stringify({
-          eventId,
-          providerInvoiceId: target.providerInvoiceId,
-          type: 'paid',
-          paidAmountMinorRub,
-        });
-        await service.receiveWebhook(
-          'mock',
-          Buffer.from(paidBody),
-          {
-            'x-mock-signature': createHmac('sha256', 'mock-secret').update(paidBody).digest('hex'),
-          },
-          '127.0.0.1',
-        );
-      };
       const recorded = async (target) => {
         const [row] = await prisma.transaction.findMany({ where: { invoiceId: target.id } });
         const entries = await prisma.ledgerEntry.findMany({
@@ -625,33 +677,32 @@ test(
       };
       const overpaid = await service.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: plan.id,
+        kind: 'topup',
         provider: 'mock',
-        idempotencyKey: 'm2-overpaid',
-      });
-      await pay(overpaid, 'paid-over', '30500');
-      assert.deepEqual(await recorded(overpaid), {
-        type: 'purchase',
         amountMinor: 29900n,
-        entries: [29900n, 29900n],
+        idempotencyKey: 'm2-overpaid',
+        target: { planId: plan.id, kind: 'purchase' },
+      });
+      await paidAt(overpaid, 'paid-over', 30500);
+      assert.deepEqual(await recorded(overpaid), {
+        type: 'topup',
+        amountMinor: 29900n,
+        entries: [29900n],
       });
       const nearly = await service.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: plan.id,
+        kind: 'topup',
         provider: 'mock',
-        idempotencyKey: 'm2-nearly',
-      });
-      await pay(nearly, 'paid-nearly', '29500');
-      assert.deepEqual(await recorded(nearly), {
-        type: 'purchase',
         amountMinor: 29900n,
-        entries: [29900n, 29900n],
+        idempotencyKey: 'm2-nearly',
+        target: { planId: plan.id, kind: 'purchase' },
       });
-      const balanceOf = async () =>
-        (await prisma.account.findFirstOrThrow({ where: { userId: user.id, kind: 'user' } }))
-          .balanceMinor;
+      await paidAt(nearly, 'paid-nearly', 29500);
+      assert.deepEqual(await recorded(nearly), {
+        type: 'topup',
+        amountMinor: 29900n,
+        entries: [29900n],
+      });
       const lateOver = await service.createInvoice({
         userId: user.id,
         kind: 'topup',
@@ -660,14 +711,14 @@ test(
         idempotencyKey: 'm2-late-over',
       });
       await repository.expire(new Date(Date.now() + 31 * 60_000));
-      const beforeLateOver = await balanceOf();
-      await pay(lateOver, 'paid-late-over', '5100');
+      const beforeLateOver = await balanceOf(user.id);
+      await paidAt(lateOver, 'paid-late-over', 5100);
       assert.deepEqual(await recorded(lateOver), {
         type: 'topup',
         amountMinor: 5000n,
         entries: [5000n],
       });
-      assert.equal(await balanceOf(), beforeLateOver + 5000n);
+      assert.equal(await balanceOf(user.id), beforeLateOver + 5000n);
       const short = await service.createInvoice({
         userId: user.id,
         kind: 'topup',
@@ -675,7 +726,8 @@ test(
         amountMinor: 5000n,
         idempotencyKey: 'm2-short',
       });
-      await pay(short, 'paid-short', '4000');
+      const beforeShort = await balanceOf(user.id);
+      await paidAt(short, 'paid-short', 4000);
       assert.equal(
         (await prisma.invoice.findUnique({ where: { id: short.id } })).status,
         'underpaid',
@@ -685,6 +737,58 @@ test(
         amountMinor: 4000n,
         entries: [4000n],
       });
+      // EX-12: what was paid goes to the balance, the notice names both
+      // amounts and the administrators hear of it once.
+      assert.equal(await balanceOf(user.id), beforeShort + 4000n);
+      const shortNotice = await prisma.outboxJob.findFirst({
+        where: { jobId: `notify:payment.to_balance:${short.id}` },
+      });
+      assert.equal(shortNotice.payload.params.underpaid, 'yes');
+      assert.equal(shortNotice.payload.params.amount, '40 \u20bd');
+      assert.equal(shortNotice.payload.params.expected, '50 \u20bd');
+      assert.equal(
+        await prisma.outboxJob.count({ where: { jobId: `alert:payment.underpaid:${short.id}` } }),
+        1,
+      );
+
+      // An invoice written before F37 (kind=purchase at a provider) that is
+      // paid now goes to the balance too. The CHECK of 0014 refuses such a new
+      // row, so the case lifts it for the one insert — it proves the pipeline,
+      // not the constraint.
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE invoices DROP CONSTRAINT ck_invoices_provider_topup',
+      );
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO invoices (id, user_id, kind, plan_id, provider, status, amount_minor, currency, idempotency_key, expires_at, provider_invoice_id)
+         VALUES (uuidv7(), $1::uuid, 'purchase', $2::uuid, 'mock', 'pending', 29900, 'RUB', 'm2-legacy', now() + interval '10 minutes', 'legacy-1')`,
+        user.id,
+        plan.id,
+      );
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE invoices ADD CONSTRAINT ck_invoices_provider_topup CHECK (provider = 'balance' OR kind = 'topup') NOT VALID`,
+      );
+      const legacy = await prisma.invoice.findUnique({ where: { idempotencyKey: 'm2-legacy' } });
+      const beforeLegacy = await balanceOf(user.id);
+      const subscriptionsBeforeLegacy = await prisma.subscription.findMany({
+        where: { userId: user.id },
+      });
+      await paidAt(legacy, 'paid-legacy', 29900);
+      assert.equal(await balanceOf(user.id), beforeLegacy + 29900n);
+      assert.deepEqual(
+        (await prisma.transaction.findMany({ where: { invoiceId: legacy.id } })).map(
+          (row) => row.type,
+        ),
+        ['topup'],
+      );
+      assert.deepEqual(
+        await prisma.subscription.findMany({ where: { userId: user.id } }),
+        subscriptionsBeforeLegacy,
+      );
+      const legacyNotice = await prisma.outboxJob.findFirst({
+        where: { jobId: `notify:payment.to_balance:${legacy.id}` },
+      });
+      assert.equal(legacyNotice.payload.params.hasNumber, 'no');
+      assert.equal(legacyNotice.payload.params.hasPlan, 'no');
 
       // Repair queue P-6: every account the payment paths posted to — the
       // users, `provider_clearing`, `revenue` and `adjustment` — agrees with

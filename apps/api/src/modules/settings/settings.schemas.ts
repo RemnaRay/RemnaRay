@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { isHostName, isIpOrCidr } from '../../common/network-values';
+import { DEFAULT_ITEM_NAME_TEMPLATE } from '../payments/checkout';
 import { OUTGOING_EVENTS } from '../webhooks/outgoing';
 
 /** R58: what the proxy configurations may carry (`common/network-values`). */
@@ -365,7 +366,7 @@ export const settingRegistry: SettingDefinition[] = [
             [...value.matchAll(/\{(\w+)\}/gu)].every((m) => m[1] === 'number' || m[1] === 'brand'),
           { message: 'Only {number} and {brand} are allowed.' },
         ),
-      defaultValue: 'Пополнение баланса (#{number})',
+      defaultValue: DEFAULT_ITEM_NAME_TEMPLATE,
       description: 'Top-up receipt line and payment description; placeholders {number}, {brand}.',
     },
   }),

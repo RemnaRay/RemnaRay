@@ -968,6 +968,63 @@ describe('PaymentsService.createInvoice, purchases only from the balance (F37, A
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
   });
 
+  it('refuses the key reused for a top-up for the same plan by another route or promocode', async () => {
+    const { service, repository } = setup();
+    repository.findByIdempotencyKey.mockResolvedValue({
+      id: 'inv',
+      userId: USER,
+      kind: 'topup',
+      planId: null,
+      provider: 'mock',
+      amountMinor: 5000n,
+      targetPlanId: PLAN,
+      targetKind: 'purchase',
+      targetPromocode: 'SALE',
+    });
+    const request = {
+      userId: USER,
+      kind: 'topup' as const,
+      provider: 'mock',
+      amountMinor: 5000n,
+      idempotencyKey: 'k11',
+    };
+    await expect(
+      service.replay({ ...request, target: { planId: PLAN, kind: 'purchase', promocode: 'SALE' } }),
+    ).resolves.toMatchObject({ id: 'inv' });
+    await expect(
+      service.replay({
+        ...request,
+        target: { planId: PLAN, kind: 'plan_change', promocode: 'SALE' },
+      }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+    await expect(
+      service.replay({
+        ...request,
+        target: { planId: PLAN, kind: 'purchase', promocode: 'OTHER' },
+      }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+    await expect(
+      service.replay({ ...request, target: { planId: PLAN, kind: 'purchase' } }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+  });
+
+  it('refuses a purpose on anything but a top-up', async () => {
+    const { service, provider, repository } = setup({ balance: true });
+    await expect(
+      service.createInvoice({
+        userId: USER,
+        kind: 'purchase',
+        planId: PLAN,
+        provider: 'balance',
+        idempotencyKey: 'k12',
+        target: { planId: PLAN, kind: 'purchase' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(repository.findByIdempotencyKey).not.toHaveBeenCalled();
+    expect(repository.createBalanceInvoice).not.toHaveBeenCalled();
+    expect(provider.createInvoice).not.toHaveBeenCalled();
+  });
+
   it('never replays a top-up for a plan as a plain top-up, or the other way round', async () => {
     const { service, repository } = setup();
     repository.findByIdempotencyKey.mockResolvedValue({

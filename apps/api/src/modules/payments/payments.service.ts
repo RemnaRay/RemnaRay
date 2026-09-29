@@ -6,7 +6,12 @@ import { paymentsEventsTotal } from '@remnaray/metrics';
 import { Infrastructure } from '../../infra/infra.module';
 import { decryptSetting } from '../settings/settings.crypto';
 import type { SettingsService } from '../settings/settings.service';
-import { amountToPay, planChangeCredit, renderItemName } from './checkout';
+import {
+  DEFAULT_ITEM_NAME_TEMPLATE,
+  amountToPay,
+  planChangeCredit,
+  renderItemName,
+} from './checkout';
 import { PaymentError } from './payments.errors';
 import { eventHeaders, maskEventRaw } from './payment-event-mask';
 import { PaymentsRepository, type InvoiceTarget } from './payments.repository';
@@ -39,6 +44,8 @@ export class PaymentsService {
     target?: InvoiceTarget;
   }) {
     if (!input.idempotencyKey) throw new PaymentError('IDEMPOTENCY_REQUIRED');
+    // F37: only a top-up has a purpose; a purchase names its plan itself.
+    if (input.target && input.kind !== 'topup') throw new PaymentError('INVALID_TARGET');
     const existing = await this.replay(input);
     if (existing) return existing;
     await this.requireOffered(input.provider, input.kind);
@@ -107,7 +114,7 @@ export class PaymentsService {
       : undefined;
     const description = number
       ? renderItemName(
-          typeof template === 'string' && template ? template : 'Пополнение баланса (#{number})',
+          typeof template === 'string' && template ? template : DEFAULT_ITEM_NAME_TEMPLATE,
           { number, brand: brand || 'RemnaRay' },
         )
       : brand || 'RemnaRay';

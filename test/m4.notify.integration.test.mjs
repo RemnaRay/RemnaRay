@@ -5,7 +5,7 @@ import process from 'node:process';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 
 test(
-  'M4 notifications: AC-160 a repeated cron window never sends twice, AC-163 alerts dedup hourly',
+  'M4 notifications: AC-160 a repeated cron window never sends twice, the top-up notice, AC-163 alerts dedup hourly',
   { timeout: 300_000 },
   async () => {
     const postgres = await new PostgreSqlContainer('postgres:18-alpine')
@@ -104,6 +104,59 @@ test(
         where: { userId: user.id, event: 'sub.expired' },
       });
       assert.equal(blockedRow.status, 'skipped_blocked');
+
+      // F37: the top-up notice names the invoice and, for a top-up for a
+      // plan still on sale, the plan to buy; an underpayment names both
+      // amounts. The params are what `applyEvent` writes.
+      const payer = await prisma.user.create({
+        data: { telegramId: 996000002n, language: 'ru', referralCode: 'NOTIFY02' },
+      });
+      const toBalance = async (dedupKey, params) => {
+        assert.deepEqual(
+          await notify.send({ event: 'payment.to_balance', userId: payer.id, dedupKey, params }),
+          { status: 'sent' },
+        );
+        return sent.filter((call) => call.url.includes('sendMessage')).at(-1).body.text;
+      };
+      assert.equal(
+        await toBalance('payment.to_balance:f37-plan', {
+          amount: '299 \u20bd',
+          hasNumber: 'yes',
+          number: '99-00001',
+          underpaid: 'no',
+          expected: '',
+          hasPlan: 'yes',
+          plan: 'Премиум',
+          buyInvoice: '0199aaaa-0000-7000-8000-000000000001',
+        }),
+        'Баланс пополнен на 299 \u20bd (счёт #99-00001).\nТеперь можно купить «Премиум».',
+      );
+      assert.equal(
+        await toBalance('payment.to_balance:f37-short', {
+          amount: '150 \u20bd',
+          hasNumber: 'yes',
+          number: '99-00002',
+          underpaid: 'yes',
+          expected: '299 \u20bd',
+          hasPlan: 'no',
+          plan: '',
+          buyInvoice: '',
+        }),
+        'Получено 150 \u20bd из 299 \u20bd по счёту #99-00002 — зачислено на баланс.',
+      );
+      assert.equal(
+        await toBalance('payment.to_balance:f37-stars', {
+          amount: '50 \u20bd',
+          hasNumber: 'no',
+          number: '',
+          underpaid: 'no',
+          expected: '',
+          hasPlan: 'no',
+          plan: '',
+          buyInvoice: '',
+        }),
+        'Баланс пополнен на 50 \u20bd.',
+      );
 
       // AC-163: one administrator alert per type per hour.
       await prisma.admin.create({

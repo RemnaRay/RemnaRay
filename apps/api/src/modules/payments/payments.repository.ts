@@ -383,6 +383,9 @@ export class PaymentsRepository {
       where: { id: revenue.id },
       data: { balanceMinor: { increment: invoice.amountMinor } },
     });
+    // F37: the one entry that moves money into `revenue` (section 12.2) —
+    // every sale is a purchase from the balance.
+    revenueMinorTotal.inc({ provider: 'balance' }, Number(invoice.amountMinor));
     await tx.invoice.update({
       where: { id: invoice.id },
       data: { status: 'paid', paidAt: new Date() },
@@ -536,10 +539,13 @@ export class PaymentsRepository {
             amountMinor: bigint;
             expiresAt: Date;
             planId: string | null;
+            number: string | null;
+            targetPlanId: string | null;
           }>
         >(Prisma.sql`
         SELECT id, user_id AS "userId", kind, provider, status, amount_minor AS "amountMinor",
-               expires_at AS "expiresAt", plan_id AS "planId"
+               expires_at AS "expiresAt", plan_id AS "planId", number,
+               target_plan_id AS "targetPlanId"
         FROM invoices WHERE id = ${event.invoiceId}::uuid FOR UPDATE
       `);
         const invoice = invoiceRows[0];
@@ -561,26 +567,17 @@ export class PaymentsRepository {
             ? BigInt(parsed.paidAmountMinorRub)
             : invoice.amountMinor;
           const underpaid = paid * 100n < invoice.amountMinor * 98n;
-          // Owner decision 2026-09-25: a payment for a canceled invoice goes
-          // to the balance like EX-02; `canceled` stays a terminal intent.
-          const canceled = invoice.status === 'canceled';
-          const late =
-            canceled || invoice.status === 'expired' || invoice.expiresAt < event.receivedAt;
-          // Owner decision О-19 (P-1): money for a plan taken off sale after
-          // the invoice was issued goes to the balance like EX-02 — failing
-          // here would roll the payment back on every retry.
-          const unavailable =
-            invoice.planId !== null &&
-            !planAvailable(await tx.plan.findUnique({ where: { id: invoice.planId } }));
-          const toBalance = underpaid || late || unavailable || invoice.kind === 'topup';
+          // F37 (ADR-021): a provider invoice is a top-up. Money that arrives
+          // for it — in time, late (EX-02), after a cancel, for a plan taken
+          // off sale (О-19) or for an invoice written before F37 — goes to the
+          // balance; the customer buys from there as a second step.
           await this.lockAccounts(tx, invoice.userId, {
             provider: invoice.provider,
-            revenue: !toBalance,
+            revenue: false,
           });
-          // Section 11.2 (repair queue L-11): a payment within the tolerance,
-          // or above the invoice, counts as the invoice amount — the
-          // transaction, its entries and the notice all carry it; only an
-          // underpaid invoice (EX-12) credits what was actually paid.
+          // Section 11.2 (L-11): within the tolerance or above the invoice the
+          // credit is the invoice amount; an underpayment (EX-12) credits what
+          // was actually paid.
           const credit = underpaid && paid > 0n ? paid : invoice.amountMinor;
           await tx.invoice.update({
             where: { id: invoice.id },
@@ -593,7 +590,7 @@ export class PaymentsRepository {
           const txRow = await tx.transaction.create({
             data: {
               userId: invoice.userId,
-              type: toBalance ? 'topup' : 'purchase',
+              type: 'topup',
               status: 'completed',
               amountMinor: credit,
               currency: 'RUB',
@@ -601,90 +598,35 @@ export class PaymentsRepository {
               invoiceId: invoice.id,
             },
           });
-          if (toBalance) {
-            await this.postEntry(
-              tx,
-              txRow.id,
-              invoice.userId,
-              invoice.provider,
-              credit,
-              'provider_clearing',
-              'user',
-            );
-          } else {
-            await this.postEntry(
-              tx,
-              txRow.id,
-              invoice.userId,
-              invoice.provider,
-              invoice.amountMinor,
-              'provider_clearing',
-              'user',
-            );
-            await this.postEntry(
-              tx,
-              txRow.id,
-              invoice.userId,
-              invoice.provider,
-              invoice.amountMinor,
-              'user',
-              'revenue',
-            );
-            // Recognised here and nowhere else: this is the one entry that moves
-            // money into `revenue` (section 12.2).
-            revenueMinorTotal.inc({ provider: invoice.provider }, Number(invoice.amountMinor));
-            if (invoice.planId)
-              await this.activateSubscription(
-                tx,
-                invoice.userId,
-                invoice.planId,
-                invoice.kind === 'plan_change',
-              );
-            await tx.outboxJob.create({
-              data: {
-                queue: 'panel',
-                name: 'panel.sync-user',
-                payload: { userId: invoice.userId, reason: 'paid' },
-                jobId: `sync:${invoice.userId}`,
-              },
-            });
-          }
-          if (toBalance)
-            await queueNotification(
-              tx,
-              'payment.to_balance',
-              invoice.userId,
-              `payment.to_balance:${invoice.id}`,
-              { amount: formatMinorRub(credit) },
-            );
-          else
-            await queueNotification(
-              tx,
-              'payment.succeeded',
-              invoice.userId,
-              `payment.succeeded:${invoice.id}`,
-              { amount: formatMinorRub(invoice.amountMinor) },
-            );
-          if (underpaid || late || unavailable) {
-            const alert = underpaid
-              ? 'payment.underpaid'
-              : canceled
-                ? 'payment.after_cancel'
-                : late
-                  ? 'payment.late'
-                  : 'payment.plan_unavailable';
+          await this.postEntry(
+            tx,
+            txRow.id,
+            invoice.userId,
+            invoice.provider,
+            credit,
+            'provider_clearing',
+            'user',
+          );
+          await queueNotification(
+            tx,
+            'payment.to_balance',
+            invoice.userId,
+            `payment.to_balance:${invoice.id}`,
+            await this.toBalanceParams(tx, invoice, credit, underpaid),
+          );
+          if (underpaid)
             await tx.outboxJob.create({
               data: {
                 queue: 'notify',
                 name: 'notify.alert',
-                payload: { type: alert, details: invoice.id },
-                jobId: `alert:${alert}:${invoice.id}`,
+                payload: { type: 'payment.underpaid', details: invoice.id },
+                jobId: `alert:payment.underpaid:${invoice.id}`,
               },
             });
-          }
           await paymentSucceeded(tx, txRow, invoice);
-          if (underpaid) await this.rewards?.onInvoiceReleased(tx, invoice.id);
-          else await this.rewards?.onInvoiceSettled(tx, invoice.id);
+          // A reservation only an invoice written before F37 can hold: the
+          // plan was not bought, so the promocode slot is given back.
+          await this.rewards?.onInvoiceReleased(tx, invoice.id);
           await this.rewards?.onPaid(tx, {
             id: txRow.id,
             userId: invoice.userId,
@@ -705,6 +647,37 @@ export class PaymentsRepository {
           throw error;
         },
       );
+  }
+
+  /** F37: what `payment.to_balance` says, and the «Купить <тариф>» button when the top-up was for a plan. */
+  private async toBalanceParams(
+    tx: Prisma.TransactionClient,
+    invoice: {
+      id: string;
+      userId: string;
+      amountMinor: bigint;
+      number: string | null;
+      targetPlanId: string | null;
+    },
+    credit: bigint,
+    underpaid: boolean,
+  ): Promise<Record<string, string>> {
+    const [user, plan] = await Promise.all([
+      tx.user.findUnique({ where: { id: invoice.userId }, select: { language: true } }),
+      invoice.targetPlanId ? tx.plan.findUnique({ where: { id: invoice.targetPlanId } }) : null,
+    ]);
+    const names = (plan?.name ?? {}) as Record<string, string>;
+    const name = plan ? (names[user?.language ?? 'ru'] ?? names.ru ?? plan.slug) : '';
+    return {
+      amount: formatMinorRub(credit),
+      hasNumber: invoice.number ? 'yes' : 'no',
+      number: invoice.number ?? '',
+      underpaid: underpaid ? 'yes' : 'no',
+      expected: underpaid ? formatMinorRub(invoice.amountMinor) : '',
+      hasPlan: plan && planAvailable(plan) ? 'yes' : 'no',
+      plan: name,
+      buyInvoice: plan && planAvailable(plan) ? invoice.id : '',
+    };
   }
 
   /**
@@ -750,6 +723,13 @@ export class PaymentsRepository {
       `payment.to_balance:${eventId}`,
       {
         amount: formatMinorRub(credit),
+        hasNumber: 'no',
+        number: '',
+        underpaid: 'no',
+        expected: '',
+        hasPlan: 'no',
+        plan: '',
+        buyInvoice: '',
       },
     );
     await tx.outboxJob.create({

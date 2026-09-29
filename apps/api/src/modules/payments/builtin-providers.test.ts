@@ -56,6 +56,61 @@ describe('payment provider boundaries', () => {
   });
 });
 
+describe('YooKassa payment (section 11.3.1)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // docs/payments/yookassa.md: `description` and a receipt item's
+  // `description` are at most 128 characters; a longer one is refused.
+  it('cuts the description and the receipt item description to 128 characters (F37)', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
+      return Promise.resolve(
+        Response.json({ id: 'pay-1', confirmation: { confirmation_url: 'https://yoomoney.test' } }),
+      );
+    });
+    const long = 'П'.repeat(130);
+
+    await new YooKassaProvider().createInvoice(
+      {
+        invoiceId: 'client-key',
+        shopInvoiceId: '0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee',
+        amountMinor: 29900n,
+        currency: 'RUB',
+        description: long,
+        user: { id: 'u', telegramId: 1n, language: 'ru' },
+        returnUrl: 'https://shop.test/pay/0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee',
+        failUrl: 'https://shop.test/pay/0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee',
+        webhookUrl: 'https://shop.test/webhooks/yookassa',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        receipt: {
+          customer: { email: 'buyer@example.com' },
+          items: [
+            {
+              description: long,
+              quantity: '1.00',
+              amountMinor: 29900n,
+              vatCode: 1,
+              paymentSubject: 'service',
+              paymentMode: 'full_payment',
+            },
+          ],
+        },
+      },
+      { shopId: 'shop', secretKey: 'secret', baseUrl: 'http://yookassa.test' },
+    );
+
+    const body = bodies[0] as {
+      description: string;
+      receipt: { items: Array<{ description: string }> };
+    };
+    expect(body.description).toBe('П'.repeat(128));
+    expect(body.receipt.items[0]?.description).toBe('П'.repeat(128));
+  });
+});
+
 describe('status polling (sections 7.3, 11.3)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -172,7 +227,7 @@ describe('Robokassa (section 11.3.4)', () => {
     );
   });
 
-  it('cuts Description to its 100 characters and the receipt name to its 128 (F37)', async () => {
+  it('cuts Description to its 100 characters and keeps a receipt name within 128 whole (F37)', async () => {
     const long = 'П'.repeat(120);
     const created = await new RobokassaProvider().createInvoice(
       params({
@@ -200,6 +255,34 @@ describe('Robokassa (section 11.3.4)', () => {
 
     expect(url.searchParams.get('Description')).toBe('П'.repeat(100));
     expect(receipt.items[0]?.name).toBe(long);
+  });
+
+  it('cuts the receipt name to its 128 characters (F37)', async () => {
+    const long = 'П'.repeat(130);
+    const created = await new RobokassaProvider().createInvoice(
+      params({
+        description: long,
+        receipt: {
+          customer: {},
+          items: [
+            {
+              description: long,
+              quantity: '1.00',
+              amountMinor: 29900n,
+              vatCode: 1,
+              paymentSubject: 'service',
+              paymentMode: 'full_payment',
+            },
+          ],
+        },
+      }),
+      cfg,
+    );
+    const receipt = JSON.parse(
+      decodeURIComponent(new URL(created.paymentUrl).searchParams.get('Receipt') ?? ''),
+    ) as { items: Array<{ name: string }> };
+
+    expect(receipt.items[0]?.name).toBe('П'.repeat(128));
   });
 
   it('uses the test passwords and IsTest=1 in test mode', async () => {

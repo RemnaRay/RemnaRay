@@ -93,14 +93,15 @@ export class YooKassaProvider implements PaymentProvider {
       amount: { value: amount(p.amountMinor), currency: 'RUB' },
       capture: true,
       confirmation: { type: 'redirect', return_url: p.returnUrl },
-      description: p.description,
+      // docs/payments/yookassa.md: both descriptions are at most 128 characters.
+      description: truncate(p.description, 128),
       metadata: { invoiceId: p.invoiceId },
       ...(p.receipt
         ? {
             receipt: {
               customer: p.receipt.customer,
               items: p.receipt.items.map((item) => ({
-                description: item.description,
+                description: truncate(item.description, 128),
                 quantity: item.quantity,
                 amount: { value: amount(item.amountMinor), currency: 'RUB' },
                 vat_code: item.vatCode,
@@ -696,7 +697,7 @@ function starsFxRate(stars: bigint, amountMinor: bigint): string {
   return `${String(scaled / STAR_RATE_SCALE)}.${(scaled % STAR_RATE_SCALE).toString().padStart(8, '0')}`;
 }
 
-/** Length limits in characters, not UTF-16 units (Telegram's 1–32 and 1–255, Robokassa's 100 and 128). */
+/** Length limits in characters, not UTF-16 units (Telegram's 1–32 and 1–255, Robokassa's 100 and 128, YooKassa's 128). */
 function truncate(text: string, limit: number): string {
   return Array.from(text).slice(0, limit).join('');
 }

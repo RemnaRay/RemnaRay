@@ -59,9 +59,12 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
     const { WebhooksService } =
       await import('../apps/api/dist/modules/webhooks/webhooks.service.js');
     const { MockPaymentProvider } = await import('../packages/payments-mock/dist/index.js');
+    const { BalanceProvider } =
+      await import('../apps/api/dist/modules/payments/builtin-providers.js');
     prisma = createPrismaClient(databaseUrl);
     const registry = new PaymentProviderRegistry();
     registry.register(new MockPaymentProvider());
+    registry.register(new BalanceProvider());
     const repository = new PaymentsRepository(prisma);
     const payments = new PaymentsService({ db: prisma }, repository, registry);
 
@@ -80,16 +83,19 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
         priceMinor: 29900n,
       },
     });
-    const invoice = await payments.createInvoice({
+    // F37: the price is topped up through the provider, and the plan is
+    // bought from the balance; each is a `payment.succeeded` of its own.
+    const topupInvoice = await payments.createInvoice({
       userId: user.id,
-      kind: 'purchase',
-      planId: plan.id,
+      kind: 'topup',
       provider: 'mock',
-      idempotencyKey: 'm4-hooks-paid',
+      amountMinor: 29900n,
+      idempotencyKey: 'm4-hooks-topup',
+      target: { planId: plan.id, kind: 'purchase' },
     });
     const body = JSON.stringify({
       eventId: 'hooks-paid-1',
-      providerInvoiceId: invoice.providerInvoiceId,
+      providerInvoiceId: topupInvoice.providerInvoiceId,
       type: 'paid',
       paidAmountMinorRub: '29900',
     });
@@ -99,6 +105,16 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
       { 'x-mock-signature': createHmac('sha256', 'mock-secret').update(body).digest('hex') },
       '127.0.0.1',
     );
+    const topup = await prisma.transaction.findFirstOrThrow({
+      where: { invoiceId: topupInvoice.id },
+    });
+    const invoice = await payments.createInvoice({
+      userId: user.id,
+      kind: 'purchase',
+      planId: plan.id,
+      provider: 'balance',
+      idempotencyKey: 'm4-hooks-paid',
+    });
     const purchase = await prisma.transaction.findFirstOrThrow({
       where: { invoiceId: invoice.id },
     });
@@ -120,6 +136,7 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
       dispatched.map((row) => row.payload.type),
       [
         'user.created',
+        'payment.succeeded',
         'subscription.activated',
         'payment.succeeded',
         'payment.refunded',
@@ -134,7 +151,21 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
       assert.equal(row.payload.data.telegramId, 993000001);
     }
     const byType = Object.fromEntries(dispatched.map((row) => [row.payload.type, row.payload]));
-    assert.deepEqual(byType['payment.succeeded'].data, {
+    const [toppedUp, bought] = dispatched
+      .filter((row) => row.payload.type === 'payment.succeeded')
+      .map((row) => row.payload);
+    assert.deepEqual(toppedUp.data, {
+      userId: user.id,
+      telegramId: 993000001,
+      transactionId: topup.id,
+      invoiceId: topupInvoice.id,
+      type: 'topup',
+      amountMinor: 29900,
+      currency: 'RUB',
+      provider: 'mock',
+      planId: null,
+    });
+    assert.deepEqual(bought.data, {
       userId: user.id,
       telegramId: 993000001,
       transactionId: purchase.id,
@@ -142,7 +173,7 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
       type: 'purchase',
       amountMinor: 29900,
       currency: 'RUB',
-      provider: 'mock',
+      provider: 'balance',
       planId: plan.id,
     });
     assert.equal(byType['payment.refunded'].data.amountMinor, 10000);
@@ -150,14 +181,20 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
     assert.equal(byType['subscription.expired'].data.subscriptionId, subscription.id);
     assert.equal(byType['subscription.expired'].data.status, 'expired');
 
-    // --- delivery through the worker, to a recipient that fails once ---
+    // --- delivery through the worker, to a recipient that fails the
+    // purchase's first delivery once ---
     const deliveries = [];
+    const typeOf = (delivery) => JSON.parse(delivery.body).data.type;
     const recipient = createServer((request, response) => {
       let text = '';
       request.on('data', (chunk) => (text += chunk.toString()));
       request.on('end', () => {
         deliveries.push({ headers: request.headers, body: text });
-        response.statusCode = deliveries.length === 1 ? 500 : 200;
+        response.statusCode =
+          typeOf({ body: text }) === 'purchase' &&
+          deliveries.filter((delivery) => typeOf(delivery) === 'purchase').length === 1
+            ? 500
+            : 200;
         response.end();
       });
     });
@@ -208,13 +245,14 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
     worker = new WorkerService();
     await worker.onModuleInit();
     await relay.runOnce();
-    // Only the recipient's event fans out to a delivery.
+    // Only the recipient's events fan out to deliveries: the top-up's and
+    // the purchase's `payment.succeeded`.
     await until(
-      async () => (await prisma.outboxJob.count({ where: { name: 'webhooks.deliver' } })) === 1,
-      'the payment.succeeded delivery',
+      async () => (await prisma.outboxJob.count({ where: { name: 'webhooks.deliver' } })) === 2,
+      'the payment.succeeded deliveries',
     );
     await relay.runOnce();
-    await until(() => deliveries.length === 1, 'the first attempt');
+    await until(() => deliveries.length === 2, 'the first attempts');
 
     const { Queue } = await import('../apps/worker/node_modules/bullmq/dist/cjs/index.js');
     const queue = new Queue('webhooks', { connection: redis, prefix: QUEUE_PREFIX });
@@ -229,17 +267,23 @@ test('M4 outgoing webhooks are emitted, signed and retried', { timeout: 240_000 
     // Section 9.8: the first retry one minute later.
     assert.equal(retry.delay, 60_000);
     await retry.promote();
-    await until(() => deliveries.length === 2, 'the retried attempt');
+    await until(() => deliveries.length === 3, 'the retried attempt');
     await until(
-      async () => (await queue.getJobCounts('completed')).completed >= 6,
+      async () => (await queue.getJobCounts('completed')).completed >= 8,
       'every webhooks job to complete',
     );
     await queue.close();
 
-    const [first, second] = deliveries;
+    assert.deepEqual(
+      deliveries
+        .filter((delivery) => typeOf(delivery) === 'topup')
+        .map((delivery) => JSON.parse(delivery.body)),
+      [toppedUp],
+    );
+    const [first, second] = deliveries.filter((delivery) => typeOf(delivery) === 'purchase');
     assert.equal(second.body, first.body, 'a retry sends the same body');
     const event = JSON.parse(second.body);
-    assert.deepEqual(event, byType['payment.succeeded']);
+    assert.deepEqual(event, bought);
     assert.equal(
       second.headers['x-remnaray-signature'],
       `sha256=${createHmac('sha256', 'whsec').update(second.body).digest('hex')}`,

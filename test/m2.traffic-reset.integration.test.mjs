@@ -37,9 +37,12 @@ test(
       const { PaymentProviderRegistry } =
         await import('../apps/api/dist/modules/payments/payments.registry.js');
       const { MockPaymentProvider } = await import('../packages/payments-mock/dist/index.js');
+      const { BalanceProvider } =
+        await import('../apps/api/dist/modules/payments/builtin-providers.js');
       prisma = createPrismaClient(postgres.getConnectionUri());
       const registry = new PaymentProviderRegistry();
       registry.register(new MockPaymentProvider());
+      registry.register(new BalanceProvider());
       const payments = new PaymentsService(
         { db: prisma },
         new PaymentsRepository(prisma),
@@ -61,20 +64,23 @@ test(
         });
       const [monthly, small] = [await plan('traffic-month', 100), await plan('traffic-small', 10)];
       let paid = 0;
+      // F37: the price is topped up through the provider, and the plan is
+      // bought from the balance.
       const pay = async (kind, planId) => {
         paid += 1;
-        const invoice = await payments.createInvoice({
+        const topup = await payments.createInvoice({
           userId: user.id,
-          kind,
-          planId,
+          kind: 'topup',
           provider: 'mock',
-          idempotencyKey: `traffic-${String(paid)}`,
+          amountMinor: 29900n,
+          idempotencyKey: `traffic-topup-${String(paid)}`,
+          target: { planId, kind },
         });
         const body = JSON.stringify({
           eventId: `traffic-paid-${String(paid)}`,
-          providerInvoiceId: invoice.providerInvoiceId,
+          providerInvoiceId: topup.providerInvoiceId,
           type: 'paid',
-          paidAmountMinorRub: String(invoice.amountMinor),
+          paidAmountMinorRub: String(topup.amountMinor),
         });
         await payments.receiveWebhook(
           'mock',
@@ -82,6 +88,13 @@ test(
           { 'x-mock-signature': createHmac('sha256', 'mock-secret').update(body).digest('hex') },
           '127.0.0.1',
         );
+        const invoice = await payments.createInvoice({
+          userId: user.id,
+          kind,
+          planId,
+          provider: 'balance',
+          idempotencyKey: `traffic-${String(paid)}`,
+        });
         const status = await prisma.invoice.findUniqueOrThrow({
           where: { id: invoice.id },
           select: { status: true },

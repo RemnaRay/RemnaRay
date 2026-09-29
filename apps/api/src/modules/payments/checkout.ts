@@ -67,6 +67,9 @@ export function topupAmount(input: {
   return amount;
 }
 
+/** `fiscal.item_name_template` until the owner sets one; the setting's default is this constant. */
+export const DEFAULT_ITEM_NAME_TEMPLATE = 'Пополнение баланса (#{number})';
+
 export function renderItemName(
   template: string,
   values: { number: string; brand: string },

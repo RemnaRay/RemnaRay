@@ -33,9 +33,12 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
     const { PaymentProviderRegistry } =
       await import('../apps/api/dist/modules/payments/payments.registry.js');
     const { MockPaymentProvider } = await import('../packages/payments-mock/dist/index.js');
+    const { BalanceProvider } =
+      await import('../apps/api/dist/modules/payments/builtin-providers.js');
     const prisma = createPrismaClient(databaseUrl);
     const registry = new PaymentProviderRegistry();
     registry.register(new MockPaymentProvider());
+    registry.register(new BalanceProvider());
     const repository = new PaymentsRepository(prisma);
     const service = new PaymentsService({ db: prisma }, repository, registry);
     let serial = 0;
@@ -76,25 +79,26 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
     const balanceOf = async (userId) =>
       (await prisma.account.findFirst({ where: { kind: 'user', userId } }))?.balanceMinor ?? 0n;
 
-    await t.test('P-1: a payment for a plan taken off sale goes to the balance', async () => {
+    await t.test('P-1: a top-up for a plan taken off sale is still credited', async () => {
       const user = await customer();
-      const offSale = await plan('m2-off-sale', 29900n);
-      const invoice = await service.createInvoice({
+      const offSalePlan = await plan('m2-off-sale', 29900n);
+      // О-19 under F37: a top-up for a plan taken off sale before it is paid
+      // is still credited; the purchase is then refused and debits nothing.
+      const offSale = await service.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: offSale.id,
+        kind: 'topup',
         provider: 'mock',
-        idempotencyKey: 'm2-rec-off-sale',
+        amountMinor: 29900n,
+        idempotencyKey: 'p1-topup',
+        target: { planId: offSalePlan.id, kind: 'purchase' },
       });
       // The administrator takes the plan off sale while the invoice is open.
-      await prisma.plan.update({ where: { id: offSale.id }, data: { isActive: false } });
+      await prisma.plan.update({ where: { id: offSalePlan.id }, data: { isActive: false } });
 
-      await paid(invoice, 'off-sale-1', '29900');
+      await paid(offSale, 'p1-paid', '29900');
 
-      // The whole apply used to roll back on PLAN_UNAVAILABLE, every retry
-      // too: the invoice stayed pending and the money reached nobody.
-      assert.equal((await prisma.invoice.findUnique({ where: { id: invoice.id } })).status, 'paid');
-      const rows = await prisma.transaction.findMany({ where: { invoiceId: invoice.id } });
+      assert.equal((await prisma.invoice.findUnique({ where: { id: offSale.id } })).status, 'paid');
+      const rows = await prisma.transaction.findMany({ where: { invoiceId: offSale.id } });
       assert.deepEqual(
         rows.map((row) => [row.type, row.amountMinor]),
         [['topup', 29900n]],
@@ -108,21 +112,33 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
         entries.map((entry) => [kinds.get(entry.debitAccountId), kinds.get(entry.creditAccountId)]),
         [['provider_clearing', 'user']],
       );
-      assert.equal(await prisma.subscription.count({ where: { userId: user.id } }), 0);
       assert.equal(
         await prisma.outboxJob.count({
-          where: { jobId: `alert:payment.plan_unavailable:${invoice.id}` },
+          where: { jobId: { startsWith: 'alert:payment.plan_unavailable' } },
         }),
-        1,
+        0,
       );
-      assert.equal(
-        await prisma.outboxJob.count({
-          where: { jobId: `notify:payment.to_balance:${invoice.id}` },
-        }),
-        1,
-      );
-      const event = await prisma.paymentEvent.findFirst({ where: { invoiceId: invoice.id } });
+      // The notice offers no purchase of a plan that is off sale.
+      const notice = await prisma.outboxJob.findFirst({
+        where: { jobId: `notify:payment.to_balance:${offSale.id}` },
+      });
+      assert.equal(notice.payload.params.hasPlan, 'no');
+      assert.equal(notice.payload.params.buyInvoice, '');
+      const event = await prisma.paymentEvent.findFirst({ where: { invoiceId: offSale.id } });
       assert.ok(event.processedAt);
+
+      await assert.rejects(
+        service.createInvoice({
+          userId: user.id,
+          kind: 'purchase',
+          planId: offSalePlan.id,
+          provider: 'balance',
+          idempotencyKey: 'p1-buy',
+        }),
+        /PLAN_UNAVAILABLE/,
+      );
+      assert.equal(await balanceOf(user.id), 29900n);
+      assert.equal(await prisma.subscription.count({ where: { userId: user.id } }), 0);
     });
 
     // R74: two transactions that each wait for a row the other holds is a
@@ -197,25 +213,39 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
     };
 
     await t.test(
-      'R74: a purchase does not deadlock with a balance purchase on revenue',
+      'R74: a purchase from the balance does not deadlock with another money path on revenue',
       async () => {
         const user = await customer();
         const bought = await plan('m2-lock-revenue', 10000n);
         const payer = await accountOf(user.id);
         const revenue = (await prisma.account.findFirst({ where: { kind: 'revenue' } })).id;
-        const { invoice, eventId } = await storedPayment(
+        // F37: a provider only tops the balance up; revenue is reached by the
+        // purchase from the balance that follows.
+        const { eventId } = await storedPayment(
           repository,
           user.id,
           'm2-lock-a',
-          'purchase',
-          bought.id,
+          'topup',
+          null,
           10000n,
         );
+        await repository.applyEvent(eventId);
+        assert.equal(await balanceOf(user.id), 10000n);
 
-        // Old order: the apply held clearing and the payer, then waited for
-        // revenue — which B holds while it asks for the payer.
+        // A wrong order would hold the payer, then wait for revenue — which
+        // B holds while it asks for the payer.
         const { held, applied } = await contend(
-          () => repository.applyEvent(eventId),
+          () =>
+            repository.createBalanceInvoice({
+              userId: user.id,
+              kind: 'purchase',
+              planId: bought.id,
+              provider: 'balance',
+              amountMinor: 10000n,
+              currency: 'RUB',
+              idempotencyKey: 'm2-rec-lock-buy',
+              expiresAt: new Date(Date.now() + 30 * 60_000),
+            }),
           revenue,
           payer,
         );
@@ -223,9 +253,10 @@ test('M2 payment recovery: taken money is never lost', { timeout: 300_000 }, asy
         assert.equal(held.status, 'fulfilled', String(held.reason));
         assert.equal(applied.status, 'fulfilled', String(applied.reason));
         assert.equal(
-          (await prisma.invoice.findUnique({ where: { id: invoice.id } })).status,
+          (await prisma.invoice.findUnique({ where: { id: applied.value.id } })).status,
           'paid',
         );
+        assert.equal(await balanceOf(user.id), 0n);
       },
     );
 
