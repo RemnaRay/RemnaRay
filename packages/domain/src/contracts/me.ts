@@ -99,6 +99,17 @@ export const invoiceSchema = z.object({
   providerAmount: z.object({ amount: z.string(), currency: z.string() }).optional(),
   paymentUrl: z.string().optional(),
   starsInvoiceLink: z.string().optional(),
+  // F37 (ADR-021): a provider invoice's `NN-00001`, and what a top-up for a plan is meant to buy.
+  number: z.string().nullable().default(null),
+  target: z
+    .object({
+      planId: z.string(),
+      planSlug: z.string(),
+      kind: z.enum(['purchase', 'plan_change']),
+      promocode: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
   expiresAt: z.string(),
   createdAt: z.string(),
 });
@@ -113,6 +124,7 @@ export const transactionsSchema = cursorPage(
     status: z.string(),
     createdAt: z.string(),
     description: z.string().nullable(),
+    invoiceNumber: z.string().nullable().default(null),
   }),
 );
 export type TransactionsView = z.infer<typeof transactionsSchema>;
@@ -164,12 +176,22 @@ export const topupConfigSchema = z.object({
   maxMinor: z.number(),
 });
 
-export const planChangeQuoteSchema = z.object({
+/** F37 (ADR-021): what a plan costs from the balance now, and the top-up each provider needs. */
+export const checkoutQuoteSchema = z.object({
+  planId: z.string(),
+  kind: z.enum(['purchase', 'plan_change']),
+  priceMinor: z.number(),
+  discountMinor: z.number(),
   creditMinor: z.number(),
-  newPriceMinor: z.number(),
   toPayMinor: z.number(),
-  canPayFromBalance: z.boolean(),
+  availableMinor: z.number(),
+  missingMinor: z.number(),
+  topups: z.array(z.object({ provider: z.string(), amountMinor: z.number() })),
+  promocode: z
+    .object({ code: z.string(), applied: z.boolean(), error: z.string().optional() })
+    .nullable(),
 });
+export type CheckoutQuoteView = z.infer<typeof checkoutQuoteSchema>;
 
 export const promocodePreviewSchema = z.object({
   discountMinor: z.number(),

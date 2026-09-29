@@ -4,6 +4,12 @@ import * as QRCode from 'qrcode';
 import { Prisma } from '@remnaray/db';
 
 import { Infrastructure } from '../../infra/infra.module';
+import {
+  PLAN_CHANGE_TOPUP_MARGIN_MS,
+  amountToPay,
+  planChangeCredit,
+  topupAmount,
+} from '../payments/checkout';
 import { PaymentError } from '../payments/payments.errors';
 import { PaymentsService } from '../payments/payments.service';
 import { PlansService } from '../plans/plans.service';
@@ -13,9 +19,9 @@ import { SettingsService } from '../settings/settings.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { ApiError } from './me.errors';
 import {
+  checkoutQuoteQuerySchema,
   cursorQuerySchema,
   invoiceCreateSchema,
-  planIdQuerySchema,
   profilePatchSchema,
   promocodePreviewSchema,
   promocodeSchema,
@@ -280,15 +286,122 @@ export class MeService {
     };
   }
 
+  /** F37: what buying `planId` from the balance costs now, and the top-up each provider would need. */
+  async checkoutQuote(userId: string, query: unknown) {
+    const input = checkoutQuoteQuerySchema.parse(query);
+    const quote = await this.quote(userId, input);
+    const methods = await this.paymentMethods(userId);
+    const minMinor = BigInt(String(await this.settings.get('balance.topup_min_minor')));
+    const topups =
+      quote.missingMinor === 0n
+        ? []
+        : methods.items
+            .filter((item) => item.available && item.kind !== 'balance')
+            .map((item) => ({
+              provider: item.code,
+              amountMinor: Number(
+                topupAmount({
+                  shortMinor: quote.topupBaseMinor,
+                  topupMinMinor: minMinor,
+                  providerMinMinor: this.payments.minimumMinor(item.code),
+                }),
+              ),
+            }));
+    return {
+      planId: input.planId,
+      kind: input.kind,
+      priceMinor: Number(quote.priceMinor),
+      discountMinor: Number(quote.discountMinor),
+      creditMinor: Number(quote.creditMinor),
+      toPayMinor: Number(quote.toPayMinor),
+      availableMinor: Number(quote.availableMinor),
+      missingMinor: Number(quote.missingMinor),
+      topups,
+      promocode: quote.promocode,
+    };
+  }
+
+  /**
+   * F37 §3: today's purchase arithmetic from the balance, read without a
+   * lock — the purchase itself re-checks everything under its locks. A
+   * refused promocode is answered, not thrown: the quote stays usable.
+   */
+  private async quote(
+    userId: string,
+    input: { planId: string; kind: 'purchase' | 'plan_change'; promocode?: string | undefined },
+  ) {
+    const now = new Date();
+    const plan = await this.infra.db.plan.findFirst({
+      where: { id: input.planId, isActive: true, deletedAt: null },
+    });
+    if (!plan) throw new ApiError('PLAN_UNAVAILABLE', HttpStatus.CONFLICT);
+    let credit = 0n;
+    let creditLater = 0n;
+    if (input.kind === 'plan_change') {
+      const current = await this.infra.db.subscription.findFirst({
+        where: { userId, status: 'active' },
+      });
+      const oldPlan = current?.planId
+        ? await this.infra.db.plan.findUnique({ where: { id: current.planId } })
+        : null;
+      if (!current || !oldPlan || current.expiresAt <= now || oldPlan.id === plan.id)
+        throw new ApiError('PLAN_CHANGE_NOT_ALLOWED', HttpStatus.CONFLICT);
+      credit = planChangeCredit(oldPlan, current.expiresAt, now);
+      creditLater = planChangeCredit(
+        oldPlan,
+        current.expiresAt,
+        new Date(now.getTime() + PLAN_CHANGE_TOPUP_MARGIN_MS),
+      );
+    }
+    let discount = 0n;
+    let promocode: { code: string; applied: boolean; error?: string } | null = null;
+    if (input.promocode) {
+      try {
+        const found = await this.resolvePromocode(userId, input.promocode, plan.id);
+        discount = this.discountFor(found, plan.priceMinor);
+        promocode = { code: input.promocode, applied: true };
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        promocode = { code: input.promocode, applied: false, error: error.code };
+      }
+    }
+    const toPay = amountToPay({
+      priceMinor: plan.priceMinor,
+      creditMinor: credit,
+      discountMinor: discount,
+    });
+    const toPayLater = amountToPay({
+      priceMinor: plan.priceMinor,
+      creditMinor: creditLater,
+      discountMinor: discount,
+    });
+    const { available } = await this.balance(userId);
+    const missing = toPay > available ? toPay - available : 0n;
+    return {
+      priceMinor: plan.priceMinor,
+      discountMinor: discount,
+      creditMinor: credit,
+      toPayMinor: toPay,
+      availableMinor: available,
+      missingMinor: missing,
+      // A plan change's remainder melts: the top-up covers a day of it.
+      topupBaseMinor:
+        missing === 0n ? 0n : toPayLater > available ? toPayLater - available : missing,
+      promocode,
+    };
+  }
+
   async createInvoice(userId: string, body: unknown, idempotencyKey: string | undefined) {
     const input = invoiceCreateSchema.parse(body);
+    const key = idempotencyKey || randomUUID();
+    if (input.kind === 'topup' && input.forPlan)
+      return this.createTopupForPlan(userId, input.provider, input.forPlan, key);
     if (input.kind === 'topup') {
       const config = await this.topupConfig();
       const amount = Number(input.amountMinor ?? 0);
       if (!Number.isInteger(amount) || amount < config.minMinor || amount > config.maxMinor)
         throw new ApiError('TOPUP_AMOUNT_OUT_OF_RANGE', HttpStatus.BAD_REQUEST, undefined, config);
     }
-    const key = idempotencyKey || randomUUID();
     const request = {
       userId,
       kind: input.kind,
@@ -343,6 +456,77 @@ export class MeService {
             data: { status: 'released' },
           })
           .catch(() => undefined);
+      // F37: a short balance says by how much, for the top-up the client offers.
+      if (
+        error instanceof PaymentError &&
+        error.code === 'INSUFFICIENT_FUNDS' &&
+        input.kind !== 'topup' &&
+        input.planId
+      ) {
+        const quote = await this.quote(userId, {
+          planId: input.planId,
+          kind: input.kind,
+          ...(input.promocode ? { promocode: input.promocode } : {}),
+        }).catch(() => null);
+        throw new ApiError('INSUFFICIENT_FUNDS', HttpStatus.CONFLICT, undefined, {
+          missingMinor: Number(quote?.missingMinor ?? 0n),
+        });
+      }
+      throw this.paymentFailure(error);
+    }
+  }
+
+  /**
+   * F37: a top-up «for a plan». The server computes its amount (answer (а),
+   * the plan-change margin); the promocode is only remembered — the purchase
+   * from the balance applies it. FR-020: a pending top-up for the same purpose
+   * at the same provider that still covers the amount is returned instead.
+   */
+  private async createTopupForPlan(
+    userId: string,
+    provider: string,
+    purpose: { planId: string; kind: 'purchase' | 'plan_change'; promocode?: string | undefined },
+    key: string,
+  ) {
+    const target = {
+      planId: purpose.planId,
+      kind: purpose.kind,
+      ...(purpose.promocode ? { promocode: purpose.promocode } : {}),
+    };
+    const request = { userId, kind: 'topup' as const, provider, idempotencyKey: key, target };
+    try {
+      const replayed = await this.payments.replay(request);
+      if (replayed) return await this.invoiceView(replayed);
+    } catch (error) {
+      throw this.paymentFailure(error);
+    }
+    const quote = await this.quote(userId, purpose);
+    if (quote.missingMinor === 0n) throw new ApiError('BALANCE_SUFFICIENT', HttpStatus.CONFLICT);
+    try {
+      const amount = topupAmount({
+        shortMinor: quote.topupBaseMinor,
+        topupMinMinor: BigInt(String(await this.settings.get('balance.topup_min_minor'))),
+        providerMinMinor: this.payments.minimumMinor(provider),
+      });
+      const pending = await this.infra.db.invoice.findFirst({
+        where: {
+          userId,
+          kind: 'topup',
+          provider,
+          status: 'pending',
+          expiresAt: { gt: new Date() },
+          targetPlanId: purpose.planId,
+          targetKind: purpose.kind,
+          targetPromocode: purpose.promocode ?? null,
+          amountMinor: { gte: amount },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (pending) return await this.invoiceView(pending);
+      const invoice = await this.payments.createInvoice({ ...request, amountMinor: amount });
+      if (!invoice) throw new ApiError('NOT_FOUND', HttpStatus.NOT_FOUND);
+      return await this.invoiceView(invoice);
+    } catch (error) {
       throw this.paymentFailure(error);
     }
   }
@@ -383,26 +567,6 @@ export class MeService {
     return this.invoiceView(canceled);
   }
 
-  async planChangeQuote(userId: string, query: unknown) {
-    const { planId } = planIdQuerySchema.parse(query);
-    try {
-      const quote = await this.subscriptions.quoteChange(userId, { planId });
-      const [plan, wallet] = await Promise.all([
-        this.infra.db.plan.findUnique({ where: { id: quote.newPlanId } }),
-        this.balance(userId),
-      ]);
-      return {
-        creditMinor: Number(quote.creditMinor),
-        newPriceMinor: Number(plan?.priceMinor ?? 0n),
-        toPayMinor: Number(quote.chargeMinor),
-        canPayFromBalance: wallet.available >= quote.chargeMinor,
-      };
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError('PLAN_CHANGE_NOT_ALLOWED', HttpStatus.CONFLICT);
-    }
-  }
-
   async transactions(userId: string, query: unknown) {
     const { limit, cursor } = cursorQuerySchema.parse(query);
     const rows = await this.infra.db.transaction.findMany({
@@ -412,6 +576,15 @@ export class MeService {
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
     const items = rows.slice(0, limit);
+    // F37: a top-up is shown with the number its receipt and provider carry.
+    const numbers = new Map(
+      (
+        await this.infra.db.invoice.findMany({
+          where: { id: { in: items.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])) } },
+          select: { id: true, number: true },
+        })
+      ).map((row) => [row.id, row.number]),
+    );
     return {
       items: items.map((item) => ({
         id: item.id,
@@ -421,6 +594,7 @@ export class MeService {
         status: item.status,
         createdAt: item.createdAt.toISOString(),
         description: item.reason,
+        invoiceNumber: item.invoiceId ? (numbers.get(item.invoiceId) ?? null) : null,
       })),
       nextCursor: rows.length > limit ? (items.at(-1)?.id ?? null) : null,
     };
@@ -695,12 +869,19 @@ export class MeService {
     providerAmount: { toString: () => string } | null;
     providerCurrency: string | null;
     paymentUrl: string | null;
+    number: string | null;
+    targetPlanId: string | null;
+    targetKind: string | null;
+    targetPromocode: string | null;
     expiresAt: Date;
     createdAt: Date;
   }) {
-    const plan = invoice.planId
-      ? await this.infra.db.plan.findUnique({ where: { id: invoice.planId } })
-      : null;
+    const [plan, target] = await Promise.all([
+      invoice.planId ? this.infra.db.plan.findUnique({ where: { id: invoice.planId } }) : null,
+      invoice.targetPlanId
+        ? this.infra.db.plan.findUnique({ where: { id: invoice.targetPlanId } })
+        : null,
+    ]);
     const isStars = invoice.provider === 'stars';
     return {
       id: invoice.id,
@@ -721,6 +902,15 @@ export class MeService {
         : {}),
       ...(invoice.paymentUrl && !isStars ? { paymentUrl: invoice.paymentUrl } : {}),
       ...(invoice.paymentUrl && isStars ? { starsInvoiceLink: invoice.paymentUrl } : {}),
+      number: invoice.number,
+      target: invoice.targetPlanId
+        ? {
+            planId: invoice.targetPlanId,
+            planSlug: target?.slug ?? '',
+            kind: invoice.targetKind as 'purchase' | 'plan_change',
+            promocode: invoice.targetPromocode,
+          }
+        : null,
       expiresAt: invoice.expiresAt.toISOString(),
       createdAt: invoice.createdAt.toISOString(),
     };
@@ -729,10 +919,11 @@ export class MeService {
   private paymentFailure(error: unknown): unknown {
     if (error instanceof ApiError) return error;
     if (error instanceof PaymentError) {
+      // F37: a purchase at a provider (`BALANCE_ONLY`) is a request never accepted, 422.
       const status =
         error.message === 'IDEMPOTENCY_REQUIRED'
           ? HttpStatus.BAD_REQUEST
-          : error.message === 'IDEMPOTENCY_KEY_REUSED'
+          : error.message === 'IDEMPOTENCY_KEY_REUSED' || error.message === 'BALANCE_ONLY'
             ? HttpStatus.UNPROCESSABLE_ENTITY
             : error.message === 'RATE_LIMITED'
               ? HttpStatus.TOO_MANY_REQUESTS

@@ -3010,16 +3010,19 @@
     "/api/v1/me/invoices": {
       "post": {
         "operationId": "createMyInvoice",
-        "summary": "Create an invoice",
+        "summary": "Buy a plan from the balance, or top the balance up (ADR-021)",
         "responses": {
           "201": {
             "description": "Invoice"
           },
           "409": {
-            "description": "PLAN_UNAVAILABLE | PROVIDER_UNAVAILABLE | INSUFFICIENT_FUNDS | PROMO_*"
+            "description": "PLAN_UNAVAILABLE | PROVIDER_UNAVAILABLE | INSUFFICIENT_FUNDS (details.missingMinor) | BALANCE_SUFFICIENT | PLAN_CHANGE_NOT_ALLOWED | PROMO_*"
           },
           "400": {
-            "description": "TOPUP_AMOUNT_OUT_OF_RANGE"
+            "description": "VALIDATION_ERROR (e.g. a purchase at a provider) | TOPUP_AMOUNT_OUT_OF_RANGE"
+          },
+          "422": {
+            "description": "BALANCE_ONLY | IDEMPOTENCY_KEY_REUSED"
           }
         },
         "parameters": [
@@ -3134,16 +3137,19 @@
         }
       }
     },
-    "/api/v1/me/plan-change/quote": {
+    "/api/v1/me/checkout/quote": {
       "get": {
-        "operationId": "getMyPlanChangeQuote",
-        "summary": "Credit and amount to pay",
+        "operationId": "getMyCheckoutQuote",
+        "summary": "What a plan costs from the balance, and the top-up each provider needs (ADR-021)",
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "CheckoutQuote"
           },
           "409": {
-            "description": "PLAN_CHANGE_NOT_ALLOWED"
+            "description": "PLAN_UNAVAILABLE | PLAN_CHANGE_NOT_ALLOWED"
+          },
+          "400": {
+            "description": "VALIDATION_ERROR"
           }
         },
         "parameters": [
@@ -3154,6 +3160,25 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["purchase", "plan_change"]
+            }
+          },
+          {
+            "name": "promocode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 64
             }
           }
         ]

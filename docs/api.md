@@ -40,6 +40,64 @@ for it otherwise, in both profiles.
 - **Rate limits** apply at the proxy by zone and again per user inside the API;
   both answer 429.
 
+## Buying a plan
+
+A plan is bought, renewed and changed only from the balance; a payment
+provider only tops the balance up ([ADR-021](adr/ADR-021.md)). A client asks
+first what the purchase costs:
+
+```
+GET /api/v1/me/checkout/quote?planId=<uuid>&kind=purchase|plan_change&promocode=<code>
+GET /api/internal/v1/me/checkout/quote?…          the same, for the bot (X-Acting-User)
+```
+
+```json
+{
+  "planId": "…",
+  "kind": "purchase",
+  "priceMinor": 29900,
+  "discountMinor": 0,
+  "creditMinor": 0,
+  "toPayMinor": 29900,
+  "availableMinor": 29600,
+  "missingMinor": 300,
+  "topups": [
+    { "provider": "yookassa", "amountMinor": 5000 },
+    { "provider": "platega", "amountMinor": 10000 }
+  ],
+  "promocode": null
+}
+```
+
+`availableMinor` is the balance less held referral rewards. `topups` is empty
+when nothing is missing, and otherwise lists every offered provider with
+`max(missing, balance.topup_min_minor, the provider's minimum)` — above
+`balance.topup_max_minor` too. For a plan change the missing amount uses the
+old plan's remainder a day later, because the remainder melts while the
+customer pays. A promocode the shop refuses comes back as
+`{ "code": "…", "applied": false, "error": "PROMO_…" }` with no discount; the
+quote itself still answers. An unavailable plan is `409 PLAN_UNAVAILABLE`, a
+plan change without an active subscription `409 PLAN_CHANGE_NOT_ALLOWED`.
+
+`POST /me/invoices` takes one of three bodies:
+
+| Body                                                                              | What it does                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `{ kind: "purchase" \| "plan_change", planId, provider?: "balance", promocode? }` | buys from the balance, paid at once; any other provider is `400 VALIDATION_ERROR`; a short balance is `409 INSUFFICIENT_FUNDS` with `details.missingMinor`                                                                                                   |
+| `{ kind: "topup", provider, amountMinor }`                                        | tops up by an amount within `balance.topup_min_minor`…`topup_max_minor` (`400 TOPUP_AMOUNT_OUT_OF_RANGE`)                                                                                                                                                    |
+| `{ kind: "topup", provider, forPlan: { planId, kind, promocode? } }`              | tops up by the amount the quote names for that provider; `409 BALANCE_SUFFICIENT` when nothing is missing (buy instead). A pending, unexpired top-up for the same plan, kind and promocode at that provider that still covers the amount is returned instead |
+
+A top-up «for a plan» only remembers the promocode; the purchase from the
+balance after it applies the discount. Nothing is bought by the top-up itself:
+once it is paid, the customer buys as a second step.
+
+An invoice carries `number` — `NN-00001` for a provider invoice, the number
+its receipt and payment description show, `null` for one paid from the
+balance — and `target`, `{ planId, planSlug, kind, promocode }` for a top-up
+for a plan, else `null`. A transaction in `GET /me/transactions` carries its
+invoice's number as `invoiceNumber`. `GET /me/plan-change/quote` no longer
+exists.
+
 ## Health and metrics
 
 ```

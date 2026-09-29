@@ -1,4 +1,6 @@
 import {
+  checkoutQuoteSchema,
+  invoiceSchema,
   paymentMethodsSchema,
   referralListSchema,
   referralsSchema,
@@ -8,6 +10,7 @@ import {
   userMeSchema,
 } from '@remnaray/domain';
 import { describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 
 import { PaymentError } from '../payments/payments.errors';
 import { MeService } from './me.service';
@@ -85,7 +88,11 @@ function service(overrides: Record<string, unknown> = {}) {
     },
     panelUser: { findUnique: vi.fn().mockResolvedValue(null) },
     paymentProvider: { findMany: vi.fn().mockResolvedValue([]) },
-    invoice: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() },
+    invoice: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn(),
+    },
     promocode: { findFirst: vi.fn().mockResolvedValue(null) },
     promocodeRedemption: {
       count: vi.fn().mockResolvedValue(0),
@@ -458,5 +465,336 @@ describe('MeService', () => {
     const test = service();
     await expect(test.instance.userIdForTelegram('123')).resolves.toBe('user-1');
     await expect(test.instance.userIdForTelegram('abc')).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+const USER = 'user-1';
+const PLAN = '22222222-2222-7222-8222-222222222222';
+const OLD_PLAN = '33333333-3333-7333-8333-333333333333';
+
+function invoiceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'inv-1',
+    userId: USER,
+    kind: 'topup',
+    status: 'pending',
+    planId: null,
+    provider: 'yookassa',
+    amountMinor: 5000n,
+    currency: 'RUB',
+    discountMinor: 0n,
+    providerAmount: null,
+    providerCurrency: null,
+    paymentUrl: 'https://pay.test/inv-1',
+    number: '01-00001',
+    targetPlanId: null,
+    targetKind: null,
+    targetPromocode: null,
+    expiresAt: new Date('2026-10-01T01:00:00.000Z'),
+    createdAt: new Date('2026-10-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+/**
+ * F37: a `MeService` over a user with `balanceMinor` on the account, a plan
+ * `PLAN` and two healthy providers, `yookassa` (minimum 1 ₽) and `platega`
+ * (minimum 100 ₽).
+ */
+function build(
+  options: {
+    balanceMinor?: bigint;
+    plan?: { id: string; priceMinor: bigint; durationDays: number };
+    oldPlan?: { id: string; priceMinor: bigint; durationDays: number };
+    subscription?: { planId: string; expiresAt: Date; status: string };
+    promocode?: Record<string, unknown> | null;
+    pendingTopup?: Record<string, unknown>;
+  } = {},
+) {
+  const target = { ...plan, ...(options.plan ?? {}), id: PLAN };
+  const plans = new Map<string, unknown>([[PLAN, target]]);
+  if (options.oldPlan) plans.set(options.oldPlan.id, { ...plan, ...options.oldPlan });
+  const values: Record<string, unknown> = {
+    ...settingValues,
+    'balance.topup_min_minor': '5000',
+    'balance.topup_max_minor': '1000000',
+    'balance.topup_presets_minor': [],
+    'balance.topup_enabled': true,
+  };
+  const db = {
+    user: { findUnique: vi.fn().mockResolvedValue(user) },
+    account: {
+      findFirst: vi.fn().mockResolvedValue({ balanceMinor: options.balanceMinor ?? 0n }),
+    },
+    $queryRaw: vi.fn().mockResolvedValue([{ held: 0n }]),
+    subscription: { findFirst: vi.fn().mockResolvedValue(options.subscription ?? null) },
+    transaction: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
+    plan: {
+      findFirst: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === PLAN ? target : null),
+      ),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(plans.get(where.id) ?? null),
+      ),
+    },
+    paymentProvider: {
+      findMany: vi.fn().mockResolvedValue([
+        { code: 'yookassa', displayName: { ru: 'ЮKassa' }, lastHealthcheckOk: true },
+        { code: 'platega', displayName: { ru: 'Platega' }, lastHealthcheckOk: true },
+      ]),
+    },
+    invoice: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(options.pendingTopup ?? null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    promocode: { findFirst: vi.fn().mockResolvedValue(options.promocode ?? null) },
+    promocodeRedemption: {
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn(),
+      updateMany: vi.fn(),
+    },
+  };
+  const payments = {
+    minimumMinor: vi.fn((code: string) => (code === 'yookassa' ? 100n : 10000n)),
+    createInvoice: vi.fn(
+      (request: { kind: string; provider: string; amountMinor?: bigint; target?: unknown }) =>
+        Promise.resolve(
+          invoiceRow({
+            kind: request.kind,
+            provider: request.provider,
+            amountMinor: request.amountMinor ?? 0n,
+          }),
+        ),
+    ),
+    replay: vi.fn().mockResolvedValue(null),
+  };
+  const settings = { get: (key: string) => Promise.resolve(values[key]) };
+  const instance = new MeService(
+    { db } as never,
+    settings as never,
+    {} as never,
+    payments as never,
+    {} as never,
+    {} as never,
+  );
+  return { service: instance, payments, db };
+}
+
+describe('checkout quote (F37)', () => {
+  it('offers the purchase when the balance covers it', async () => {
+    const { service } = build({ balanceMinor: 30000n });
+    const quote = await service.checkoutQuote(USER, { planId: PLAN, kind: 'purchase' });
+    expect(quote).toMatchObject({
+      toPayMinor: 29900,
+      availableMinor: 30000,
+      missingMinor: 0,
+      topups: [],
+    });
+    expect(checkoutQuoteSchema.safeParse(quote).success).toBe(true);
+  });
+
+  it('rounds a small shortage up per provider (answer (а))', async () => {
+    const { service } = build({ balanceMinor: 29600n });
+    const quote = await service.checkoutQuote(USER, { planId: PLAN, kind: 'purchase' });
+    expect(quote.missingMinor).toBe(300);
+    expect(quote.topups).toEqual([
+      { provider: 'yookassa', amountMinor: 5000 },
+      { provider: 'platega', amountMinor: 10000 },
+    ]);
+  });
+
+  it('adds a day of the melting remainder to a plan change top-up', async () => {
+    const now = new Date('2026-10-01T00:00:00Z');
+    vi.useFakeTimers({ now });
+    try {
+      const { service } = build({
+        balanceMinor: 0n,
+        subscription: {
+          planId: OLD_PLAN,
+          expiresAt: new Date(now.getTime() + 15 * 86_400_000),
+          status: 'active',
+        },
+        oldPlan: { id: OLD_PLAN, priceMinor: 29900n, durationDays: 30 },
+        plan: { id: PLAN, priceMinor: 59900n, durationDays: 30 },
+      });
+      const quote = await service.checkoutQuote(USER, { planId: PLAN, kind: 'plan_change' });
+      expect(quote.creditMinor).toBe(14950);
+      expect(quote.toPayMinor).toBe(44950);
+      expect(quote.missingMinor).toBe(44950);
+      // remainder at now + 24 h: ceil(14 × 86400 / 2592000 × 29900) = 13954 → 59900 − 13954
+      expect(quote.topups[0]).toEqual({ provider: 'yookassa', amountMinor: 45946 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('answers a refused promocode without its discount', async () => {
+    const { service } = build({ balanceMinor: 0n, promocode: null });
+    const quote = await service.checkoutQuote(USER, {
+      planId: PLAN,
+      kind: 'purchase',
+      promocode: 'NOPE',
+    });
+    expect(quote.discountMinor).toBe(0);
+    expect(quote.promocode).toEqual({ code: 'NOPE', applied: false, error: 'PROMO_NOT_FOUND' });
+  });
+});
+
+describe('top-up for a plan (F37)', () => {
+  it('computes the amount and stores the purpose, without reserving the promocode', async () => {
+    const { service, payments, db } = build({ balanceMinor: 29600n });
+    await service.createInvoice(
+      USER,
+      { kind: 'topup', provider: 'yookassa', forPlan: { planId: PLAN, kind: 'purchase' } },
+      'key-1',
+    );
+    expect(payments.createInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'topup',
+        provider: 'yookassa',
+        amountMinor: 5000n,
+        target: { planId: PLAN, kind: 'purchase' },
+      }),
+    );
+    expect(db.promocodeRedemption.create).not.toHaveBeenCalled();
+  });
+
+  it('remembers the promocode of a top-up for a plan and reserves nothing', async () => {
+    const { service, payments, db } = build({ balanceMinor: 0n });
+    await service.createInvoice(
+      USER,
+      {
+        kind: 'topup',
+        provider: 'yookassa',
+        forPlan: { planId: PLAN, kind: 'purchase', promocode: 'SALE20' },
+      },
+      'key-promo',
+    );
+    expect(payments.createInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { planId: PLAN, kind: 'purchase', promocode: 'SALE20' } }),
+    );
+    expect(payments.createInvoice.mock.calls[0]?.[0]).not.toHaveProperty('promocodeRedemptionId');
+    expect(db.promocodeRedemption.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a top-up the balance does not need', async () => {
+    const { service } = build({ balanceMinor: 30000n });
+    await expect(
+      service.createInvoice(
+        USER,
+        { kind: 'topup', provider: 'yookassa', forPlan: { planId: PLAN, kind: 'purchase' } },
+        'key-2',
+      ),
+    ).rejects.toMatchObject({ code: 'BALANCE_SUFFICIENT' });
+  });
+
+  it('returns the pending top-up for the same purpose (FR-020)', async () => {
+    const pending = invoiceRow({
+      id: 'inv-pending',
+      kind: 'topup',
+      provider: 'yookassa',
+      amountMinor: 5000n,
+      targetPlanId: PLAN,
+      targetKind: 'purchase',
+    });
+    const { service, payments } = build({ balanceMinor: 29600n, pendingTopup: pending });
+    const view = await service.createInvoice(
+      USER,
+      { kind: 'topup', provider: 'yookassa', forPlan: { planId: PLAN, kind: 'purchase' } },
+      'key-3',
+    );
+    expect(view.id).toBe('inv-pending');
+    expect(view.number).toBe('01-00001');
+    expect(view.target).toEqual({
+      planId: PLAN,
+      planSlug: 'month',
+      kind: 'purchase',
+      promocode: null,
+    });
+    expect(invoiceSchema.safeParse(view).success).toBe(true);
+    expect(payments.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('refuses a purchase at a provider', async () => {
+    const { service } = build({ balanceMinor: 0n });
+    await expect(
+      service.createInvoice(
+        USER,
+        { kind: 'purchase', planId: PLAN, provider: 'yookassa' },
+        'key-4',
+      ),
+    ).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it('refuses a top-up that names both an amount and a plan', async () => {
+    const { service } = build({ balanceMinor: 0n });
+    await expect(
+      service.createInvoice(
+        USER,
+        {
+          kind: 'topup',
+          provider: 'yookassa',
+          amountMinor: 5000,
+          forPlan: { planId: PLAN, kind: 'purchase' },
+        },
+        'key-both',
+      ),
+    ).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it('says how much is missing when the balance is short', async () => {
+    const { service, payments } = build({ balanceMinor: 10000n });
+    payments.createInvoice.mockRejectedValue(new PaymentError('INSUFFICIENT_FUNDS'));
+    await expect(
+      service.createInvoice(USER, { kind: 'purchase', planId: PLAN }, 'key-5'),
+    ).rejects.toMatchObject({
+      code: 'INSUFFICIENT_FUNDS',
+      response: { error: { details: { missingMinor: 19900 } } },
+    });
+  });
+
+  it('answers a purchase refused at a provider with 422', async () => {
+    const { service, payments } = build({ balanceMinor: 0n });
+    payments.createInvoice.mockRejectedValue(new PaymentError('BALANCE_ONLY'));
+    await expect(
+      service.createInvoice(
+        USER,
+        { kind: 'topup', provider: 'yookassa', forPlan: { planId: PLAN, kind: 'purchase' } },
+        'key-6',
+      ),
+    ).rejects.toMatchObject({ status: 422, code: 'BALANCE_ONLY' });
+  });
+
+  it('numbers the invoices behind the transactions', async () => {
+    const { service, db } = build();
+    db.transaction.findMany.mockResolvedValue([
+      {
+        id: 'tx-1',
+        type: 'topup',
+        amountMinor: 5000n,
+        currency: 'RUB',
+        provider: 'yookassa',
+        status: 'completed',
+        invoiceId: 'inv-1',
+        createdAt: new Date('2026-10-01T00:00:00.000Z'),
+        reason: null,
+      },
+      {
+        id: 'tx-0',
+        type: 'adjustment',
+        amountMinor: 100n,
+        currency: 'RUB',
+        provider: null,
+        status: 'completed',
+        invoiceId: null,
+        createdAt: new Date('2026-09-30T00:00:00.000Z'),
+        reason: 'gift',
+      },
+    ]);
+    db.invoice.findMany.mockResolvedValue([{ id: 'inv-1', number: '01-00001' }]);
+    const page = await service.transactions(USER, {});
+    expect(page.items.map((item) => item.invoiceNumber)).toEqual(['01-00001', null]);
+    expect(transactionsSchema.safeParse(page).success).toBe(true);
   });
 });

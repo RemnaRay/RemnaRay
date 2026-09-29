@@ -118,9 +118,9 @@ export class MeController {
     return this.me.cancelInvoice(this.userId(request), id);
   }
 
-  @Get('plan-change/quote')
+  @Get('checkout/quote')
   quote(@Req() request: AuthenticatedRequest, @Query() query: unknown) {
-    return this.me.planChangeQuote(this.userId(request), query);
+    return this.me.checkoutQuote(this.userId(request), query);
   }
 
   @Get('transactions')
@@ -253,9 +253,9 @@ export class InternalMeController {
     return this.me.cancelInvoice(await this.me.userIdForTelegram(actingUser), id);
   }
 
-  @Get('plan-change/quote')
+  @Get('checkout/quote')
   async quote(@Headers('x-acting-user') actingUser: string | undefined, @Query() query: unknown) {
-    return this.me.planChangeQuote(await this.me.userIdForTelegram(actingUser), query);
+    return this.me.checkoutQuote(await this.me.userIdForTelegram(actingUser), query);
   }
 
   @Get('transactions')
