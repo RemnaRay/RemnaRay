@@ -183,14 +183,47 @@ test(
 
       // A second top-up is no longer the first: nothing more.
       await topUp(referee.id, 29900n, 'ref-second');
-      // R135: the purchase from that balance is not a second source.
-      const bought = await payments.createInvoice({
-        userId: referee.id,
-        kind: 'purchase',
-        planId: plan.id,
-        provider: 'balance',
-        idempotencyKey: 'f37-buy',
+      // R135: the purchase from that balance is not a second source — so it
+      // does not wait for `referral_expense`, the one row every reward moves,
+      // which another transaction holds meanwhile.
+      let holdExpense = () => undefined;
+      const expenseHeld = new Promise((resolve) => {
+        holdExpense = resolve;
       });
+      let expenseLocked = () => undefined;
+      const locked = new Promise((resolve) => {
+        expenseLocked = resolve;
+      });
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM accounts WHERE kind = 'referral_expense' FOR UPDATE`;
+          expenseLocked();
+          await expenseHeld;
+        },
+        { timeout: 30_000 },
+      );
+      await locked;
+      let bought;
+      try {
+        bought = await Promise.race([
+          payments.createInvoice({
+            userId: referee.id,
+            kind: 'purchase',
+            planId: plan.id,
+            provider: 'balance',
+            idempotencyKey: 'f37-buy',
+          }),
+          delay(10_000, 'waited'),
+        ]);
+      } finally {
+        holdExpense();
+        await holder;
+      }
+      assert.notEqual(
+        bought,
+        'waited',
+        'the purchase from the balance waited for referral_expense',
+      );
       assert.equal(bought.status, 'paid');
       assert.equal(await rewardCount(referee.id), 1, 'only the first top-up accrues');
       assert.equal(await prisma.referralReward.count(), 1);
@@ -268,8 +301,8 @@ test(
       // Repair queue R16 (15.2): partial refunds reverse the reward in step —
       // 10 % of the source reverses 10 % of the reward and the reward stays
       // held; refunding the rest reverses the rest, and only then is it
-      // `reversed`. Under F37 a top-up source is never refunded, so this is
-      // the refund hook itself, as a refund of a source still calls it.
+      // `reversed`. Under F37 a top-up is never refunded, so the path stays
+      // live only for a reward written before F37 on a purchase.
       const partialReferrer = await prisma.user.create({
         data: { telegramId: 995000011n, language: 'ru', referralCode: 'PARTREF1' },
       });
@@ -285,8 +318,48 @@ test(
           status: 'pending',
         },
       });
+      // The money is an adjustment, not a top-up, so nothing accrues before
+      // the purchase.
+      await ledger.post({
+        userId: partialReferee.id,
+        type: 'adjustment',
+        amountMinor: 29900n,
+        currency: 'RUB',
+        debit: { kind: 'adjustment' },
+        credit: { kind: 'user', userId: partialReferee.id },
+        reason: 'test balance',
+      });
       const partialSource = await transactionOf(
-        await topUp(partialReferee.id, 29900n, 'ref-partial'),
+        await payments.createInvoice({
+          userId: partialReferee.id,
+          kind: 'purchase',
+          planId: plan.id,
+          provider: 'balance',
+          idempotencyKey: 'ref-partial',
+        }),
+      );
+      assert.equal(partialSource.type, 'purchase');
+      assert.equal(await rewardCount(partialReferee.id), 0);
+      // Fabricates a reward written before F37 on that purchase: the engine
+      // now takes only a top-up, so the source is passed as one. It posts
+      // through the engine, so the ledger stays consistent for the audit.
+      const { accrueReferralReward } =
+        await import('../apps/api/dist/modules/rewards/referrals.engine.js');
+      await prisma.$transaction(async (tx) =>
+        accrueReferralReward(
+          tx,
+          await rewards.config(),
+          { ...partialSource, type: 'topup' },
+          await rewards.trialLimits(),
+        ),
+      );
+      assert.equal(
+        (
+          await prisma.referralReward.findUniqueOrThrow({
+            where: { sourceTransactionId: partialSource.id },
+          })
+        ).amountMinor,
+        5980n,
       );
       const reversalsOf = async () =>
         (
@@ -295,9 +368,7 @@ test(
             orderBy: { id: 'asc' },
           })
         ).map((row) => row.amountMinor);
-      const refunded = (refundedMinor) =>
-        prisma.$transaction((tx) => rewards.onRefund(tx, partialSource, refundedMinor));
-      await refunded(2990n);
+      await payments.refund(partialSource.id, 2990n, 'partial');
       assert.deepEqual(await reversalsOf(), [598n]);
       assert.equal(
         (
@@ -307,7 +378,7 @@ test(
         ).status,
         'held',
       );
-      await refunded(29900n);
+      await payments.refund(partialSource.id, 26910n, 'the rest');
       assert.deepEqual(await reversalsOf(), [598n, 5382n]);
       const fullyReversed = await prisma.referralReward.findUniqueOrThrow({
         where: { sourceTransactionId: partialSource.id },
@@ -534,14 +605,19 @@ test(
       await prisma.$executeRawUnsafe(
         'ALTER TABLE invoices DISABLE TRIGGER invoices_provider_topup',
       );
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO invoices (id, user_id, kind, plan_id, provider, status, amount_minor, discount_minor, promocode_id, currency, idempotency_key, expires_at, provider_invoice_id)
-         VALUES (uuidv7(), $1::uuid, 'purchase', $2::uuid, 'mock', 'pending', 26910, 2990, $3::uuid, 'RUB', 'promo-abandoned', now() + interval '10 minutes', 'legacy-promo')`,
-        buyers[0].id,
-        plan.id,
-        expiring.id,
-      );
-      await prisma.$executeRawUnsafe('ALTER TABLE invoices ENABLE TRIGGER invoices_provider_topup');
+      try {
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO invoices (id, user_id, kind, plan_id, provider, status, amount_minor, discount_minor, promocode_id, currency, idempotency_key, expires_at, provider_invoice_id)
+           VALUES (uuidv7(), $1::uuid, 'purchase', $2::uuid, 'mock', 'pending', 26910, 2990, $3::uuid, 'RUB', 'promo-abandoned', now() + interval '10 minutes', 'legacy-promo')`,
+          buyers[0].id,
+          plan.id,
+          expiring.id,
+        );
+      } finally {
+        await prisma.$executeRawUnsafe(
+          'ALTER TABLE invoices ENABLE TRIGGER invoices_provider_topup',
+        );
+      }
       const abandoned = await prisma.invoice.findUniqueOrThrow({
         where: { idempotencyKey: 'promo-abandoned' },
       });

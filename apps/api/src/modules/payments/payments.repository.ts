@@ -342,7 +342,7 @@ export class PaymentsRepository {
     );
     const invoice = rows[0];
     if (!invoice || invoice.status !== 'pending') return;
-    await this.lockAccounts(tx, invoice.userId, { revenue: true });
+    await this.lockAccounts(tx, invoice.userId, { revenue: true, rewards: false });
     const accounts = await tx.$queryRaw<Array<{ id: string; kind: string; balance: bigint }>>(
       Prisma.sql`SELECT id, kind, balance_minor AS balance FROM accounts WHERE (kind = 'user'::account_kind AND user_id = ${invoice.userId}::uuid) OR kind = 'revenue'::account_kind ORDER BY id FOR UPDATE`,
     );
@@ -775,11 +775,14 @@ export class PaymentsRepository {
   private async lockAccounts(
     tx: Prisma.TransactionClient,
     userId: string,
-    options: { provider?: string; revenue: boolean },
+    options: { provider?: string; revenue: boolean; rewards?: boolean },
   ): Promise<void> {
     const users = [userId];
     const kinds: string[] = options.revenue ? ['revenue'] : [];
-    if (this.rewards) {
+    // The referrer and `referral_expense` are locked only where a reward can
+    // move (a top-up's accrual, a refund's reversal). F37: a purchase from the
+    // balance is no reward source, so it leaves the shared expense row alone.
+    if (this.rewards && options.rewards !== false) {
       const attribution = await tx.referralAttribution.findUnique({
         where: { refereeId: userId },
         select: { referrerId: true, status: true },
