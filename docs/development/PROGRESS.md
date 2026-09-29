@@ -1761,10 +1761,25 @@ is never read; `INSUFFICIENT_FUNDS` carries no amounts; the dashboard's
 «late payments» widget counts every invoice paid after its TTL;
 `SettingsService.importSnapshot` rejects a retired key.
 
-**Exact next:** F37 plan (`superpowers:writing-plans`) →
-`docs/superpowers/plans/2026-09-29-f37-balance-only-purchases.md` (local),
-recorded here; then implementation, one commit per plan task; then package 5.
-M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+**Plan approved by the owner (2026-09-29).** Kept locally, not tracked:
+`docs/superpowers/plans/2026-09-29-f37-balance-only-purchases.md`. Twelve
+tasks, one commit each: 1 provider minimums and self-employed receipts
+(contract verification) · 2 migration 0014 and the receipt template · 3
+top-up arithmetic and provider minimums · 4 numbered provider top-ups (Stars
+by the rate, Lava receipts) · 5 every provider payment tops the balance up ·
+6 referral rewards from top-ups only (R135, `count_topups` removed) · 7
+`GET /me/checkout/quote`, top-ups for a plan, FR-020 reuse · 8 the top-up
+notice's «Купить» button · 9 bot · 10 site (plan change on the site) · 11
+console (numbers, «Поступления»/«Продажи») · 12 docs, e2e, full verification,
+closure. Found while planning: the dashboard already excludes balance
+purchases (F31); the console plan form has no XTR field; the 15.4
+«topped up a minute before» flag was never implemented; the API requires a
+UUID Idempotency-Key, so the bot derives a stable UUID from
+chat:message:button. Execution: subagents, in waves of tasks whose files do
+not overlap (owner's instruction).
+
+**Exact next:** F37 implementation, Task 1 onwards; then package 5. M5 stays
+NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
