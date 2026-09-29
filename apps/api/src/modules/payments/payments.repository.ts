@@ -163,7 +163,8 @@ async function paymentSucceeded(
     amountMinor: minor(row.amountMinor),
     currency: row.currency,
     provider: row.provider,
-    planId: invoice.planId,
+    // A top-up bought nothing, even on an invoice written before F37 that names a plan.
+    planId: row.type === 'topup' ? null : invoice.planId,
   });
 }
 
@@ -229,6 +230,9 @@ export class PaymentsRepository {
         return created;
       });
       invoicesTotal.inc({ provider: input.provider, status: 'paid' });
+      // F37: the one entry that moves money into `revenue` (section 12.2) —
+      // every sale is a purchase from the balance — counted once it commits.
+      revenueMinorTotal.inc({ provider: 'balance' }, Number(input.amountMinor));
       return invoice;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
@@ -383,9 +387,6 @@ export class PaymentsRepository {
       where: { id: revenue.id },
       data: { balanceMinor: { increment: invoice.amountMinor } },
     });
-    // F37: the one entry that moves money into `revenue` (section 12.2) —
-    // every sale is a purchase from the balance.
-    revenueMinorTotal.inc({ provider: 'balance' }, Number(invoice.amountMinor));
     await tx.invoice.update({
       where: { id: invoice.id },
       data: { status: 'paid', paidAt: new Date() },
@@ -529,6 +530,7 @@ export class PaymentsRepository {
         WHERE id = ${event.id}::uuid FOR UPDATE
       `);
         if (eventRows[0]?.processedAt) return;
+        let processError: string | null = null;
         const invoiceRows = await tx.$queryRaw<
           Array<{
             id: string;
@@ -562,10 +564,25 @@ export class PaymentsRepository {
         const settled = invoice.status === 'paid' || invoice.status === 'underpaid';
         if (event.type === 'paid' && settled && invoice.provider === 'stars')
           await this.creditSecondCharge(tx, event.id, invoice, parsed.paidAmountMinorRub);
-        if (event.type === 'paid' && !settled) {
-          const paid = parsed.paidAmountMinorRub
+        const paid =
+          event.type === 'paid' && !settled && parsed.paidAmountMinorRub
             ? BigInt(parsed.paidAmountMinorRub)
             : invoice.amountMinor;
+        // EX-12: a `paid` event that reports nothing paid moves no money and
+        // leaves the invoice as it is; the administrators look into it. An
+        // event with no amount at all still means paid in full.
+        if (event.type === 'paid' && !settled && paid <= 0n) {
+          processError = 'PAID_ZERO';
+          await tx.outboxJob.create({
+            data: {
+              queue: 'notify',
+              name: 'notify.alert',
+              payload: { type: 'payment.underpaid', details: invoice.id },
+              jobId: `alert:payment.underpaid:${event.id}`,
+            },
+          });
+        }
+        if (event.type === 'paid' && !settled && paid > 0n) {
           const underpaid = paid * 100n < invoice.amountMinor * 98n;
           // F37 (ADR-021): a provider invoice is a top-up. Money that arrives
           // for it — in time, late (EX-02), after a cancel, for a plan taken
@@ -578,7 +595,7 @@ export class PaymentsRepository {
           // Section 11.2 (L-11): within the tolerance or above the invoice the
           // credit is the invoice amount; an underpayment (EX-12) credits what
           // was actually paid.
-          const credit = underpaid && paid > 0n ? paid : invoice.amountMinor;
+          const credit = underpaid ? paid : invoice.amountMinor;
           await tx.invoice.update({
             where: { id: invoice.id },
             data: { status: underpaid ? 'underpaid' : 'paid', paidAt: new Date() },
@@ -635,7 +652,9 @@ export class PaymentsRepository {
           });
         }
         await tx.$executeRaw(Prisma.sql`
-        UPDATE payment_events SET processed_at = now() WHERE id = ${event.id}::uuid
+        UPDATE payment_events
+        SET processed_at = now(), process_error = COALESCE(${processError}, process_error)
+        WHERE id = ${event.id}::uuid
       `);
       })
       .then(

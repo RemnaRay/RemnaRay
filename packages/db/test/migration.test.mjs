@@ -148,7 +148,16 @@ test('provider invoices are numbered top-ups with a purpose (F37, ADR-021)', asy
     sql,
     /CREATE UNIQUE INDEX ux_invoices_number ON invoices \(number\) WHERE number IS NOT NULL;/,
   );
-  assert.match(sql, /CHECK \(provider = 'balance' OR kind = 'topup'\) NOT VALID/);
+  // A trigger on INSERT: a NOT VALID CHECK would refuse every UPDATE of an old
+  // provider purchase (paid, expired).
+  assert.doesNotMatch(sql, /ck_invoices_provider_topup/);
+  assert.match(sql, /IF NEW\.provider <> 'balance' AND NEW\.kind <> 'topup' THEN/);
+  assert.match(
+    sql,
+    /CREATE TRIGGER invoices_provider_topup BEFORE INSERT ON invoices\s+FOR EACH ROW EXECUTE FUNCTION invoices_provider_topup\(\);/,
+  );
+  assert.doesNotMatch(sql, /BEFORE INSERT OR UPDATE ON invoices/);
+  assert.match(sql, /ADD CONSTRAINT ck_invoices_target/);
   assert.match(sql, /CREATE TABLE invoice_counters/);
   assert.match(sql, /DELETE FROM settings WHERE key = 'referral.count_topups';/);
   assert.match(schema, /number\s+String\?\s+@unique/);

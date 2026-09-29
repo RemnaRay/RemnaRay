@@ -8,7 +8,8 @@ import { PostgreSqlContainer } from '@testcontainers/postgresql';
 /**
  * Migration 0014 on a real PostgreSQL (F37, ADR-021): the receipt template
  * moves to the numbered top-up line unless the owner edited it, the stored
- * `referral.count_topups` is dropped, and the CHECKs hold for new rows.
+ * `referral.count_topups` is dropped, new provider invoices are top-ups only,
+ * and a provider purchase written before F37 can still be paid or expired.
  */
 test(
   'M1 migration 0014 numbers top-ups, moves the receipt template and guards invoices',
@@ -64,7 +65,7 @@ test(
       await run();
       assert.equal(await template(), '{brand}: пополнение (#{number})');
 
-      // The CHECKs hold for new rows.
+      // The trigger and the target CHECK hold for new rows.
       const user = await prisma.user.create({
         data: { telegramId: 991400001n, language: 'ru', referralCode: 'M1F37001' },
       });
@@ -74,7 +75,7 @@ test(
            VALUES ($1::uuid, 'purchase', 'yookassa', 'pending', 100, 'RUB', 'f37-a', now())`,
           user.id,
         ),
-        /ck_invoices_provider_topup/,
+        /invoices_provider_topup: a provider invoice is a top-up \(F37\)/,
       );
       await assert.rejects(
         prisma.$executeRawUnsafe(
@@ -83,6 +84,38 @@ test(
           user.id,
         ),
         /ck_invoices_target/,
+      );
+
+      // A provider purchase written before F37 (inserted with the trigger off,
+      // as the row already existed) can still be paid, and expired — a NOT
+      // VALID CHECK would have refused both UPDATEs.
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE invoices DISABLE TRIGGER invoices_provider_topup',
+      );
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO invoices (user_id, kind, provider, status, amount_minor, currency, idempotency_key, expires_at)
+         VALUES ($1::uuid, 'purchase', 'yookassa', 'pending', 100, 'RUB', 'f37-old-paid', now()),
+                ($1::uuid, 'plan_change', 'yookassa', 'pending', 100, 'RUB', 'f37-old-expired', now() - interval '1 minute')`,
+        user.id,
+      );
+      await prisma.$executeRawUnsafe('ALTER TABLE invoices ENABLE TRIGGER invoices_provider_topup');
+      await prisma.$executeRawUnsafe(
+        `UPDATE invoices SET status = 'paid', paid_at = now() WHERE idempotency_key = 'f37-old-paid'`,
+      );
+      await prisma.$executeRawUnsafe(
+        `UPDATE invoices SET status = 'expired' WHERE status = 'pending' AND expires_at < now()`,
+      );
+      assert.deepEqual(
+        (
+          await prisma.invoice.findMany({
+            where: { idempotencyKey: { in: ['f37-old-paid', 'f37-old-expired'] } },
+            orderBy: { idempotencyKey: 'asc' },
+          })
+        ).map((row) => [row.idempotencyKey, row.status]),
+        [
+          ['f37-old-expired', 'expired'],
+          ['f37-old-paid', 'paid'],
+        ],
       );
     } finally {
       await prisma?.$disconnect();

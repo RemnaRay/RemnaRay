@@ -752,11 +752,11 @@ test(
       );
 
       // An invoice written before F37 (kind=purchase at a provider) that is
-      // paid now goes to the balance too. The CHECK of 0014 refuses such a new
-      // row, so the case lifts it for the one insert — it proves the pipeline,
-      // not the constraint.
+      // paid now goes to the balance too. The trigger of 0014 refuses such a
+      // new row, so the case turns it off for the one insert — it proves the
+      // pipeline, not the guard; the UPDATE of the payment is never refused.
       await prisma.$executeRawUnsafe(
-        'ALTER TABLE invoices DROP CONSTRAINT ck_invoices_provider_topup',
+        'ALTER TABLE invoices DISABLE TRIGGER invoices_provider_topup',
       );
       await prisma.$executeRawUnsafe(
         `INSERT INTO invoices (id, user_id, kind, plan_id, provider, status, amount_minor, currency, idempotency_key, expires_at, provider_invoice_id)
@@ -764,9 +764,7 @@ test(
         user.id,
         plan.id,
       );
-      await prisma.$executeRawUnsafe(
-        `ALTER TABLE invoices ADD CONSTRAINT ck_invoices_provider_topup CHECK (provider = 'balance' OR kind = 'topup') NOT VALID`,
-      );
+      await prisma.$executeRawUnsafe('ALTER TABLE invoices ENABLE TRIGGER invoices_provider_topup');
       const legacy = await prisma.invoice.findUnique({ where: { idempotencyKey: 'm2-legacy' } });
       const beforeLegacy = await balanceOf(user.id);
       const subscriptionsBeforeLegacy = await prisma.subscription.findMany({

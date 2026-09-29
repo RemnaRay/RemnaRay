@@ -16,5 +16,7 @@ stopped its self-employed services on 29 December 2025 — receipts for
 self-employed sellers on payments and refunds, and payouts to them
 ([changelog, 23 December 2025](https://yookassa.ru/developers/using-api/changelog));
 the former self-employed receipts page now redirects there. A `receipt` object
-still registers a 54-FZ receipt (item name `receipt.items[].description`), but
-YooKassa no longer produces a НПД receipt in «Мой налог».
+still registers a 54-FZ receipt (item name `receipt.items[].description`, also
+up to 128 characters), but YooKassa no longer produces a НПД receipt in «Мой
+налог». RemnaRay cuts both `description` and `receipt.items[].description` to
+128 characters (counted as characters, not UTF-16 units) before sending them.

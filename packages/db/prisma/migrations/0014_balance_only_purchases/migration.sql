@@ -11,11 +11,25 @@ ALTER TABLE invoices
 
 CREATE UNIQUE INDEX ux_invoices_number ON invoices (number) WHERE number IS NOT NULL;
 
+-- A trigger on INSERT, not a CHECK: PostgreSQL checks a NOT VALID CHECK on
+-- every UPDATE of an old row too, so a provider purchase written before F37
+-- could never be paid or expired — and the expiry cron's one UPDATE would fail
+-- for every invoice while such a row is pending. Only new rows are refused.
+CREATE OR REPLACE FUNCTION invoices_provider_topup() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.provider <> 'balance' AND NEW.kind <> 'topup' THEN
+    RAISE EXCEPTION 'invoices_provider_topup: a provider invoice is a top-up (F37)'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'invoices_provider_topup';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER invoices_provider_topup BEFORE INSERT ON invoices
+  FOR EACH ROW EXECUTE FUNCTION invoices_provider_topup();
+
 -- NOT VALID: new rows are checked; rows written before F37 do not fail the
--- migration (the stand is recreated anyway, О-20).
-ALTER TABLE invoices
-  ADD CONSTRAINT ck_invoices_provider_topup
-    CHECK (provider = 'balance' OR kind = 'topup') NOT VALID;
+-- migration (the stand is recreated anyway, О-20). An old row has no target
+-- and passes it on UPDATE.
 ALTER TABLE invoices
   ADD CONSTRAINT ck_invoices_target
     CHECK (
