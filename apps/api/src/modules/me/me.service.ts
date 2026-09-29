@@ -297,16 +297,23 @@ export class MeService {
         ? []
         : methods.items
             .filter((item) => item.available && item.kind !== 'balance')
-            .map((item) => ({
-              provider: item.code,
-              amountMinor: Number(
-                topupAmount({
-                  shortMinor: quote.topupBaseMinor,
-                  topupMinMinor: minMinor,
-                  providerMinMinor: this.payments.minimumMinor(item.code),
-                }),
-              ),
-            }));
+            .flatMap((item) => {
+              const providerMin = this.providerMinimum(item.code);
+              return providerMin === null
+                ? []
+                : [
+                    {
+                      provider: item.code,
+                      amountMinor: Number(
+                        topupAmount({
+                          shortMinor: quote.topupBaseMinor,
+                          topupMinMinor: minMinor,
+                          providerMinMinor: providerMin,
+                        }),
+                      ),
+                    },
+                  ];
+            });
     return {
       planId: input.planId,
       kind: input.kind,
@@ -319,6 +326,20 @@ export class MeService {
       topups,
       promocode: quote.promocode,
     };
+  }
+
+  /**
+   * A provider's smallest invoice, or `null` for an enabled row the registry
+   * has no implementation for (a `mock` row with the mock off): such a row is
+   * never offered, and must not take the whole quote down with it.
+   */
+  private providerMinimum(code: string): bigint | null {
+    try {
+      return this.payments.minimumMinor(code);
+    } catch (error) {
+      if (error instanceof PaymentError && error.code === 'PAYMENT_PROVIDER_NOT_FOUND') return null;
+      throw error;
+    }
   }
 
   /**
@@ -463,13 +484,23 @@ export class MeService {
         input.kind !== 'topup' &&
         input.planId
       ) {
-        const quote = await this.quote(userId, {
-          planId: input.planId,
-          kind: input.kind,
-          ...(input.promocode ? { promocode: input.promocode } : {}),
-        }).catch(() => null);
+        // A purchase the quote refuses (the plan or the subscription changed
+        // meanwhile) is answered with that refusal; a quote that fails
+        // otherwise leaves the shortage without an amount, never a wrong one.
+        let missing: bigint;
+        try {
+          const quote = await this.quote(userId, {
+            planId: input.planId,
+            kind: input.kind,
+            ...(input.promocode ? { promocode: input.promocode } : {}),
+          });
+          missing = quote.missingMinor;
+        } catch (quoteError) {
+          if (quoteError instanceof ApiError) throw quoteError;
+          throw new ApiError('INSUFFICIENT_FUNDS', HttpStatus.CONFLICT);
+        }
         throw new ApiError('INSUFFICIENT_FUNDS', HttpStatus.CONFLICT, undefined, {
-          missingMinor: Number(quote?.missingMinor ?? 0n),
+          missingMinor: Number(missing),
         });
       }
       throw this.paymentFailure(error);
@@ -485,13 +516,17 @@ export class MeService {
   private async createTopupForPlan(
     userId: string,
     provider: string,
-    purpose: { planId: string; kind: 'purchase' | 'plan_change'; promocode?: string | undefined },
+    requested: { planId: string; kind: 'purchase' | 'plan_change'; promocode?: string | undefined },
     key: string,
   ) {
+    // `sale20` and `SALE20` are one purpose: the replay, the FR-020 reuse and
+    // the stored `target_promocode` all see the trimmed upper-case code.
+    const promocode = requested.promocode?.trim().toUpperCase() || undefined;
+    const purpose = { planId: requested.planId, kind: requested.kind, promocode };
     const target = {
       planId: purpose.planId,
       kind: purpose.kind,
-      ...(purpose.promocode ? { promocode: purpose.promocode } : {}),
+      ...(promocode ? { promocode } : {}),
     };
     const request = { userId, kind: 'topup' as const, provider, idempotencyKey: key, target };
     try {
@@ -918,6 +953,9 @@ export class MeService {
 
   private paymentFailure(error: unknown): unknown {
     if (error instanceof ApiError) return error;
+    // A provider without an implementation is, to the customer, unavailable.
+    if (error instanceof PaymentError && error.code === 'PAYMENT_PROVIDER_NOT_FOUND')
+      return new ApiError('PROVIDER_UNAVAILABLE', HttpStatus.CONFLICT);
     if (error instanceof PaymentError) {
       // F37: a purchase at a provider (`BALANCE_ONLY`) is a request never accepted, 422.
       const status =

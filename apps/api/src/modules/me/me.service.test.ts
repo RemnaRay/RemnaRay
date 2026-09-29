@@ -509,6 +509,8 @@ function build(
     subscription?: { planId: string; expiresAt: Date; status: string };
     promocode?: Record<string, unknown> | null;
     pendingTopup?: Record<string, unknown>;
+    /** Enabled, healthy `payment_providers` rows beyond the two registered ones. */
+    extraProviders?: string[];
   } = {},
 ) {
   const target = { ...plan, ...(options.plan ?? {}), id: PLAN };
@@ -541,6 +543,11 @@ function build(
       findMany: vi.fn().mockResolvedValue([
         { code: 'yookassa', displayName: { ru: 'ЮKassa' }, lastHealthcheckOk: true },
         { code: 'platega', displayName: { ru: 'Platega' }, lastHealthcheckOk: true },
+        ...(options.extraProviders ?? []).map((code) => ({
+          code,
+          displayName: { ru: code },
+          lastHealthcheckOk: true,
+        })),
       ]),
     },
     invoice: {
@@ -556,7 +563,12 @@ function build(
     },
   };
   const payments = {
-    minimumMinor: vi.fn((code: string) => (code === 'yookassa' ? 100n : 10000n)),
+    // As the registry: a provider without an implementation is unknown to it.
+    minimumMinor: vi.fn((code: string) => {
+      if (code === 'yookassa') return 100n;
+      if (code === 'platega') return 10000n;
+      throw new PaymentError('PAYMENT_PROVIDER_NOT_FOUND');
+    }),
     createInvoice: vi.fn(
       (request: { kind: string; provider: string; amountMinor?: bigint; target?: unknown }) =>
         Promise.resolve(
@@ -629,6 +641,44 @@ describe('checkout quote (F37)', () => {
     }
   });
 
+  it('leaves out an enabled provider the registry does not know', async () => {
+    const { service } = build({ balanceMinor: 29600n, extraProviders: ['ghost'] });
+    const quote = await service.checkoutQuote(USER, { planId: PLAN, kind: 'purchase' });
+    expect(quote.topups.map((item) => item.provider)).toEqual(['yookassa', 'platega']);
+  });
+
+  it('refuses a plan change without an active subscription', async () => {
+    const { service } = build({ balanceMinor: 0n });
+    await expect(
+      service.checkoutQuote(USER, { planId: PLAN, kind: 'plan_change' }),
+    ).rejects.toMatchObject({ status: 409, code: 'PLAN_CHANGE_NOT_ALLOWED' });
+  });
+
+  it('refuses a plan change of an expired subscription', async () => {
+    const { service } = build({
+      balanceMinor: 0n,
+      subscription: { planId: OLD_PLAN, expiresAt: new Date(Date.now() - 1000), status: 'active' },
+      oldPlan: { id: OLD_PLAN, priceMinor: 29900n, durationDays: 30 },
+    });
+    await expect(
+      service.checkoutQuote(USER, { planId: PLAN, kind: 'plan_change' }),
+    ).rejects.toMatchObject({ status: 409, code: 'PLAN_CHANGE_NOT_ALLOWED' });
+  });
+
+  it('refuses a plan change to the same plan (О-3)', async () => {
+    const { service } = build({
+      balanceMinor: 0n,
+      subscription: {
+        planId: PLAN,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        status: 'active',
+      },
+    });
+    await expect(
+      service.checkoutQuote(USER, { planId: PLAN, kind: 'plan_change' }),
+    ).rejects.toMatchObject({ status: 409, code: 'PLAN_CHANGE_NOT_ALLOWED' });
+  });
+
   it('answers a refused promocode without its discount', async () => {
     const { service } = build({ balanceMinor: 0n, promocode: null });
     const quote = await service.checkoutQuote(USER, {
@@ -676,6 +726,37 @@ describe('top-up for a plan (F37)', () => {
     );
     expect(payments.createInvoice.mock.calls[0]?.[0]).not.toHaveProperty('promocodeRedemptionId');
     expect(db.promocodeRedemption.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a top-up at a provider the registry does not know', async () => {
+    const { service, payments } = build({ balanceMinor: 0n, extraProviders: ['ghost'] });
+    await expect(
+      service.createInvoice(
+        USER,
+        { kind: 'topup', provider: 'ghost', forPlan: { planId: PLAN, kind: 'purchase' } },
+        'key-ghost',
+      ),
+    ).rejects.toMatchObject({ status: 409, code: 'PROVIDER_UNAVAILABLE' });
+    expect(payments.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('keeps one purpose for a promocode however it is typed', async () => {
+    const { service, payments, db } = build({ balanceMinor: 0n });
+    await service.createInvoice(
+      USER,
+      {
+        kind: 'topup',
+        provider: 'yookassa',
+        forPlan: { planId: PLAN, kind: 'purchase', promocode: ' sale20 ' },
+      },
+      'key-case',
+    );
+    const target = { planId: PLAN, kind: 'purchase', promocode: 'SALE20' };
+    expect(payments.replay).toHaveBeenCalledWith(expect.objectContaining({ target }));
+    expect(db.invoice.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      where: { targetPromocode: 'SALE20' },
+    });
+    expect(payments.createInvoice).toHaveBeenCalledWith(expect.objectContaining({ target }));
   });
 
   it('refuses a top-up the balance does not need', async () => {
@@ -754,7 +835,26 @@ describe('top-up for a plan (F37)', () => {
     });
   });
 
-  it('answers a purchase refused at a provider with 422', async () => {
+  it('answers the quote refusal, not a shortage, when the purchase cannot be quoted', async () => {
+    const { service, payments } = build({ balanceMinor: 0n });
+    payments.createInvoice.mockRejectedValue(new PaymentError('INSUFFICIENT_FUNDS'));
+    await expect(
+      service.createInvoice(USER, { kind: 'plan_change', planId: PLAN }, 'key-7'),
+    ).rejects.toMatchObject({ status: 409, code: 'PLAN_CHANGE_NOT_ALLOWED' });
+  });
+
+  it('answers a shortage without details when the quote itself fails', async () => {
+    const { service, payments, db } = build({ balanceMinor: 0n });
+    payments.createInvoice.mockRejectedValue(new PaymentError('INSUFFICIENT_FUNDS'));
+    db.$queryRaw.mockRejectedValue(new Error('database gone'));
+    const error = await service
+      .createInvoice(USER, { kind: 'purchase', planId: PLAN }, 'key-8')
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ status: 409, code: 'INSUFFICIENT_FUNDS' });
+    expect((error as { response: { error: object } }).response.error).not.toHaveProperty('details');
+  });
+
+  it('maps a BALANCE_ONLY refusal from the payments core to 422 (fallback)', async () => {
     const { service, payments } = build({ balanceMinor: 0n });
     payments.createInvoice.mockRejectedValue(new PaymentError('BALANCE_ONLY'));
     await expect(
