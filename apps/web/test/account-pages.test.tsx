@@ -11,7 +11,7 @@ vi.mock('../i18n/navigation', () => ({
   getPathname: () => '/account',
 }));
 
-const { renderPage } = await import('../test-utils/render-page');
+const { mountPage, renderPage } = await import('../test-utils/render-page');
 const SubscriptionClient = (await import('../app/[locale]/account/subscription-client')).default;
 const PlansClient = (await import('../app/[locale]/account/plans/plans-client')).default;
 const BalanceClient = (await import('../app/[locale]/account/balance/balance-client')).default;
@@ -395,5 +395,82 @@ describe('buying from the balance (F37)', () => {
     expect(markup).not.toContain('Месяц');
     expect(markup).toContain('Зачёт за остаток текущего тарифа: 100');
     expect(markup).toContain('Сменить за 199');
+  });
+
+  const buttonNamed = (container: HTMLElement, text: string) =>
+    [...container.querySelectorAll('button')].find((button) => button.textContent.includes(text));
+
+  it('does not send a promocode the quote refused with the purchase', async () => {
+    const page = await mountPage(PlansClientSelected, {
+      '/api/v1/public/plans': { body: plans },
+      '/api/v1/me/promocodes/preview': {
+        status: 404,
+        body: { error: { code: 'PROMO_NOT_FOUND', requestId: 'req-1' } },
+      },
+      '/api/v1/me/checkout/quote': {
+        body: quote({ promocode: { code: 'NOPE', applied: false, error: 'PROMO_NOT_FOUND' } }),
+      },
+      '/api/v1/me/payment-methods': { body: { items: [] } },
+      '/api/v1/me/invoices': { status: 409, body: { error: { code: 'INSUFFICIENT_FUNDS' } } },
+    });
+    try {
+      await page.type(page.container.querySelector('#promocode'), 'nope');
+      await page.click(buttonNamed(page.container, 'Применить'));
+      const quoted = page.requests.filter((item) => item.path === '/api/v1/me/checkout/quote');
+      expect(quoted.at(-1)?.query.get('promocode')).toBe('NOPE');
+      await page.click(buttonNamed(page.container, 'Купить с баланса'));
+      const bought = page.requests.find((item) => item.path === '/api/v1/me/invoices');
+      expect(bought?.body).toEqual({ kind: 'purchase', planId: 'p1' });
+    } finally {
+      await page.unmount();
+    }
+  });
+
+  it('sends a promocode the quote applied with the purchase', async () => {
+    const page = await mountPage(PlansClientSelected, {
+      '/api/v1/public/plans': { body: plans },
+      '/api/v1/me/promocodes/preview': { body: { discountMinor: 5980, finalMinor: 23920 } },
+      '/api/v1/me/checkout/quote': {
+        body: quote({
+          discountMinor: 5980,
+          toPayMinor: 23920,
+          promocode: { code: 'SALE20', applied: true },
+        }),
+      },
+      '/api/v1/me/payment-methods': { body: { items: [] } },
+      '/api/v1/me/invoices': { status: 409, body: { error: { code: 'INSUFFICIENT_FUNDS' } } },
+    });
+    try {
+      await page.type(page.container.querySelector('#promocode'), 'sale20');
+      await page.click(buttonNamed(page.container, 'Применить'));
+      await page.click(buttonNamed(page.container, 'Купить с баланса'));
+      const bought = page.requests.find((item) => item.path === '/api/v1/me/invoices');
+      expect(bought?.body).toEqual({ kind: 'purchase', planId: 'p1', promocode: 'SALE20' });
+    } finally {
+      await page.unmount();
+    }
+  });
+
+  it('applies a trimmed promocode, and none shorter than three characters', async () => {
+    const page = await mountPage(PlansClientSelected, {
+      '/api/v1/public/plans': { body: plans },
+      '/api/v1/me/promocodes/preview': { body: { discountMinor: 5980, finalMinor: 23920 } },
+      '/api/v1/me/checkout/quote': { body: quote() },
+      '/api/v1/me/payment-methods': { body: { items: [] } },
+    });
+    try {
+      const input = page.container.querySelector('#promocode');
+      await page.type(input, ' ab ');
+      expect(buttonNamed(page.container, 'Применить')?.hasAttribute('disabled')).toBe(true);
+      await page.type(input, '  sale20 ');
+      await page.click(buttonNamed(page.container, 'Применить'));
+      const previewed = page.requests.find((item) => item.path === '/api/v1/me/promocodes/preview');
+      expect(previewed?.body).toEqual({ code: 'SALE20', planId: 'p1' });
+      const quoted = page.requests.filter((item) => item.path === '/api/v1/me/checkout/quote');
+      expect(quoted.at(-1)?.query.get('promocode')).toBe('SALE20');
+      expect(page.container.querySelector('[data-testid="checkout"]')).not.toBeNull();
+    } finally {
+      await page.unmount();
+    }
   });
 });

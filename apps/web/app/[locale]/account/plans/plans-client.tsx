@@ -31,6 +31,9 @@ import { Empty, ResourceSection, useErrorMessage } from '../states';
 
 type Catalog = { plans: PlanPublicView[] };
 
+/** The shortest code the API accepts (`me.schemas.ts`). */
+const PROMOCODE_MIN_LENGTH = 3;
+
 export default function PlansClient({
   locale,
   change = false,
@@ -46,6 +49,8 @@ export default function PlansClient({
   const router = useRouter();
   const [selectedId, setSelectedId] = useState(initialPlanId ?? '');
   const [promocode, setPromocode] = useState('');
+  // What «Применить» applies: the API takes a code of three characters or more.
+  const code = promocode.trim();
   // The code the customer confirmed with «Применить»: the checkout quotes with it.
   const [applied, setApplied] = useState('');
   // Per plan: the discounted price, or the code the API refused it with.
@@ -76,7 +81,7 @@ export default function PlansClient({
       void Promise.allSettled(
         planIds.map((planId) =>
           api.send('POST', 'api/v1/me/promocodes/preview', promocodePreviewSchema, {
-            code: promocode,
+            code,
             planId,
           }),
         ),
@@ -104,7 +109,7 @@ export default function PlansClient({
           setPending(false);
         });
     },
-    [message, promocode, t, toast],
+    [code, message, t, toast],
   );
 
   return (
@@ -137,10 +142,10 @@ export default function PlansClient({
                   />
                 </div>
                 <Button
-                  disabled={pending || !promocode.trim()}
+                  disabled={pending || code.length < PROMOCODE_MIN_LENGTH}
                   variant="secondary"
                   onClick={() => {
-                    setApplied(promocode);
+                    setApplied(code);
                     applyPromocode(data.plans.map((plan) => plan.id));
                   }}
                 >

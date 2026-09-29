@@ -8,7 +8,7 @@ vi.mock('../i18n/navigation', () => ({
   getPathname: () => '/pay/inv-1',
 }));
 
-const { renderPage } = await import('../test-utils/render-page');
+const { mountPage, renderPage } = await import('../test-utils/render-page');
 const PayStatus = (await import('../app/[locale]/pay/[invoiceId]/pay-status')).default;
 
 function invoice(overrides: Record<string, unknown> = {}) {
@@ -143,5 +143,55 @@ describe('FR-134 / AC-134: payment page', () => {
     expect(markup).toContain('Баланс пополнен');
     expect(markup).toContain('Перейти к балансу');
     expect(markup).not.toContain('Перейти к подписке');
+  });
+
+  // The code comes from the paid top-up's purpose; the fresh quote may refuse it by now.
+  it('buys without the promocode the fresh quote refused (F37)', async () => {
+    const page = await mountPage(
+      ({ locale }: { locale: 'ru' }) => (
+        <PayStatus botUsername="manta_bot" invoiceId="inv-1" locale={locale} />
+      ),
+      {
+        '/api/v1/me/invoices/inv-1': {
+          body: invoice({
+            kind: 'topup',
+            status: 'paid',
+            terminal: true,
+            number: '01-00001',
+            target: { planId: 'p1', planSlug: 'month', kind: 'purchase', promocode: 'SALE20' },
+          }),
+        },
+        '/api/v1/me/checkout/quote': {
+          body: {
+            planId: 'p1',
+            kind: 'purchase',
+            priceMinor: 29900,
+            discountMinor: 0,
+            creditMinor: 0,
+            toPayMinor: 29900,
+            availableMinor: 29900,
+            missingMinor: 0,
+            topups: [],
+            promocode: { code: 'SALE20', applied: false, error: 'PROMO_EXHAUSTED' },
+          },
+        },
+        '/api/v1/me/payment-methods': { body: { items: [] } },
+        '/api/v1/me/invoices': { status: 409, body: { error: { code: 'INSUFFICIENT_FUNDS' } } },
+      },
+    );
+    try {
+      const quoted = page.requests.find((item) => item.path === '/api/v1/me/checkout/quote');
+      expect(quoted?.query.get('promocode')).toBe('SALE20');
+      const buy = [...page.container.querySelectorAll('button')].find((button) =>
+        button.textContent.includes('Купить с баланса'),
+      );
+      await page.click(buy);
+      const bought = page.requests.find(
+        (item) => item.path === '/api/v1/me/invoices' && item.method === 'POST',
+      );
+      expect(bought?.body).toEqual({ kind: 'purchase', planId: 'p1' });
+    } finally {
+      await page.unmount();
+    }
   });
 });

@@ -57,6 +57,9 @@ export function CheckoutPanel({ locale, planId, kind, promocode, onBought }: Pro
   const quoted = resource.state.status === 'ready' ? resource.state.data.quote : null;
   const quotedToPay = quoted?.toPayMinor;
   const quotedAvailable = quoted?.availableMinor;
+  // A code the quote refused is not sent with the purchase: the server would
+  // refuse the whole purchase, and the customer could not buy at all.
+  const buyPromocode = quoted?.promocode?.applied ? promocode : '';
   const buyKey = useMemo(
     () => (quotedToPay === undefined ? '' : crypto.randomUUID()),
     // The body follows planId, kind and promocode: a changed input is a new key.
@@ -78,7 +81,7 @@ export function CheckoutPanel({ locale, planId, kind, promocode, onBought }: Pro
         'POST',
         'api/v1/me/invoices',
         invoiceSchema,
-        { kind, planId, ...(promocode ? { promocode } : {}) },
+        { kind, planId, ...(buyPromocode ? { promocode: buyPromocode } : {}) },
         { headers: { 'idempotency-key': buyKey } },
       )
       .then(() => {
@@ -88,7 +91,7 @@ export function CheckoutPanel({ locale, planId, kind, promocode, onBought }: Pro
       .finally(() => {
         setPending(false);
       });
-  }, [buyKey, fail, kind, onBought, planId, promocode]);
+  }, [buyKey, buyPromocode, fail, kind, onBought, planId]);
 
   const topUp = useCallback(
     (provider: string) => {
