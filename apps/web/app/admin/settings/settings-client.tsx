@@ -200,6 +200,11 @@ export default function SettingsAdminClient() {
                             {key === 'locale.timezone' ? (
                               <TimeZoneOptions id="admin-time-zones" />
                             ) : null}
+                            {key === 'fiscal.item_name_template' ? (
+                              <span className="text-xs text-muted-foreground">
+                                {t('settings.itemNameTemplateHint')}
+                              </span>
+                            ) : null}
                             {property['x-secret'] ? (
                               <span className="text-xs text-muted-foreground">
                                 {isSet(data.values[key])

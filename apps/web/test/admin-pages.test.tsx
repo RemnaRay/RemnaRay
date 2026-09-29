@@ -285,4 +285,34 @@ describe('admin pages', () => {
     expect(markup).not.toContain('[object Object]');
     expect(markup).toContain('Outgoing webhook destinations.');
   });
+
+  it('explains the receipt template under its field (F37, spec §10)', async () => {
+    const markup = await render(SettingsClient, {
+      '/api/admin/v1/auth/me': session('admin'),
+      '/api/admin/v1/settings/schema': {
+        body: {
+          version: 1,
+          type: 'object',
+          properties: {
+            'fiscal.item_name_template': {
+              title: 'item_name_template',
+              description:
+                'Top-up receipt line and payment description; placeholders {number}, {brand}.',
+              default: 'Пополнение баланса (#{number})',
+              'x-secret': false,
+            },
+          },
+        },
+      },
+      '/api/admin/v1/settings': {
+        body: { 'fiscal.item_name_template': 'Пополнение баланса (#{number})' },
+      },
+      '/api/admin/v1/providers': { body: { items: [] } },
+      '/api/admin/v1/themes': { body: { items: [], active: 'default' } },
+    });
+
+    expect(markup).toContain(
+      'Строка чека и описание платежа при пополнении. Подстановки: {number} — номер счёта, {brand} — название магазина.',
+    );
+  });
 });

@@ -239,6 +239,7 @@
   "admin.settings.value": "Значение",
   "admin.settings.secretSet": "Задан",
   "admin.settings.secretUnset": "Не задан",
+  "admin.settings.itemNameTemplateHint": "Строка чека и описание платежа при пополнении. Подстановки: '{number}' — номер счёта, '{brand}' — название магазина.",
   "admin.settings.save": "Сохранить",
   "admin.settings.applied": "Применено ключей: {count}",
   "admin.settings.reconfigured": "Перенастроено: {channels}",

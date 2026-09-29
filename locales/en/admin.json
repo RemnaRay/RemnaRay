@@ -239,6 +239,7 @@
   "admin.settings.value": "Value",
   "admin.settings.secretSet": "Set",
   "admin.settings.secretUnset": "Not set",
+  "admin.settings.itemNameTemplateHint": "The receipt line and payment description of a top-up. Placeholders: '{number}' — the invoice number, '{brand}' — the store name.",
   "admin.settings.save": "Save",
   "admin.settings.applied": "Applied keys: {count}",
   "admin.settings.reconfigured": "Reconfigured: {channels}",
