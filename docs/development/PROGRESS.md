@@ -1721,9 +1721,50 @@ VPS actions for package 3 are in the working queue's «Действия на VPS
 before the deploy the stand's `.env` needs `VALKEY_PASSWORD` and loses its
 `VALKEY_URL` line (P-21), otherwise compose refuses to run.
 
-**Exact next:** F37 — «purchases only from the balance» (owner decision
-О-12): brainstorm → design → plan → implementation, one commit per stage,
-then package 5. M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
+### F37 — purchases only from the balance (О-12)
+
+**Design approved by the owner (2026-09-29).** Brainstormed section by
+section; the design is kept locally, not tracked:
+`docs/development/specs/2026-09-29-f37-balance-only-purchases-design.md`.
+The decision and its deviations from FR-020/021, FR-062, FR-142, sections 9,
+11.2, 11.3.6, 11.5, 13.4, 15.1–15.2, 15.4 and 15.5 are recorded in
+`docs/adr/ADR-021.md` (ADR-011 is taken by the specification's ADR log; its
+last entry is ADR-020). No code yet.
+
+Owner answers of this session (2026-09-29):
+
+- a top-up for a plan is `max(missing, topup_min_minor, provider minimum)`;
+  above `topup_max_minor` the missing amount is invoiced as is;
+- a plan change's missing amount uses the old plan's remainder at
+  `now + 24 h`; the change itself takes the remainder at the moment (EX-06);
+- one receipt line and payment description for every top-up, default
+  `Пополнение баланса (#{number})`; the number is `NN-00001` — a fixed
+  provider code (`yookassa 01`, `platega 02`, `lava 03`, `robokassa 04`,
+  `cryptobot 05`, `stars 06`) and a per-provider counter; gaps are possible
+  (the number goes to the provider before the invoice row exists);
+- a discount promocode is applied at the purchase from the balance, not
+  reserved at the top-up;
+- the dashboard shows «Поступления» and «Продажи»;
+- «Купить <тариф>» in the top-up notice opens a confirmation card with a
+  fresh quote, never a one-press debit;
+- approach А: invoices stay, a provider invoice is always `topup` with its
+  purpose (`target_*`), a purchase from the balance stays an instant
+  `provider=balance` invoice;
+- in F37 as well: plan change on the site (13.4 — missing today), FR-020
+  reuse of a pending top-up (missing today), Lava receipts (the provider
+  claims `receipts: true` and sends none). R41 stays in package 8;
+  zero-amount purchases and the EX-06 credit posting (R20/R73) stay in
+  package 5.
+
+Found while exploring (recorded, repaired in F37): `fiscal.item_name_template`
+is never read; `INSUFFICIENT_FUNDS` carries no amounts; the dashboard's
+«late payments» widget counts every invoice paid after its TTL;
+`SettingsService.importSnapshot` rejects a retired key.
+
+**Exact next:** F37 plan (`superpowers:writing-plans`) →
+`docs/superpowers/plans/2026-09-29-f37-balance-only-purchases.md` (local),
+recorded here; then implementation, one commit per plan task; then package 5.
+M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
