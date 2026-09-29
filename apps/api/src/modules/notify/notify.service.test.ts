@@ -11,7 +11,7 @@ const catalog: Record<string, string> = {
   'notify.btn.buyPlan': 'Купить «{plan}»',
   'notify.btn.balance': 'Баланс',
   'notify.btn.plans': 'Тарифы',
-  'notify.payment.to_balance': 'Баланс пополнен на {amount}.',
+  'notify.payment.to_balance': 'Баланс пополнен на {amount}. {plan}',
   'alerts.title': 'RemnaRay: {type}',
   'alerts.panel.down': 'Панель недоступна более 5 минут.',
 };
@@ -291,6 +291,39 @@ describe('payment.to_balance buttons (F37)', () => {
       expect(JSON.stringify(test.sent[0])).toContain(
         '"callback_data":"tb:01a0ded7-ef45-767a-bbf5-fbd98a0d8762"',
       );
+    } finally {
+      test.restore();
+    }
+  });
+
+  it('keeps the plan name verbatim in the button and escaped in the body', async () => {
+    const test = fixture();
+    try {
+      await test.service.send({
+        event: 'payment.to_balance',
+        userId: '11111111-1111-7111-8111-111111111111',
+        dedupKey: 'payment.to_balance:inv-2',
+        params: {
+          amount: '100',
+          hasPlan: 'yes',
+          plan: "Tom & Jerry's",
+          buyInvoice: '01a0ded7-ef45-767a-bbf5-fbd98a0d8762',
+        },
+      });
+      expect(test.sent[0]).toMatchObject({
+        text: 'Баланс пополнен на 100. Tom &amp; Jerry&#39;s',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Купить «Tom & Jerry's»",
+                callback_data: 'tb:01a0ded7-ef45-767a-bbf5-fbd98a0d8762',
+              },
+              { text: 'Баланс', callback_data: 'balance' },
+            ],
+          ],
+        },
+      });
     } finally {
       test.restore();
     }

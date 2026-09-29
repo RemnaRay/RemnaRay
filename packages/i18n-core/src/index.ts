@@ -71,23 +71,47 @@ export function placeholdersOf(template: string): string[] {
     .sort();
 }
 
+function render(
+  locale: Locale,
+  messages: MessageCatalog,
+  key: string,
+  values: Record<string, unknown>,
+): string {
+  return String(
+    new IntlMessageFormat(messages[key] ?? key, locale, undefined, { ignoreTag: true }).format(
+      values,
+    ),
+  );
+}
+
+/** For HTML output: string values are escaped. */
 export function formatMessage(
   locale: Locale,
   messages: MessageCatalog,
   key: string,
   values: Record<string, unknown> = {},
 ): string {
-  const template = messages[key] ?? key;
-  return String(
-    new IntlMessageFormat(template, locale, undefined, { ignoreTag: true }).format(
-      Object.fromEntries(
-        Object.entries(values).map(([key, value]) => [
-          key,
-          typeof value === 'string' ? escapeHtml(value) : value,
-        ]),
-      ),
+  return render(
+    locale,
+    messages,
+    key,
+    Object.fromEntries(
+      Object.entries(values).map(([name, value]) => [
+        name,
+        typeof value === 'string' ? escapeHtml(value) : value,
+      ]),
     ),
   );
+}
+
+/** For plain text (Telegram button labels): values are kept verbatim. */
+export function formatPlainMessage(
+  locale: Locale,
+  messages: MessageCatalog,
+  key: string,
+  values: Record<string, unknown> = {},
+): string {
+  return render(locale, messages, key, values);
 }
 
 export function escapeHtml(value: string): string {

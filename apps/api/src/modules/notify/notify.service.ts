@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
-import { formatMessage, SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
+import {
+  formatMessage,
+  formatPlainMessage,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from '@remnaray/i18n-core';
 import { notificationsTotal } from '@remnaray/metrics';
 
 import { Infrastructure } from '../../infra/infra.module';
@@ -134,7 +139,7 @@ export class NotifyService {
       const catalog = await this.i18n.messages(locale);
       const text = formatMessage(locale, catalog, `notify.${input.event}`, input.params);
       const buttons = notificationButtons(input.event, input.params).map((button) => ({
-        text: formatMessage(locale, catalog, `notify.btn.${button.key}`, input.params),
+        text: formatPlainMessage(locale, catalog, `notify.btn.${button.key}`, input.params),
         callback_data: button.callback,
       }));
 

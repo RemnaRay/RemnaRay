@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertIcu,
   formatMessage,
+  formatPlainMessage,
   localeDirectory,
   namespaces,
   placeholdersOf,
@@ -54,5 +55,21 @@ describe('locale catalogs', () => {
     expect(
       placeholdersOf('{plan}: {price} for {days, plural, one {# day} other {# days}}.'),
     ).toEqual(['days', 'plan', 'price']);
+  });
+});
+
+describe('plain and HTML formatting', () => {
+  const catalog = { 'x.label': 'Купить «{plan}»' };
+
+  it('keeps string values verbatim in plain text', () => {
+    expect(formatPlainMessage('ru', catalog, 'x.label', { plan: 'A&B <5>' })).toBe(
+      'Купить «A&B <5>»',
+    );
+  });
+
+  it('still escapes string values for HTML', () => {
+    expect(formatMessage('ru', catalog, 'x.label', { plan: 'A&B <5>' })).toBe(
+      'Купить «A&amp;B &lt;5&gt;»',
+    );
   });
 });
