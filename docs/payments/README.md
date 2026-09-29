@@ -81,3 +81,35 @@ otherwise, so `/webhooks/mock` and an invoice naming it answer
 live shop the variable must be `false` or unset. `scripts/init-env.sh` and
 `.env.example` write `false`; a `.env` created by an earlier version carried
 `true` and has to be edited before the upgrade.
+
+## Минимальная сумма пополнения и чек самозанятого (F37, ADR-021)
+
+Проверено 2026-09-29–30 по документации провайдеров (ссылки в таблице и в
+разделе «Checked» страницы каждого провайдера).
+
+| Провайдер      | Код в номере | Минимум счёта                                                                                | `minAmountMinor` | Чек самозанятого                                                                                                                      | Поле описания                                                                               |
+| -------------- | ------------ | -------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| ЮKassa         | 01           | [1 ₽](https://yookassa.ru/docs/support/payments/limits) (карта, СБП, SberPay, T-Pay, ЮMoney) | 100              | [не выдаётся с 29.12.2025](https://yookassa.ru/developers/using-api/changelog): ЮKassa закрыла чеки для самозанятых                   | [`description`](https://yookassa.ru/developers/api), до 128 символов                        |
+| Platega        | 02           | [нет](https://docs.platega.io/llms.txt)                                                      | 100              | —                                                                                                                                     | [`description`](https://docs.platega.io/createtransactionrequest-13226217d0)                |
+| Lava           | 03           | [1 ₽](https://developer.lava.ru/) (`sum`, `minimum: 1`)                                      | 100              | [не через API](https://developer.lava.ru/): в счёте нет полей чека                                                                    | [`comment`](https://developer.lava.ru/)                                                     |
+| Robokassa      | 04           | [нет](https://docs.robokassa.ru/ru/pay-interface)                                            | 100              | [автоматически](https://robokassa.com/online-check/robocheck-smz/) (Робочеки СМЗ → «Мой налог»); поле наименования не документировано | [`Description`](https://docs.robokassa.ru/ru/pay-interface), до 100 символов                |
+| CryptoBot      | 05           | [нет](https://help.send.tg/en/articles/10279948-crypto-pay-api) (для `createInvoice`)        | 100              | —                                                                                                                                     | [`description`](https://help.send.tg/en/articles/10279948-crypto-pay-api), до 1024 символов |
+| Telegram Stars | 06           | [1 XTR](https://core.telegram.org/bots/api#labeledprice)                                     | 100              | —                                                                                                                                     | [`description`](https://core.telegram.org/bots/api#createinvoicelink), 1–255 символов       |
+
+- «нет» — провайдер не документирует минимум счёта; `minAmountMinor = 100`
+  (1 ₽), чтобы счёт не был меньше рубля.
+- ЮKassa: 1 ₽ — минимум для карты, СБП, SberPay, T-Pay и ЮMoney; у отдельных
+  способов он выше (кредит СберБанка — 3 000 ₽). Объект `receipt`
+  (наименование — `receipt.items[].description`) по-прежнему регистрирует чек
+  54-ФЗ через кассу магазина, но чек НПД в «Мой налог» ЮKassa больше не
+  формирует.
+- Robokassa: Робочеки СМЗ регистрируют чек после каждой оплаты; документация
+  не говорит, берётся ли наименование услуги из `Receipt.items[].name` или из
+  `Description`. Поэтому RemnaRay передаёт в оба поля один текст — шаблон
+  `fiscal.item_name_template` (ADR-021).
+- Lava: решение по чеку записано в [lava.md](./lava.md).
+- CryptoBot: «1–25000 USD» в документации относится к `transfer`, а не к
+  `createInvoice`.
+- Telegram Stars: `LabeledPrice.amount` — целое число в наименьших единицах
+  валюты; для `XTR` это одна звезда, отдельного минимума нет. Счёт на 1 ₽
+  стоит `ceil(1 × starsPerRub)` ≥ 1 звезды ([stars](./stars.md)).

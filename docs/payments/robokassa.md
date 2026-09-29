@@ -44,3 +44,15 @@ Sources: [payment interface](https://docs.robokassa.ru/ru/pay-interface),
 [notifications](https://docs.robokassa.ru/ru/notifications-and-redirects),
 [fiscalization](https://docs.robokassa.ru/ru/fiscalization),
 [XML interfaces](https://docs.robokassa.ru/ru/xml-interfaces).
+
+Checked 2026-09-29 (F37): neither the [payment interface](https://docs.robokassa.ru/ru/pay-interface)
+nor the [tariffs](https://robokassa.com/payments/tarify/) state a minimum
+payment, so `minAmountMinor = 100`. `Description` is «Название товара или
+услуги (до 100 символов, без спецсимволов)», shown to the payer. For a
+self-employed seller [Робочеки СМЗ](https://robokassa.com/online-check/robocheck-smz/)
+register the НПД receipt in «Мой налог» automatically after each payment,
+once the seller grants Robokassa access there (an ИП on НПД applies to
+support first). Robokassa does not document whether the receipt's service
+name comes from `Receipt.items[].name` (up to 128 characters,
+[fiscalization](https://docs.robokassa.ru/ru/fiscalization)) or from
+`Description`, so both carry the same text from `fiscal.item_name_template`.

@@ -54,3 +54,11 @@ called (section 11.3.6). There are no receipts.
 Source: [Bot API 10.3 — Payments](https://core.telegram.org/bots/api#payments)
 and [Payments in Telegram Stars](https://core.telegram.org/bots/payments-stars),
 checked on 2026-09-25.
+
+Checked 2026-09-30 (F37) against Bot API 10.3: `LabeledPrice.amount` is an
+integer in the smallest units of the currency, which for `XTR` is one star, and
+`XTR` has no entry in `currencies.json`, so there is no other minimum. The
+provider minimum is 1 XTR; `minAmountMinor = 100` (1 ₽), which costs
+`ceil(starsPerRub)` ≥ 1 star. `createInvoiceLink.description` (1–255
+characters) is the product description the payer sees; `title` is 1–32
+characters.
