@@ -60,16 +60,21 @@ The provider adapters follow the current provider contracts:
 - Реферальное вознаграждение начисляется только с пополнений.
 
 A payment is accepted onto an invoice that is pending, expired or canceled.
-Money for an expired (EX-02) or canceled invoice is credited to the balance
-without activating anything, and administrators are alerted (`payment.late`,
-`payment.after_cancel`). Another `paid` event for an invoice already paid is
-the same payment reported again (EX-03) and changes nothing — except for
-Telegram Stars, where a new charge id is new money (see [stars](./stars.md)).
+Every provider invoice is a top-up (ADR-021), so money for an expired (EX-02)
+or canceled invoice, for a plan taken off sale after the invoice was issued
+(owner decision О-19) or for an invoice written before F37 is credited to the
+balance like any other top-up: nothing is activated, no administrator alert is
+raised, and the customer buys a plan from the balance as the second step.
+Another `paid` event for an invoice already paid is the same payment reported
+again (EX-03) and changes nothing — except for Telegram Stars, where a new
+charge id is new money (see [stars](./stars.md)).
 
-A payment for a plan taken off sale (inactive or deleted) after the invoice
-was issued is credited to the balance in the same way, and administrators get
-the `payment.plan_unavailable` alert (owner decision О-19): nothing is
-activated, and the customer may buy another plan from the balance.
+Two payment alerts remain (FR-163). `payment.underpaid` reports an
+underpayment (EX-12) credited to the balance, once per invoice, and a `paid`
+event that reports an amount of zero (`PAID_ZERO`: nothing is credited, the
+invoice stays as it is), once per event. `payment.duplicate` reports a second
+Telegram Stars charge for an invoice already paid, credited to the balance,
+once per charge event.
 
 A stored event is applied inline and by its queued `payments.apply-event`
 job. As a backstop, the worker's `payments.reapply-events` cron (every five

@@ -55,9 +55,13 @@ after downtime is picked up on the next tick without sending twice.
 `POST /api/internal/v1/notify/alert` delivers to every active `admin` with a
 `telegram_id`, in `settings.admin.language`, and deduplicates on
 `rr:alert:<type>` with a one-hour TTL (AC-163). The types are the section 16.5
-list; `payment.late`, `payment.underpaid` (both now only report money that landed on
-the balance) and `referral.daily_cap` are already
-emitted by the payment and referral paths, and `ledger.mismatch` by the
+list. The payment path emits `payment.underpaid` (an underpayment credited to
+the balance, once per invoice, and a `paid` event reporting zero — `PAID_ZERO`,
+nothing credited — once per event) and `payment.duplicate` (a second Telegram
+Stars charge for a paid invoice, credited to the balance); since F37 (ADR-021)
+late, canceled-invoice and plan-off-sale payments are ordinary top-ups and raise
+no alert. `referral.daily_cap` is emitted by the referral path, and
+`ledger.mismatch` by the
 nightly `maintenance.ledger-audit` (from 02:00 UTC, once a day, naming the
 accounts whose balance disagrees with their entries).
 

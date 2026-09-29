@@ -163,7 +163,8 @@ invoice of its own and no provider.
 Every FR-142 number is a SQL aggregate over `transactions`, `subscriptions`,
 `users` and `accounts`, cached in Valkey for 60 seconds. Since F37 the
 dashboard separates two things. «Поступления» (receipts) is the money
-providers brought in, that is the top-ups; it is what the receipt count, the
+providers brought in, that is the top-ups — and, in the history before F37,
+the plans bought at a provider directly; it is what the receipt count, the
 average receipt, the daily chart «Поступления по дням» and the top providers
 are built from. «Продажи» (sales) is the purchases and plan changes paid from
 the balance, minus refunds. This departs from FR-142's
