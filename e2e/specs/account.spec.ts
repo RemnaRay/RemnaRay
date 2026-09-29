@@ -198,7 +198,7 @@ test.describe('customer account', () => {
     await expect(page.getByRole('link', { name: 'Выбрать тариф' })).toBeVisible();
   });
 
-  test('lists plans with the balance method first and a promo code field', async ({
+  test('shows the plan showcase with a promo code field and the checkout only after a plan is picked (F37)', async ({
     context,
     page,
     baseURL,
@@ -209,7 +209,12 @@ test.describe('customer account', () => {
     await expect(page.locator('[data-state="ready"]')).toBeVisible();
     await expect(page.getByText(stackState().plan.name).first()).toBeVisible();
     await expect(page.getByLabel('Промокод')).toBeVisible();
+    // Providers only top up: they appear inside the checkout of a picked plan.
     const radios = page.locator('input[type="radio"][name="provider"]');
+    await expect(radios).toHaveCount(0);
+    await page.getByRole('button', { name: 'Выбрать' }).first().click();
+    await expect(page.getByTestId('checkout')).toBeVisible();
+    await expect(page.getByText(/Не хватает/u)).toBeVisible();
     await expect(radios.first()).toBeVisible();
   });
 
@@ -462,6 +467,23 @@ test.describe('customer account', () => {
       (await topup.json()) as { paymentUrl: string | null; amount: { amountMinor: number } },
     );
     expect((await send({ kind: 'purchase', planId: state.plan.id })).status()).toBe(201);
+
+    // The purchase may activate the subscription asynchronously: the plan the
+    // page hides is known only once the subscription names it.
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(`${state.apiUrl}/api/internal/v1/me/subscription`, {
+            headers,
+          });
+          const body = (await response.json()) as {
+            subscription?: { plan?: { id?: string } | null } | null;
+          };
+          return body.subscription?.plan?.id;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(state.plan.id);
 
     await signIn(context, baseURL ?? '', customer);
     await page.goto('/ru/account/plans?change=1');

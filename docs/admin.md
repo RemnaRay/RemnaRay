@@ -169,7 +169,8 @@ are built from. «Продажи» (sales) is the purchases and plan changes pai
 the balance, minus refunds. This departs from FR-142's
 `purchase + topup − refund`, which counted a top-up and the purchase paid from
 it twice; the late-payment widget is gone because every provider payment,
-late or not, is now just a top-up. The trial conversion is a cohort by trial date. `test/m4.admin.integration.test.mjs` re-computes each aggregate with an
+late or not, is now just a top-up. The trial conversion is a cohort by trial
+date. `test/m4.admin.integration.test.mjs` re-computes each aggregate with an
 independent SQL control on fixtures (AC-142) and also covers AC-140 search and
 AC-141 audited actions.
 

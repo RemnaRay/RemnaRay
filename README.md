@@ -71,7 +71,7 @@ identical across profiles — section 21.5, checked by
 
 | Provider                                | Fiscal receipts | Who can sign up                     |
 | --------------------------------------- | --------------- | ----------------------------------- |
-| [YooKassa](docs/payments/yookassa.md)   | yes             | company, sole trader, self-employed |
+| [YooKassa](docs/payments/yookassa.md)   | yes             | company, sole trader                |
 | [Robokassa](docs/payments/robokassa.md) | yes             | company, sole trader, self-employed |
 | [Lava](docs/payments/lava.md)           | yes             | company, sole trader                |
 | [Platega](docs/payments/platega.md)     | no              | selling without a status            |
@@ -79,8 +79,10 @@ identical across profiles — section 21.5, checked by
 | Telegram Stars                          | no              | anyone with a bot                   |
 | Account balance                         | n/a             | always available                    |
 
-The wizard asks whether you are self-employed and offers only the providers
-that fit. A provider is one class behind one interface, so adding another is a
+YooKassa stopped issuing self-employed (НПД) receipts on 29 December 2025, so
+a self-employed shop should use Robokassa (Робочеки СМЗ) or issue receipts in
+«Мой налог» itself. The wizard asks whether you are self-employed and offers
+only the providers that fit. A provider is one class behind one interface, so adding another is a
 contained job — the checklist is in
 [`CONTRIBUTING.md`](CONTRIBUTING.md#adding-a-payment-provider), and
 [`docs/payments/README.md`](docs/payments/README.md) covers what is already
