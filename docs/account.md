@@ -8,12 +8,36 @@ request without `rr_sid` is redirected to `/<locale>?login=1`.
 | Path                 | Content                                                           | Empty state                                          |
 | -------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
 | `/account`           | Status, expiry, traffic, subscription link, QR, client deep links | «У вас нет подписки» with the trial and plan actions |
-| `/account/plans`     | Plan cards, provider radio (balance first), promo code preview    | «Тарифов пока нет»                                   |
+| `/account/plans`     | Plan cards with a checkout panel, promo code preview              | «Тарифов пока нет»                                   |
 | `/account/balance`   | Available balance with held rewards as pending, presets, history  | «Операций пока нет»                                  |
 | `/account/referrals` | Links, statistics, terms, masked invited users                    | «Пока никого»                                        |
 | `/account/devices`   | HWID list, removal when the owner allows it                       | «Устройств нет»                                      |
 | `/account/settings`  | Language, receipt email, marketing, anonymization request         | —                                                    |
 | `/pay/[invoiceId]`   | Status, countdown, payment and check actions                      | —                                                    |
+
+## Buying a plan (F37, ADR-021)
+
+A plan is bought from the balance; a payment system only tops the balance up.
+
+- `/account/plans` is the showcase. «Выбрать» on a card opens the checkout
+  panel, which asks `GET /me/checkout/quote` (the price with the promo code, the
+  available balance, the shortage and the top-up each offered provider would
+  need). When the balance covers the price the panel offers «Купить с баланса за
+  …». Otherwise it says «Не хватает …», lists the providers with the top-up
+  amount of each and offers «Пополнить на …»; a note tells the customer to come
+  back and press «Купить» once the money is on the balance.
+- `/account/plans?change=1` is the plan change. It offers the other plans only,
+  shows the credit for the rest of the current plan («Зачёт за остаток текущего
+  тарифа»), and the button reads «Сменить за …». The shortage is computed with
+  the old plan's remainder at now + 24 hours.
+- «Пополнить» creates a top-up for the shortage and opens `/pay/<id>`. The page
+  shows «Счёт #NN-00001» (the provider's number, see
+  [payments](./payments/README.md)), the status and the countdown. When the
+  top-up lands it says «Баланс пополнен.» and, for a top-up made for a plan,
+  shows the checkout panel with a fresh quote, so «Купить с баланса за …» is one
+  click away and leads to `/account` with the subscription.
+- A top-up made from `/account/balance` has no plan behind it: the page offers
+  «Перейти к балансу» instead.
 
 Every page renders through `ResourceSection`, which owns the three states of
 section 13.4: `LoadingState` (skeletons), `Empty` and `FailureState` (localized

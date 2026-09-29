@@ -56,3 +56,9 @@ support first). Robokassa does not document whether the receipt's service
 name comes from `Receipt.items[].name` (up to 128 characters,
 [fiscalization](https://docs.robokassa.ru/ru/fiscalization)) or from
 `Description`, so both carry the same text from `fiscal.item_name_template`.
+
+Не проверено: шаблон по умолчанию `Пополнение баланса (#{number})` содержит
+«#» и скобки, а Robokassa просит `Description` «без спецсимволов». Это надо
+проверить на стенде: тестовый счёт (`isTest: true`) с шаблоном по умолчанию.
+Если Robokassa его отклонит, владелец меняет `fiscal.item_name_template` в
+консоли (например, на `Пополнение баланса {number}`).

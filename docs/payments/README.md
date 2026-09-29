@@ -25,6 +25,40 @@ The provider adapters follow the current provider contracts:
   proof arrives as the bot's `successful_payment` update through the internal
   endpoints of section 9.5.
 
+## Модель оплаты (F37, ADR-021)
+
+Платёжная система только пополняет баланс. Тариф или смена тарифа — второй
+шаг, покупка с баланса: клиент нажимает «Купить», когда деньги уже на балансе.
+
+- Счёт через провайдера всегда пополнение: триггер `invoices_provider_topup`
+  в базе не даёт вставить провайдерский счёт другого вида. `POST /me/invoices`
+  с `kind: purchase` или `plan_change` и провайдером отвечает
+  `400 VALIDATION_ERROR`; такая покупка идёт только с баланса.
+- Сумма пополнения для тарифа: `max(нехватка, balance.topup_min_minor,
+минимум провайдера)`, верхний предел `topup_max_minor` к ней не применяется.
+  При смене тарифа нехватка считается с остатком старого тарифа на момент
+  «сейчас + 24 часа». Расчёт даёт `GET /me/checkout/quote`; когда баланса
+  хватает, ответ — `BALANCE_SUFFICIENT`, а нехватка при покупке приходит как
+  `INSUFFICIENT_FUNDS` с `details.missingMinor`. `GET /me/plan-change/quote`
+  удалён.
+- Номер счёта провайдера — `NN-00001`, счётчик у каждого провайдера свой:
+  ЮKassa 01, Platega 02, Lava 03, Robokassa 04, CryptoBot 05, Telegram Stars 06. Номер выдаётся до обращения к провайдеру, поэтому в нумерации возможны
+  пропуски.
+- Строка чека и описание платежа — `fiscal.item_name_template`, по умолчанию
+  `Пополнение баланса (#{number})`; подстановки `{number}` и `{brand}`. ЮKassa:
+  описание и наименование позиции чека обрезаются до 128 символов; Robokassa:
+  `Description` до 100, наименование позиции чека до 128; Lava чек не
+  отправляет (`receipts: false`).
+- Любая оплата у провайдера зачисляется на баланс: и поздняя, и по
+  отменённому счёту, и за тариф, снятый с продажи, и по старому счёту. Сообщённая
+  сумма 0 не зачисляет ничего (`PAID_ZERO`, оповещение администраторам), а
+  недоплата зачисляет фактически оплаченное.
+- После зачисления клиент получает `payment.to_balance` с номером счёта; при
+  пополнении под тариф в нём кнопка «Купить «тариф»», которая открывает в боте
+  карточку подтверждения со свежим расчётом. То же показывает сайт на
+  `/pay/<id>`.
+- Реферальное вознаграждение начисляется только с пополнений.
+
 A payment is accepted onto an invoice that is pending, expired or canceled.
 Money for an expired (EX-02) or canceled invoice is credited to the balance
 without activating anything, and administrators are alerted (`payment.late`,
@@ -61,7 +95,8 @@ never created and the request answers `409 INSUFFICIENT_FUNDS`, so the same
 request again is refused again rather than handed a pending invoice. A top-up
 cannot be paid from the balance itself (FR-071) and answers
 `PROVIDER_UNAVAILABLE`; the site and the bot let the customer choose among the
-offered providers instead.
+offered providers instead. Under F37 the balance is the only way to pay for a
+plan: a provider only tops it up (see «Модель оплаты» above).
 
 The balance is built in and has nothing to configure, so it is never a
 `payment_providers` row: the setup wizard neither lists nor saves it, and a row
@@ -111,5 +146,14 @@ live shop the variable must be `false` or unset. `scripts/init-env.sh` and
 - CryptoBot: «1–25000 USD» в документации относится к `transfer`, а не к
   `createInvoice`.
 - Telegram Stars: `LabeledPrice.amount` — целое число в наименьших единицах
-  валюты; для `XTR` это одна звезда, отдельного минимума нет. Счёт на 1 ₽
-  стоит `ceil(1 × starsPerRub)` ≥ 1 звезды ([stars](./stars.md)).
+  валюты; для `XTR` это одна звезда, отдельного минимума нет. Сумма в звёздах
+  — `ceil(roubles × starsPerRub)`, но не меньше одной звезды; счёт на 1 ₽ стоит
+  `ceil(starsPerRub)` ([stars](./stars.md)).
+- Оговорка для владельца: Platega, Robokassa и CryptoBot не документируют
+  минимальную сумму, поэтому RemnaRay берёт 1 ₽. У вашего аккаунта у
+  провайдера всё же могут быть свои минимумы по отдельным способам оплаты;
+  если провайдер отклонил счёт, поднимите `balance.topup_min_minor`.
+- Самозанятый (НПД) и ЮKassa: с 29.12.2025 ЮKassa больше не формирует чеки
+  самозанятых, так что магазин на НПД не может выдавать чеки через ЮKassa.
+  Используйте Robokassa (Робочеки СМЗ регистрируют чек в «Мой налог»
+  автоматически) или формируйте чеки в «Мой налог» самостоятельно.

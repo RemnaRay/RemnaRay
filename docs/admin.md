@@ -114,14 +114,14 @@ theme; its texts come from the shipped `admin.json` only, which section 18.4
 keeps outside the owner's override surface. The interface language follows
 `settings.locale.default` until an administrator profile language exists.
 
-| Path                                | Content                                                               |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| `/admin/login`                      | email + password → TOTP, with first-login enrolment and a QR code     |
-| `/admin`                            | FR-142 widgets, revenue and registration charts, "requires attention" |
-| `/admin/users`, `/admin/users/[id]` | FR-140 search and filters; FR-141 actions behind reason modals        |
-| `/admin/subscriptions`              | Status, plan and expiry filters; bulk extension up to 500 rows        |
-| `/admin/payments`                   | Invoices with masked provider events, recheck, transactions, refund   |
-| `/admin/plans`                      | FR-145 create/edit (squads from the panel), ordering, soft delete     |
+| Path                                | Content                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| `/admin/login`                      | email + password → TOTP, with first-login enrolment and a QR code                         |
+| `/admin`                            | FR-142 widgets, revenue and registration charts, "requires attention"                     |
+| `/admin/users`, `/admin/users/[id]` | FR-140 search and filters; FR-141 actions behind reason modals                            |
+| `/admin/subscriptions`              | Status, plan and expiry filters; bulk extension up to 500 rows                            |
+| `/admin/payments`                   | Invoices (number, kind filter) with masked provider events, recheck, transactions, refund |
+| `/admin/plans`                      | FR-145 create/edit (squads from the panel), ordering, soft delete                         |
 
 `AdminShell` loads `GET /api/admin/v1/auth/me` once, keeps the CSRF token for
 later mutations and hides every section the role does not carry. Server-side,
@@ -147,17 +147,29 @@ them as the customer's `activeInternalSquads`, so a plan without any would take
 every squad away from its buyers. The API refuses such a plan, and the list
 marks an older one with «Нет сквадов» until it is edited.
 
+## Invoices and numbers (F37, ADR-021)
+
+Every provider invoice carries a number `NN-00001`, numbered per provider
+(YooKassa 01, Platega 02, Lava 03, Robokassa 04, CryptoBot 05, Telegram Stars
+06), the same one the customer sees on `/pay/<id>` and that stands in the
+receipt line. `/admin/payments` has a «Номер» column, a «Вид» filter (top-up,
+purchase, plan change) and a search by number («Номер счёта»). A gap in the
+numbers is normal: the number is issued before the provider is called. A
+provider invoice is always a top-up; a purchase is a balance operation with an
+invoice of its own and no provider.
+
 ## Dashboard aggregates
 
 Every FR-142 number is a SQL aggregate over `transactions`, `subscriptions`,
-`users` and `accounts`, cached in Valkey for 60 seconds. Revenue, the payment
-count, the average check, the daily chart and the top providers count the money
-providers brought in: top-ups and purchases, except purchases paid from the
-balance, which spend a top-up already counted. A refund goes to the balance, so
-the money stays with the shop (it shows in the users' balance) and is not
-subtracted. This is an owner decision of 2026-09-26 that departs from FR-142's
+`users` and `accounts`, cached in Valkey for 60 seconds. Since F37 the
+dashboard separates two things. «Поступления» (receipts) is the money
+providers brought in, that is the top-ups; it is what the receipt count, the
+average receipt, the daily chart «Поступления по дням» and the top providers
+are built from. «Продажи» (sales) is the purchases and plan changes paid from
+the balance, minus refunds. This departs from FR-142's
 `purchase + topup − refund`, which counted a top-up and the purchase paid from
-it twice. The trial conversion is a cohort by trial date. `test/m4.admin.integration.test.mjs` re-computes each aggregate with an
+it twice; the late-payment widget is gone because every provider payment,
+late or not, is now just a top-up. The trial conversion is a cohort by trial date. `test/m4.admin.integration.test.mjs` re-computes each aggregate with an
 independent SQL control on fixtures (AC-142) and also covers AC-140 search and
 AC-141 audited actions.
 

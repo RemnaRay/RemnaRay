@@ -24,9 +24,9 @@ so they cannot be spent; `POST /api/internal/v1/rewards/release-held` is the
 `maintenance.referral-release` cron.
 
 Refunding the source reverses the reward: fully when the refund is full, and
-proportionally rounded down otherwise. Under F37 this practically never fires:
-a top-up is not refunded (FR-066 refunds purchases) and a purchase is no longer
-a source, so only a reward written before F37 can still be reversed that way.
+proportionally rounded down otherwise. Under F37 the automatic reversal applies
+only to rewards written before F37 on a purchase source: a top-up is not
+refunded (FR-066 refunds purchases) and a purchase is no longer a source.
 The protection is `hold_hours` and the manual reversal from `/admin/referrals`.
 The section 15.4 flag «paid from a balance topped up a minute before» is not
 implemented and will not be: every purchase is now paid that way (ADR-021).

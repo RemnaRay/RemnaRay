@@ -42,6 +42,16 @@ answers with the QR image, with `code` it confirms and creates the
 administrator. The secret lives encrypted in the wizard session until then, so
 an abandoned wizard leaves no half-made account.
 
+Step 7, fiscal part (F37, ADR-021): providers only top the balance up, so the
+customer's receipt is issued for the top-up, not for the plan. Its line is
+`fiscal.item_name_template`, by default `Пополнение баланса (#{number})`
+(`{number}` is the invoice number `NN-00001`, `{brand}` the shop's name); the
+owner can change the template in the console. The tax status field («Налоговый статус»: «Самозанятый», «ИП или организация»,
+«Без статуса») is the wizard's «Вы самозанятый?» question. An НПД shop cannot issue receipts through YooKassa any
+more: YooKassa stopped its self-employed services on 29 December 2025
+(see [payments](./payments/README.md)). Use Robokassa, whose Робочеки СМЗ
+register the receipt in «Мой налог», or issue receipts in «Мой налог» yourself.
+
 The «Проверить» buttons are separate routes — `POST /api/setup/v1/check/panel`,
 `/check/bot` and `/check/provider` — so a check never writes anything.
 

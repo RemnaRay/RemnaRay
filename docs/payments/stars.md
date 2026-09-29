@@ -5,12 +5,11 @@ token of its own: the adapter uses the bot token from `bot.token` (ADR-012), so
 the health check fails until the bot is configured, and a failed health check
 keeps Stars out of the payment methods (AC-061).
 
-**Price.** A plan may fix its price in stars with `price_overrides: {"XTR": 200}`.
-An invoice that charges less than the list price (a promocode discount, a
-plan-change credit) pays the same share of those stars, rounded up. Without an
-override, and for a top-up, the amount is `ceil(amount / 100 × starsPerRub)`.
-Never less than one star. `provider_amount` holds the stars and
-`fx_rate = stars / roubles`, truncated to eight places.
+**Price.** A Stars invoice is a top-up (F37, ADR-021), so the amount is
+`ceil(roubles × starsPerRub)`, where roubles are the invoice amount in kopecks
+divided by 100. Never less than one star. `plans.price_overrides` is no longer
+read. `provider_amount` holds the stars and `fx_rate = stars / roubles`,
+truncated to eight places.
 
 **Creation.** The API creates the invoice link with `createInvoiceLink`
 (`currency: "XTR"`, one price, empty `provider_token`, payload `inv_<invoiceId>`)

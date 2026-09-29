@@ -326,6 +326,23 @@ async function seedFixtures(databaseUrl, panelUrl) {
     },
   });
 
+  // A second plan: the plan change of F37 needs another plan to change to.
+  await prisma.plan.create({
+    data: {
+      slug: 'e2e-quarter',
+      name: { ru: 'Квартал', en: 'Quarter' },
+      description: { ru: 'Три месяца доступа', en: 'Three months of access' },
+      durationDays: 90,
+      trafficLimitBytes: 0n,
+      deviceLimit: 5,
+      squads: ['01a0b9f0-e699-7032-9841-6d516d4591ad'],
+      priceMinor: 79900n,
+      isPublic: true,
+      isActive: true,
+      sortOrder: 20,
+    },
+  });
+
   // Section 15.5: a code the plans page previews.
   await prisma.promocode.create({
     data: { code: 'E2E10', type: 'discount_percent', value: 10n, maxUses: 100 },

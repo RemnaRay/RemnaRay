@@ -34,9 +34,9 @@ five minutes, and the link arrives within two minutes of the panel coming back.
 No money is lost and nothing is charged twice.
 
 **A customer paid after the invoice expired. Now what?**
-The money lands on their balance, the subscription is untouched, they are told,
-and the dashboard shows it as a late payment. They can spend the balance on any
-plan.
+The money lands on their balance, the subscription is untouched, and they are
+told. Every payment system only tops the balance up (F37): the customer then
+presses «Купить» and spends the balance on any plan.
 
 **Can customers pay with something other than cards?**
 Yes: YooKassa, Platega, Lava, Robokassa, CryptoBot, Telegram Stars, and the
@@ -47,7 +47,10 @@ the table in the README says which. See [`payments/README.md`](payments/README.m
 If you sell as a registered business or a self-employed person in Russia, yes,
 and RemnaRay will only offer you providers that can issue them. If you sell
 with no status, turn receipts off in the console and the providers that require
-them are not offered.
+them are not offered. The receipt is issued for the top-up, with the line
+«Пополнение баланса (#…)». A self-employed shop cannot issue receipts through
+YooKassa any more (it stopped on 29 December 2025); use Robokassa or issue
+them in «Мой налог» yourself.
 
 **Is there a trial?**
 One per customer, for as many days as you set, with its own traffic and device

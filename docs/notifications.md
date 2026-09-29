@@ -24,6 +24,17 @@ shares the transaction of the change that caused it:
 | `admin.message`                                                 | the operator action on the user card                   |
 | `sub.expires_in_3d`, `sub.expires_in_1d`, `trial.expires_in_1d` | the `notify.scan-expiring` cron                        |
 
+### `payment.to_balance` (F37, ADR-021)
+
+Every provider payment is credited to the balance, so the customer always gets
+this notice: «Баланс пополнен на … (счёт #NN-00001).». When less than the
+invoice was paid, it says «Получено … из … по счёту #… — зачислено на
+баланс.». For a top-up made for a plan it adds «Теперь можно купить «тариф».»
+and a button «Купить «тариф»». In the bot the button opens a confirmation card
+with a fresh quote (the price may have changed since the top-up), where
+«Купить с баланса за …» completes the purchase. The site shows the same on
+`/pay/<id>`.
+
 ## Delivery (section 16.2)
 
 `notify.send` renders the template in `users.language` from the merged catalog,
@@ -44,7 +55,8 @@ after downtime is picked up on the next tick without sending twice.
 `POST /api/internal/v1/notify/alert` delivers to every active `admin` with a
 `telegram_id`, in `settings.admin.language`, and deduplicates on
 `rr:alert:<type>` with a one-hour TTL (AC-163). The types are the section 16.5
-list; `payment.late`, `payment.underpaid` and `referral.daily_cap` are already
+list; `payment.late`, `payment.underpaid` (both now only report money that landed on
+the balance) and `referral.daily_cap` are already
 emitted by the payment and referral paths, and `ledger.mismatch` by the
 nightly `maintenance.ledger-audit` (from 02:00 UTC, once a day, naming the
 accounts whose balance disagrees with their entries).

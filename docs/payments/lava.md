@@ -16,7 +16,7 @@ returned in `InvoiceCreateResource.comment`; `customFields` is merchant data.
 The schema does not say where Lava shows `comment` to the payer.
 
 Lava не принимает данные чека через API счёта; `receipts: false`, чек
-самозанятого формирует сам продавец в «Мой налог»: у `POST /business/invoice/create`
+формируется вне API (продавцом): у `POST /business/invoice/create`
 есть только `sum`, `orderId`, `shopId`, `hookUrl`, `customFields`, `comment`,
 `failUrl`, `successUrl`, `expire`, `includeService` и `excludeService`, а
 документация Lava Business API не описывает ни чеков, ни фискализации.
