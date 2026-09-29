@@ -225,7 +225,7 @@ export default function SubscriptionClient({ locale }: { locale: Locale }) {
               </Button>
               {data.subscription?.canChangePlan ? (
                 <Button asChild variant="secondary">
-                  <Link href="/account/plans">{t('subscription.changePlan')}</Link>
+                  <Link href="/account/plans?change=1">{t('subscription.changePlan')}</Link>
                 </Button>
               ) : null}
             </div>

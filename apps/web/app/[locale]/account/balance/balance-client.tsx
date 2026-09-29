@@ -235,6 +235,11 @@ export default function BalanceClient({ locale }: { locale: Locale }) {
                           : row.type,
                     },
                     {
+                      key: 'invoiceNumber',
+                      header: t('balance.number'),
+                      cell: (row) => row.invoiceNumber ?? '—',
+                    },
+                    {
                       key: 'amount',
                       header: t('balance.current'),
                       cell: (row) => money(row.amount.amountMinor, row.amount.currency, locale),

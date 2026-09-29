@@ -83,7 +83,7 @@ describe('FR-134 / AC-134: payment page', () => {
     const markup = await page(invoice({ status: 'expired', terminal: true }));
 
     expect(markup).toContain('Счёт истёк');
-    expect(markup).toContain('зачисляется на баланс');
+    expect(markup).toContain('деньги придут на баланс');
   });
 
   it('explains the balance credit for an underpaid invoice', async () => {
@@ -99,5 +99,42 @@ describe('FR-134 / AC-134: payment page', () => {
     expect(markup).toContain('data-state="error"');
     expect(markup).toContain('req-9');
     expect(markup).toContain('Запись не найдена');
+  });
+
+  it('shows the invoice number and offers the plan after a top-up for it (F37)', async () => {
+    const markup = await renderPage(
+      ({ locale }: { locale: 'ru' }) => (
+        <PayStatus botUsername="manta_bot" invoiceId="inv-1" locale={locale} />
+      ),
+      {
+        '/api/v1/me/invoices/inv-1': {
+          body: invoice({
+            kind: 'topup',
+            status: 'paid',
+            terminal: true,
+            number: '01-00001',
+            target: { planId: 'p1', planSlug: 'month', kind: 'purchase', promocode: null },
+          }),
+        },
+        '/api/v1/me/checkout/quote': {
+          body: {
+            planId: 'p1',
+            kind: 'purchase',
+            priceMinor: 29900,
+            discountMinor: 0,
+            creditMinor: 0,
+            toPayMinor: 29900,
+            availableMinor: 29900,
+            missingMinor: 0,
+            topups: [],
+            promocode: null,
+          },
+        },
+        '/api/v1/me/payment-methods': { body: { items: [] } },
+      },
+    );
+    expect(markup).toContain('Счёт #01-00001');
+    expect(markup).toContain('Баланс пополнен');
+    expect(markup).toContain('Купить с баланса за 299');
   });
 });

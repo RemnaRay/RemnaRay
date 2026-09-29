@@ -4,11 +4,9 @@ import { useCallback, useState } from 'react';
 import { useTranslations } from 'next-intl';
 
 import {
-  invoiceSchema,
-  paymentMethodsSchema,
   planListSchema,
   promocodePreviewSchema,
-  type PaymentMethodsView,
+  subscriptionStateSchema,
   type PlanPublicView,
 } from '@remnaray/domain';
 import {
@@ -24,34 +22,47 @@ import {
 
 import { browserApi } from '../../../../lib/api';
 import { bytes, money } from '../../../../lib/format';
-import { invalidate, useResource } from '../../../../lib/resource';
+import { useResource } from '../../../../lib/resource';
 import { useRouter } from '../../../../i18n/navigation';
 import type { Locale } from '../../../../i18n/routing';
 import { AccountHeading } from '../account-chrome';
+import { CheckoutPanel } from './checkout-panel';
 import { Empty, ResourceSection, useErrorMessage } from '../states';
 
-type Catalog = { plans: PlanPublicView[]; methods: PaymentMethodsView };
+type Catalog = { plans: PlanPublicView[] };
 
-export default function PlansClient({ locale }: { locale: Locale }) {
+export default function PlansClient({
+  locale,
+  change = false,
+  initialPlanId,
+}: {
+  locale: Locale;
+  change?: boolean;
+  initialPlanId?: string | undefined;
+}) {
   const t = useTranslations('account');
   const { toast } = useToast();
   const message = useErrorMessage();
   const router = useRouter();
-  const [provider, setProvider] = useState('');
+  const [selectedId, setSelectedId] = useState(initialPlanId ?? '');
   const [promocode, setPromocode] = useState('');
+  // The code the customer confirmed with «Применить»: the checkout quotes with it.
+  const [applied, setApplied] = useState('');
   // Per plan: the discounted price, or the code the API refused it with.
   const [previews, setPreviews] = useState<
     Record<string, { discount: number; final: number } | { error: string }>
   >({});
   const [pending, setPending] = useState(false);
 
-  const catalog = useResource<Catalog>('me:plans', async () => {
+  const catalog = useResource<Catalog>(`me:plans:${change ? 'change' : 'buy'}`, async () => {
     const api = browserApi();
-    const [plans, methods] = await Promise.all([
+    const [plans, state] = await Promise.all([
       api.get('api/v1/public/plans', planListSchema),
-      api.get('api/v1/me/payment-methods', paymentMethodsSchema),
+      change ? api.get('api/v1/me/subscription', subscriptionStateSchema) : null,
     ]);
-    return { plans: plans.items, methods };
+    // A plan change offers the other plans only (О-3).
+    const currentId = state?.subscription?.plan?.id;
+    return { plans: plans.items.filter((plan) => plan.id !== currentId) };
   });
 
   /**
@@ -96,46 +107,12 @@ export default function PlansClient({ locale }: { locale: Locale }) {
     [message, promocode, t, toast],
   );
 
-  const pay = useCallback(
-    (planId: string, method: string) => {
-      setPending(true);
-      browserApi()
-        .send(
-          'POST',
-          'api/v1/me/invoices',
-          invoiceSchema,
-          {
-            kind: 'purchase',
-            planId,
-            provider: method,
-            ...(promocode ? { promocode } : {}),
-          },
-          { headers: { 'idempotency-key': crypto.randomUUID() } },
-        )
-        .then(
-          (invoice) => {
-            invalidate('me');
-            if (invoice.status === 'paid') router.push('/account');
-            else router.push(`/pay/${invoice.id}`);
-          },
-          (error: unknown) => {
-            toast({
-              title: t('errorTitle'),
-              description: message(codeOf(error)),
-              variant: 'danger',
-            });
-          },
-        )
-        .finally(() => {
-          setPending(false);
-        });
-    },
-    [message, promocode, router, t, toast],
-  );
-
   return (
     <section>
-      <AccountHeading description={t('plans.description')} title={t('plans.title')} />
+      <AccountHeading
+        description={t(change ? 'plans.changeDescription' : 'plans.description')}
+        title={t(change ? 'plans.changeTitle' : 'plans.title')}
+      />
       <ResourceSection
         empty={<Empty description={t('plans.emptyDescription')} title={t('plans.emptyTitle')} />}
         isEmpty={(data) => data.plans.length === 0}
@@ -143,48 +120,8 @@ export default function PlansClient({ locale }: { locale: Locale }) {
         state={catalog.state}
       >
         {(data) => {
-          const methods = [...data.methods.items].sort((left, right) =>
-            left.kind === 'balance' ? -1 : right.kind === 'balance' ? 1 : 0,
-          );
-          const selected = provider || methods.find((item) => item.available)?.code || '';
           return (
             <div className="flex flex-col gap-6">
-              <fieldset className="flex flex-col gap-3">
-                <legend className="text-sm font-semibold">{t('plans.provider')}</legend>
-                <div className="flex flex-wrap gap-3">
-                  {methods.map((method) => (
-                    <label className="flex items-center gap-2 text-sm" key={method.code}>
-                      <input
-                        checked={selected === method.code}
-                        disabled={!method.available}
-                        name="provider"
-                        type="radio"
-                        value={method.code}
-                        onChange={() => {
-                          setProvider(method.code);
-                        }}
-                      />
-                      <span>
-                        {method.kind === 'balance' && method.balance
-                          ? t('plans.balance', {
-                              balance: money(
-                                method.balance.amountMinor,
-                                method.balance.currency,
-                                locale,
-                              ),
-                            })
-                          : method.displayName[locale]}
-                      </span>
-                      {method.available ? null : (
-                        <span className="text-xs text-muted-foreground">
-                          {t('plans.unavailable')}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
               <div className="flex flex-wrap items-end gap-3">
                 <div className="flex flex-col gap-1">
                   <Label htmlFor="promocode">{t('plans.promocode')}</Label>
@@ -195,6 +132,7 @@ export default function PlansClient({ locale }: { locale: Locale }) {
                     onChange={(event) => {
                       setPromocode(event.target.value.toUpperCase());
                       setPreviews({});
+                      setApplied('');
                     }}
                   />
                 </div>
@@ -202,6 +140,7 @@ export default function PlansClient({ locale }: { locale: Locale }) {
                   disabled={pending || !promocode.trim()}
                   variant="secondary"
                   onClick={() => {
+                    setApplied(promocode);
                     applyPromocode(data.plans.map((plan) => plan.id));
                   }}
                 >
@@ -244,16 +183,27 @@ export default function PlansClient({ locale }: { locale: Locale }) {
                           </p>
                         );
                       })()}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Button
-                          disabled={pending || !selected}
-                          onClick={() => {
-                            pay(plan.id, selected);
+                      {selectedId === plan.id ? (
+                        <CheckoutPanel
+                          kind={change ? 'plan_change' : 'purchase'}
+                          locale={locale}
+                          planId={plan.id}
+                          promocode={applied}
+                          onBought={() => {
+                            router.push('/account');
                           }}
-                        >
-                          {t('plans.pay')}
-                        </Button>
-                      </div>
+                        />
+                      ) : (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Button
+                            onClick={() => {
+                              setSelectedId(plan.id);
+                            }}
+                          >
+                            {t('plans.select')}
+                          </Button>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))}

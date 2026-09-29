@@ -9,8 +9,9 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, useToast } fro
 import { browserApi } from '../../../../lib/api';
 import { countdown, money } from '../../../../lib/format';
 import { invalidate, useResource } from '../../../../lib/resource';
-import { Link } from '../../../../i18n/navigation';
+import { Link, useRouter } from '../../../../i18n/navigation';
 import type { Locale } from '../../../../i18n/routing';
+import { CheckoutPanel } from '../../account/plans/checkout-panel';
 import { ResourceSection, useErrorMessage } from '../../account/states';
 
 /** FR-134: poll every three seconds, for at most thirty minutes. */
@@ -38,6 +39,7 @@ export default function PayStatus({
   const t = useTranslations('account');
   const { toast } = useToast();
   const message = useErrorMessage();
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [startedAt] = useState(() => Date.now());
@@ -108,6 +110,8 @@ export default function PayStatus({
         const starsLink = botUsername
           ? `https://t.me/${botUsername}?start=inv_${data.id}`
           : (data.starsInvoiceLink ?? null);
+        const toppedUp =
+          data.kind === 'topup' && (data.status === 'paid' || data.status === 'underpaid');
         return (
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-3">
@@ -117,6 +121,11 @@ export default function PayStatus({
               </Badge>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
+              {data.number ? (
+                <p className="text-sm text-muted-foreground">
+                  {t('pay.number', { number: data.number })}
+                </p>
+              ) : null}
               <p aria-live="polite" className="text-lg font-semibold">
                 {t(STATUS_LABEL[data.status] ?? 'pay.statusPending')}
               </p>
@@ -134,7 +143,19 @@ export default function PayStatus({
                 <p className="text-sm text-muted-foreground">{t('pay.underpaidHint')}</p>
               ) : null}
               {data.status === 'expired' ? (
-                <p className="text-sm text-muted-foreground">{t('pay.toBalance')}</p>
+                <p className="text-sm text-muted-foreground">{t('pay.expiredTopup')}</p>
+              ) : null}
+              {toppedUp ? <p className="text-sm">{t('pay.credited')}</p> : null}
+              {toppedUp && data.target ? (
+                <CheckoutPanel
+                  kind={data.target.kind}
+                  locale={locale}
+                  planId={data.target.planId}
+                  promocode={data.target.promocode ?? ''}
+                  onBought={() => {
+                    router.push('/account');
+                  }}
+                />
               ) : null}
 
               <div className="flex flex-wrap gap-2">
@@ -174,7 +195,12 @@ export default function PayStatus({
                     {t('pay.cancel')}
                   </Button>
                 ) : null}
-                {data.status === 'paid' ? (
+                {toppedUp && !data.target ? (
+                  <Button asChild>
+                    <Link href="/account/balance">{t('pay.goToBalance')}</Link>
+                  </Button>
+                ) : null}
+                {data.status === 'paid' && data.kind !== 'topup' ? (
                   <Button asChild>
                     <Link href="/account">{t('pay.goToSubscription')}</Link>
                   </Button>

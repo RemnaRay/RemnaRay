@@ -284,3 +284,76 @@ describe('an answer that does not match the contract (F24)', () => {
     expect(markup).not.toMatch(/Код инцидента: ?</u);
   });
 });
+
+describe('buying from the balance (F37)', () => {
+  const plans = {
+    items: [
+      {
+        id: 'p1',
+        slug: 'month',
+        name: { ru: 'Месяц', en: 'Month' },
+        description: { ru: '', en: '' },
+        durationDays: 30,
+        trafficLimitBytes: 0,
+        trafficResetStrategy: 'NO_RESET',
+        deviceLimit: 3,
+        price: { amountMinor: 29900, currency: 'RUB' },
+        sortOrder: 10,
+      },
+    ],
+  };
+  const quote = (over = {}) => ({
+    planId: 'p1',
+    kind: 'purchase',
+    priceMinor: 29900,
+    discountMinor: 0,
+    creditMinor: 0,
+    toPayMinor: 29900,
+    availableMinor: 30000,
+    missingMinor: 0,
+    topups: [],
+    promocode: null,
+    ...over,
+  });
+  const PlansClientSelected = ({ locale }: { locale: 'ru' }) => (
+    <PlansClient initialPlanId="p1" locale={locale} />
+  );
+
+  it('offers the purchase from the balance when it covers the price', async () => {
+    const markup = await renderPage(PlansClientSelected, {
+      '/api/v1/public/plans': { body: plans },
+      '/api/v1/me/checkout/quote': { body: quote() },
+      '/api/v1/me/payment-methods': { body: { items: [] } },
+    });
+    expect(markup).toContain('Купить с баланса за 299');
+    expect(markup).not.toContain('name="provider"');
+  });
+
+  it('offers a top-up of the shortage per provider', async () => {
+    const markup = await renderPage(PlansClientSelected, {
+      '/api/v1/public/plans': { body: plans },
+      '/api/v1/me/checkout/quote': {
+        body: quote({
+          availableMinor: 29600,
+          missingMinor: 300,
+          topups: [{ provider: 'yookassa', amountMinor: 5000 }],
+        }),
+      },
+      '/api/v1/me/payment-methods': {
+        body: {
+          items: [
+            {
+              code: 'yookassa',
+              displayName: { ru: 'ЮKassa', en: 'YooKassa' },
+              kind: 'redirect',
+              available: true,
+            },
+          ],
+        },
+      },
+    });
+    expect(markup).toContain('Не хватает 3');
+    expect(markup).toContain('value="yookassa"');
+    expect(markup).toContain('Пополнить на 50');
+  });
+});
