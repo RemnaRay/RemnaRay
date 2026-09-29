@@ -1778,8 +1778,88 @@ UUID Idempotency-Key, so the bot derives a stable UUID from
 chat:message:button. Execution: subagents, in waves of tasks whose files do
 not overlap (owner's instruction).
 
-**Exact next:** F37 implementation, Task 1 onwards; then package 5. M5 stays
-NOT VERIFIED; TASK-M5-004 is unchanged.
+**F37 status (2026-09-30): implemented and verified locally; NOT VERIFIED on
+CI, e2e, live providers and the VPS.** Twelve plan tasks, each reviewed by an
+independent reviewer, then a whole-branch review and one fix wave; 27 commits
+`f374a92` … `0591280` (design `2422236`, plan `094c6cd`). Executed by
+subagents in waves of tasks with disjoint files (owner's instruction).
+
+What F37 does now: a provider invoice is always a top-up, numbered per
+provider `NN-00001` (issued just before the provider call, so gaps are
+possible) and named by `fiscal.item_name_template` (default «Пополнение баланса
+(#{number})»; the receipt line and the payment description). A top-up «for a
+plan» stores its purpose (`target_*`), its amount is computed by the server
+(`max(shortage, topup_min_minor, provider minimum)`, not capped by
+`topup_max_minor`; a plan change uses the old remainder at now + 24 h), and a
+pending one for the same purpose is reused (FR-020). `GET /me/checkout/quote`
+replaces `GET /me/plan-change/quote`; `BALANCE_SUFFICIENT`;
+`INSUFFICIENT_FUNDS.details.missingMinor`; a purchase at a provider is 400
+`VALIDATION_ERROR`. `applyEvent` credits every provider payment to the
+balance (late, canceled, off-sale, pre-F37 invoices too); a reported paid
+amount of 0 credits nothing (`PAID_ZERO` + `payment.underpaid` alert). The
+notice `payment.to_balance` names the invoice and, for a top-up for a plan,
+offers «Купить «тариф»», which opens a confirmation card with a fresh quote
+(bot: a random render nonce per card drawing makes a double press buy once
+and a later purchase a new request; site: `/pay/<id>`). Referral rewards come
+only from top-ups (R135 closed); `count_topups` is retired and an older export
+still imports (the old default receipt template is mapped too). Console:
+invoice numbers, kind filter, search by number; dashboard «Поступления»
+(provider money, pre-F37 provider purchases included) and «Продажи»
+(purchases − refunds); the late-payment widget is gone. Migration 0014
+(`reversible: no`): an insert-only trigger `invoices_provider_topup` (a NOT
+VALID CHECK would have blocked paying and expiring pre-F37 rows — found by the
+integration run), a NOT VALID CHECK for targets, `invoice_counters`.
+
+Evidence (local, at `0591280`): `pnpm build`; lint; typecheck; i18n-check
+(2366 messages); unit api 527, web 80, bot 117, worker 41 (and db 10, domain
+14, i18n-core 7, payments-mock 2 at `bf4c500`); `test:m1` 10/10, `test:m2` 9/9
+(new `m2.checkout`), `test:m4` 7/7; `pnpm test` 77/78 — the one failure is
+the known local-only docs-link test over the untracked review files. Contract
+checks (Task 1, `81eb3f9`, 2026-09-29/30): minimum invoice 1 ₽ at every
+provider (`minAmountMinor` 100); Lava's invoice API takes no receipt
+(`receipts: false`); Robokassa: the template goes to `Description` (≤ 100)
+and the receipt item (≤ 128); YooKassa: description and receipt item ≤ 128.
+
+Not verified: CI on GitHub (after the owner's push); `pnpm test:e2e` — it ran
+here but every browser test failed on the missing system library
+`libnspr4.so` (environment), so the new showcase / plan-change / FR-070 specs
+have never run in a browser; real provider invoices (minimums, a receipt
+through Robokassa «Робочеки СМЗ», whether Robokassa accepts `#` and brackets
+in `Description` — the default template has them); everything on the stand.
+
+Findings for the owner:
+
+- **YooKassa stopped self-employed (НПД) receipts on 2025-12-29** (its
+  changelog of 2025-12-23). The code keeps YooKassa `receipts: true` (54-FZ
+  receipts for ИП/ООО); the docs and both READMEs now tell an НПД shop to use
+  Robokassa «Робочеки СМЗ» or to issue receipts in «Мой налог». The owner
+  decides whether anything more is needed.
+- Deviations recorded in ADR-021, plus rulings made during execution: 400
+  instead of the plan's 422 for a purchase at a provider (section 9.3
+  mapping); an insert-only trigger instead of a NOT VALID CHECK; a zero paid
+  amount credits nothing; a non-escaping formatter `formatPlainMessage` for
+  Telegram button labels (new F37 buttons; the old ones remain R98, package
+  8); `lockAccounts` no longer locks reward accounts for a balance purchase.
+
+VPS actions after deploying F37 (the stand is recreated, О-20): migration 0014
+applies with a pre-migrate dump (`reversible: no`); walk a plan purchase with
+a short balance through a provider (the invoice number, the notice's
+«Купить», the confirmation card, the purchase); a plan change on the site;
+check the receipt text in the provider's cabinet; if Robokassa is used, create
+one sandbox invoice with the default template.
+
+Queued for later packages (working queue): a sweeper for promocode
+reservations orphaned by a crash (`reserved`, `invoice_id` NULL); importing
+an export with an unset secret fails (pre-existing); `promo_expense` is not
+locked up front for a `first_paid` balance invitee bonus (pre-existing
+ordering risk); the waiting screen has no «Отменить» (package 8); card
+buttons drawn before the deploy do nothing when pressed (safe; a catch-all
+would redraw the plans); small UX items (console number search on Enter only,
+no `maxLength` on the site's promocode field).
+
+**Exact next:** the owner pushes `dev` and checks CI (including e2e) on
+`0591280`; then package 5 (promocodes, prices, payments — R3, R18, R20/R73
+under О-5 in the F37 model). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
 ## VPS acceptance run — 2026-09-26
 
