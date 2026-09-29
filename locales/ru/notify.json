@@ -16,6 +16,7 @@
   "notify.btn.clients": "Клиенты",
   "notify.btn.renew": "Продлить",
   "notify.btn.buy": "Купить",
+  "notify.btn.buyPlan": "Купить «{plan}»",
   "notify.btn.plans": "Тарифы",
   "notify.btn.changePlan": "Сменить тариф",
   "notify.btn.balance": "Баланс",

@@ -18,7 +18,7 @@ export const NOTIFY_EVENTS = {
   'sub.traffic_80': ['changePlan'],
   'sub.traffic_limit': ['changePlan', 'renew'],
   'payment.succeeded': ['subscription'],
-  'payment.to_balance': ['buy', 'balance'],
+  'payment.to_balance': ['plans', 'balance'],
   'referral.reward': ['referrals'],
   'referral.invitee_bonus': ['subscription'],
   'promo.applied': ['subscription'],
@@ -37,6 +37,22 @@ const BUTTON_CALLBACK: Record<string, string> = {
   balance: 'balance',
   referrals: 'ref',
 };
+
+/**
+ * The buttons of a notification. F37: a top-up for a plan offers that plan —
+ * `tb:<invoiceId>` opens the bot's confirmation card with a fresh quote.
+ */
+export function notificationButtons(
+  event: NotifyEvent,
+  params: Record<string, string | number>,
+): Array<{ key: string; callback: string }> {
+  if (event === 'payment.to_balance' && params.hasPlan === 'yes' && params.buyInvoice)
+    return [
+      { key: 'buyPlan', callback: `tb:${String(params.buyInvoice)}` },
+      { key: 'balance', callback: 'balance' },
+    ];
+  return NOTIFY_EVENTS[event].map((key) => ({ key, callback: BUTTON_CALLBACK[key] ?? 'home' }));
+}
 
 /** Marketing events honour `marketing_opt_out`; service events never do. */
 const MARKETING_EVENTS = new Set<string>([]);
@@ -117,9 +133,9 @@ export class NotifyService {
         : 'ru';
       const catalog = await this.i18n.messages(locale);
       const text = formatMessage(locale, catalog, `notify.${input.event}`, input.params);
-      const buttons = NOTIFY_EVENTS[input.event].map((key) => ({
-        text: formatMessage(locale, catalog, `notify.btn.${key}`),
-        callback_data: BUTTON_CALLBACK[key] ?? 'home',
+      const buttons = notificationButtons(input.event, input.params).map((button) => ({
+        text: formatMessage(locale, catalog, `notify.btn.${button.key}`, input.params),
+        callback_data: button.callback,
       }));
 
       try {

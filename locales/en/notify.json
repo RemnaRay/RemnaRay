@@ -16,6 +16,7 @@
   "notify.btn.clients": "Clients",
   "notify.btn.renew": "Renew",
   "notify.btn.buy": "Buy",
+  "notify.btn.buyPlan": "Buy «{plan}»",
   "notify.btn.plans": "Plans",
   "notify.btn.changePlan": "Change plan",
   "notify.btn.balance": "Balance",

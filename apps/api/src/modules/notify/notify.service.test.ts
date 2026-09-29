@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { NotifyService } from './notify.service';
+import { NotifyService, notificationButtons } from './notify.service';
 
 const catalog: Record<string, string> = {
   'notify.sub.expires_in_3d': 'Подписка заканчивается через 3 дня — {until}.',
@@ -8,6 +8,10 @@ const catalog: Record<string, string> = {
   'notify.trial.expires_in_1d': 'Пробный доступ заканчивается завтра.',
   'notify.btn.renew': 'Продлить',
   'notify.btn.buy': 'Купить',
+  'notify.btn.buyPlan': 'Купить «{plan}»',
+  'notify.btn.balance': 'Баланс',
+  'notify.btn.plans': 'Тарифы',
+  'notify.payment.to_balance': 'Баланс пополнен на {amount}.',
   'alerts.title': 'RemnaRay: {type}',
   'alerts.panel.down': 'Панель недоступна более 5 минут.',
 };
@@ -242,6 +246,53 @@ describe('NotifyService', () => {
       expect(repeated.sent).toHaveLength(0);
     } finally {
       repeated.restore();
+    }
+  });
+});
+
+describe('payment.to_balance buttons (F37)', () => {
+  it('offers the plan the top-up was for', () => {
+    expect(
+      notificationButtons('payment.to_balance', {
+        hasPlan: 'yes',
+        plan: 'Месяц',
+        buyInvoice: '01a0ded7-ef45-767a-bbf5-fbd98a0d8762',
+      }),
+    ).toEqual([
+      { key: 'buyPlan', callback: 'tb:01a0ded7-ef45-767a-bbf5-fbd98a0d8762' },
+      { key: 'balance', callback: 'balance' },
+    ]);
+  });
+
+  it('offers the plans after a plain top-up', () => {
+    expect(
+      notificationButtons('payment.to_balance', { hasPlan: 'no', plan: '', buyInvoice: '' }),
+    ).toEqual([
+      { key: 'plans', callback: 'plans' },
+      { key: 'balance', callback: 'balance' },
+    ]);
+  });
+
+  it('delivers the buy button with the plan name', async () => {
+    const test = fixture();
+    try {
+      await test.service.send({
+        event: 'payment.to_balance',
+        userId: '11111111-1111-7111-8111-111111111111',
+        dedupKey: 'payment.to_balance:inv-1',
+        params: {
+          amount: '100',
+          hasPlan: 'yes',
+          plan: 'Месяц',
+          buyInvoice: '01a0ded7-ef45-767a-bbf5-fbd98a0d8762',
+        },
+      });
+      expect(JSON.stringify(test.sent[0])).toContain('"text":"Купить «Месяц»"');
+      expect(JSON.stringify(test.sent[0])).toContain(
+        '"callback_data":"tb:01a0ded7-ef45-767a-bbf5-fbd98a0d8762"',
+      );
+    } finally {
+      test.restore();
     }
   });
 });
