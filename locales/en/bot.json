@@ -268,5 +268,6 @@
   "bot.btn.changeFromBalance": "🔁 Change for {price}",
   "bot.btn.topupFor": "➕ Top up {amount} · {provider}",
   "bot.btn.buyPlan": "🛒 Buy «{plan}»",
-  "bot.error.plan_unavailable": "This plan is not available right now."
+  "bot.error.plan_unavailable": "This plan is not available right now.",
+  "bot.screen.pay.creditedPartial": "The payment{hasNumber, select, yes { (invoice #{number})} other {}} arrived incomplete — the amount received was credited to your balance."
 }

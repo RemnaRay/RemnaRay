@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { InlineKeyboard } from 'grammy';
 
 import {
@@ -10,6 +10,7 @@ import {
 import type { RrContext } from '../types.js';
 import { backButton, formatMinor, show } from './common.js';
 import { showInvoice } from './payments.js';
+import { showPlans } from './plans.js';
 
 type Kind = 'purchase' | 'plan_change';
 /** Where the card came from: the showcase / plan change, or a paid top-up's purpose. */
@@ -30,7 +31,7 @@ export function stableKey(ctx: RrContext): string {
 }
 
 /** A plan change's remainder melts ~0.4 ₽ an hour: up to 1 ₽ more than shown is the same offer. */
-function sameOffer(kind: Kind, shownMinor: number, quotedMinor: number): boolean {
+export function sameOffer(kind: Kind, shownMinor: number, quotedMinor: number): boolean {
   return kind === 'plan_change'
     ? quotedMinor >= shownMinor && quotedMinor - shownMinor <= 100
     : quotedMinor === shownMinor;
@@ -40,14 +41,38 @@ function planName(ctx: RrContext, plan: Pick<PublicPlan, 'name' | 'slug'>): stri
   return plan.name[ctx.locale] ?? plan.name['ru'] ?? plan.slug;
 }
 
-function buyData(origin: Origin, toPayMinor: number): string {
-  if (origin.invoiceId) return `tbb:${origin.invoiceId}:${String(toPayMinor)}`;
-  return `${origin.kind === 'plan_change' ? 'bc' : 'bb'}:${origin.slug}:${String(toPayMinor)}`;
+/**
+ * F37: one card drawing = one nonce in its buttons' callback data. The bot edits a single menu
+ * message, so without it a card redrawn on the same message would repeat an old press's
+ * Idempotency-Key and the API would replay the old invoice.
+ */
+function renderNonce(): string {
+  return randomInt(36 ** 6)
+    .toString(36)
+    .padStart(6, '0');
 }
 
-function topupData(origin: Origin, provider: string): string {
-  if (origin.invoiceId) return `tbt:${origin.invoiceId}:${provider}`;
-  return `${origin.kind === 'plan_change' ? 'tc' : 'tp'}:${origin.slug}:${provider}`;
+const SLUG = '([a-z0-9_-]{1,32})';
+const UUID = '([0-9a-f-]{36})';
+const NONCE = '([a-z0-9]{6})';
+
+/** The registered callbacks of the card; `index.ts` registers exactly these. */
+export const CARD_CALLBACKS = {
+  buy: new RegExp(`^b([bc]):${SLUG}:(\\d+):${NONCE}$`, 'u'),
+  topup: new RegExp(`^t([pc]):${SLUG}:([a-z-]+):${NONCE}$`, 'u'),
+  confirm: new RegExp(`^tb:${UUID}$`, 'u'),
+  buyFromConfirm: new RegExp(`^tbb:${UUID}:(\\d+):${NONCE}$`, 'u'),
+  topupFromConfirm: new RegExp(`^tbt:${UUID}:([a-z-]+):${NONCE}$`, 'u'),
+};
+
+export function buyData(origin: Origin, toPayMinor: number, nonce: string): string {
+  if (origin.invoiceId) return `tbb:${origin.invoiceId}:${String(toPayMinor)}:${nonce}`;
+  return `${origin.kind === 'plan_change' ? 'bc' : 'bb'}:${origin.slug}:${String(toPayMinor)}:${nonce}`;
+}
+
+export function topupData(origin: Origin, provider: string, nonce: string): string {
+  if (origin.invoiceId) return `tbt:${origin.invoiceId}:${provider}:${nonce}`;
+  return `${origin.kind === 'plan_change' ? 'tc' : 'tp'}:${origin.slug}:${provider}:${nonce}`;
 }
 
 /** The card: the price, the balance, and either «Купить с баланса» or a top-up per provider. */
@@ -87,6 +112,7 @@ export async function showCheckout(
   }
   const methods = quote.missingMinor > 0 ? await api.getPaymentMethods(ctx.from.id) : { items: [] };
   const keyboard = new InlineKeyboard();
+  const nonce = renderNonce();
   if (quote.missingMinor === 0)
     keyboard
       .text(
@@ -94,7 +120,7 @@ export async function showCheckout(
           origin.kind === 'plan_change' ? 'bot.btn.changeFromBalance' : 'bot.btn.buyFromBalance',
           { price: formatMinor(quote.toPayMinor) },
         ),
-        buyData(origin, quote.toPayMinor),
+        buyData(origin, quote.toPayMinor, nonce),
       )
       .row();
   for (const topup of quote.topups) {
@@ -103,9 +129,9 @@ export async function showCheckout(
       .text(
         ctx.tPlain('bot.btn.topupFor', {
           amount: formatMinor(topup.amountMinor),
-          provider: method?.displayName[ctx.locale] ?? topup.provider,
+          provider: method?.displayName[ctx.locale] ?? method?.displayName['ru'] ?? topup.provider,
         }),
-        topupData(origin, topup.provider),
+        topupData(origin, topup.provider, nonce),
       )
       .row();
   }
@@ -157,7 +183,8 @@ export async function buyFromCard(
       {
         kind: origin.kind,
         planId: plan.id,
-        ...(origin.promocode ? { promocode: origin.promocode } : {}),
+        // A code the card said is not applied is not sent: the server would refuse the purchase.
+        ...(origin.promocode && quote.promocode?.applied ? { promocode: origin.promocode } : {}),
       },
       stableKey(ctx),
     );
@@ -216,4 +243,23 @@ export async function originOfInvoice(
     invoiceId,
     ...(invoice.target.promocode ? { promocode: invoice.target.promocode } : {}),
   };
+}
+
+/**
+ * `tb` / `tbb` / `tbt`: the card of a paid top-up's purpose. Without a purpose (an invoice that
+ * was not for a plan) the customer is taken to the plans instead of a dead button.
+ */
+export async function confirmCard(
+  ctx: RrContext,
+  api: ApiClient,
+  invoiceId: string,
+  action: { shownMinor?: number; provider?: string } = {},
+): Promise<void> {
+  const origin = await originOfInvoice(ctx, api, invoiceId);
+  if (!origin) return showPlans(ctx, api);
+  if (action.shownMinor !== undefined)
+    return buyFromCard(ctx, api, { ...origin, shownMinor: action.shownMinor });
+  if (action.provider !== undefined)
+    return topupForPlan(ctx, api, { ...origin, provider: action.provider });
+  return showCheckout(ctx, api, origin);
 }

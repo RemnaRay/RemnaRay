@@ -9,7 +9,7 @@ import { STARS_START_PAYLOAD, sendStarsInvoice } from './stars.js';
 import { showHelp } from './help.js';
 import { showProfile } from './profile.js';
 import { showPlan, showPlans } from './plans.js';
-import { buyFromCard, originOfInvoice, showCheckout, topupForPlan } from './checkout.js';
+import { CARD_CALLBACKS, buyFromCard, confirmCard, topupForPlan } from './checkout.js';
 import { showReferralList, showReferrals } from './referrals.js';
 import {
   confirmRevoke,
@@ -77,36 +77,27 @@ export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
       else throw error;
     }
   });
-  const slug = '([a-z0-9_-]{1,32})';
-  const uuid = '([0-9a-f-]{36})';
-  bot.callbackQuery(new RegExp(`^b([bc]):${slug}:(\\d+)$`, 'u'), (ctx) =>
+  bot.callbackQuery(CARD_CALLBACKS.buy, (ctx) =>
     buyFromCard(ctx, api, {
       kind: capture(ctx.match, 1) === 'c' ? 'plan_change' : 'purchase',
       slug: capture(ctx.match, 2),
       shownMinor: Number(capture(ctx.match, 3)),
     }),
   );
-  bot.callbackQuery(new RegExp(`^t([pc]):${slug}:([a-z-]+)$`, 'u'), (ctx) =>
+  bot.callbackQuery(CARD_CALLBACKS.topup, (ctx) =>
     topupForPlan(ctx, api, {
       kind: capture(ctx.match, 1) === 'c' ? 'plan_change' : 'purchase',
       slug: capture(ctx.match, 2),
       provider: capture(ctx.match, 3),
     }),
   );
-  bot.callbackQuery(new RegExp(`^tb:${uuid}$`, 'u'), async (ctx) => {
-    const origin = await originOfInvoice(ctx, api, capture(ctx.match, 1));
-    if (origin) await showCheckout(ctx, api, origin);
-    else await showPlans(ctx, api);
-  });
-  bot.callbackQuery(new RegExp(`^tbb:${uuid}:(\\d+)$`, 'u'), async (ctx) => {
-    const origin = await originOfInvoice(ctx, api, capture(ctx.match, 1));
-    if (origin)
-      await buyFromCard(ctx, api, { ...origin, shownMinor: Number(capture(ctx.match, 2)) });
-  });
-  bot.callbackQuery(new RegExp(`^tbt:${uuid}:([a-z-]+)$`, 'u'), async (ctx) => {
-    const origin = await originOfInvoice(ctx, api, capture(ctx.match, 1));
-    if (origin) await topupForPlan(ctx, api, { ...origin, provider: capture(ctx.match, 2) });
-  });
+  bot.callbackQuery(CARD_CALLBACKS.confirm, (ctx) => confirmCard(ctx, api, capture(ctx.match, 1)));
+  bot.callbackQuery(CARD_CALLBACKS.buyFromConfirm, (ctx) =>
+    confirmCard(ctx, api, capture(ctx.match, 1), { shownMinor: Number(capture(ctx.match, 2)) }),
+  );
+  bot.callbackQuery(CARD_CALLBACKS.topupFromConfirm, (ctx) =>
+    confirmCard(ctx, api, capture(ctx.match, 1), { provider: capture(ctx.match, 2) }),
+  );
   bot.callbackQuery(/^plan:([a-z0-9_-]+)$/u, (ctx) => showPlan(ctx, api, capture(ctx.match, 1)));
   bot.callbackQuery(/^inv:check:([0-9a-f-]+)$/u, (ctx) =>
     checkPayment(ctx, api, capture(ctx.match, 1)),

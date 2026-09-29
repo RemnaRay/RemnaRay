@@ -46,7 +46,8 @@ export async function showInvoice(
   note?: string,
 ): Promise<void> {
   if (invoice.status === 'paid' || invoice.status === 'underpaid') {
-    if (invoice.kind !== 'topup') {
+    // A balance invoice is a purchase; any provider invoice is money credited to the balance.
+    if (invoice.provider === 'balance') {
       await show(ctx, ctx.t('bot.screen.pay.ok'), backButton(ctx));
       return;
     }
@@ -67,11 +68,16 @@ export async function showInvoice(
     keyboard.text(ctx.t('bot.btn.balance'), 'balance').row().text(ctx.t('bot.btn.back'), 'home');
     await show(
       ctx,
-      ctx.t('bot.screen.pay.credited', {
-        amount: formatMinor(invoice.amount.amountMinor, invoice.amount.currency),
-        hasNumber: invoice.number ? 'yes' : 'no',
-        number: invoice.number ?? '',
-      }),
+      invoice.status === 'underpaid'
+        ? ctx.t('bot.screen.pay.creditedPartial', {
+            hasNumber: invoice.number ? 'yes' : 'no',
+            number: invoice.number ?? '',
+          })
+        : ctx.t('bot.screen.pay.credited', {
+            amount: formatMinor(invoice.amount.amountMinor, invoice.amount.currency),
+            hasNumber: invoice.number ? 'yes' : 'no',
+            number: invoice.number ?? '',
+          }),
       keyboard,
     );
     return;

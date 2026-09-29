@@ -17,6 +17,7 @@ const pending = {
 /** A callback press on the invoice message; `edits` keeps what the screen became. */
 function press() {
   const edits: string[] = [];
+  const markups: unknown[] = [];
   const ctx = {
     from: { id: 7556126867 },
     locale: 'ru',
@@ -26,12 +27,17 @@ function press() {
       [key, ...Object.keys(values)].join(' '),
     tPlain: (key: string, values: Record<string, unknown> = {}) =>
       [key, ...Object.values(values)].join('|'),
-    editMessageText: (text: string) => {
+    editMessageText: (text: string, extra?: { reply_markup?: unknown }) => {
       edits.push(text);
+      markups.push(extra?.reply_markup);
       return Promise.resolve(true);
     },
   } as unknown as RrContext;
-  return { ctx, edits };
+  const labels = () =>
+    (
+      markups.at(-1) as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }
+    ).inline_keyboard.flat();
+  return { ctx, edits, labels };
 }
 
 describe('«Проверить оплату» (FR-064, F30)', () => {
@@ -59,24 +65,58 @@ describe('«Проверить оплату» (FR-064, F30)', () => {
     expect(edits).toEqual(['bot.screen.pay.ok']);
   });
 
+  const topupFor = (over: Record<string, unknown>) => ({
+    ...pending,
+    kind: 'topup',
+    provider: 'yookassa',
+    status: 'paid',
+    number: '01-00001',
+    target: { planId: 'p1', planSlug: 'month', kind: 'purchase', promocode: null },
+    ...over,
+  });
+  const plans = { items: [{ id: 'p1', slug: 'month', name: { ru: 'Tom & Jerry' } }] };
+
   it('turns a paid top-up for a plan into the «Купить» offer', async () => {
-    const { ctx, edits } = press();
+    const { ctx, edits, labels } = press();
     const api = {
-      checkInvoice: vi.fn().mockResolvedValue({
-        ...pending,
-        kind: 'topup',
-        status: 'paid',
-        number: '01-00001',
-        target: { planId: 'p1', planSlug: 'month', kind: 'purchase', promocode: null },
-      }),
-      getPlans: vi
-        .fn()
-        .mockResolvedValue({ items: [{ id: 'p1', slug: 'month', name: { ru: 'Месяц' } }] }),
+      checkInvoice: vi.fn().mockResolvedValue(topupFor({})),
+      getPlans: vi.fn().mockResolvedValue(plans),
     };
 
     await checkPayment(ctx, api as never, pending.id);
 
     expect(edits[0]).toContain('bot.screen.pay.credited');
+    expect(labels()[0]).toEqual(
+      expect.objectContaining({
+        callback_data: `tb:${pending.id}`,
+        text: 'bot.btn.buyPlan|Tom & Jerry',
+      }),
+    );
+  });
+
+  it('credits an old provider invoice of a purchase to the balance, not to a subscription', async () => {
+    const { ctx, edits } = press();
+    const api = {
+      checkInvoice: vi.fn().mockResolvedValue(topupFor({ kind: 'purchase', target: null })),
+      getPlans: vi.fn(),
+    };
+
+    await checkPayment(ctx, api as never, pending.id);
+
+    expect(edits[0]).toContain('bot.screen.pay.credited');
+  });
+
+  it('says an underpaid top-up arrived incomplete, without an amount', async () => {
+    const { ctx, edits } = press();
+    const api = {
+      checkInvoice: vi.fn().mockResolvedValue(topupFor({ status: 'underpaid' })),
+      getPlans: vi.fn().mockResolvedValue(plans),
+    };
+
+    await checkPayment(ctx, api as never, pending.id);
+
+    expect(edits[0]).toContain('bot.screen.pay.creditedPartial');
+    expect(edits[0]).not.toContain('amount');
   });
 
   it.each([

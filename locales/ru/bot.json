@@ -268,5 +268,6 @@
   "bot.btn.changeFromBalance": "🔁 Сменить за {price}",
   "bot.btn.topupFor": "➕ Пополнить на {amount} · {provider}",
   "bot.btn.buyPlan": "🛒 Купить «{plan}»",
-  "bot.error.plan_unavailable": "Этот тариф сейчас недоступен."
+  "bot.error.plan_unavailable": "Этот тариф сейчас недоступен.",
+  "bot.screen.pay.creditedPartial": "Оплата{hasNumber, select, yes { по счёту #{number}} other {}} пришла не полностью — полученная сумма зачислена на баланс."
 }
