@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { paymentKeyboard } from './common.js';
-import { confirmPlanChange, showPlanChange } from './plan-change.js';
+import { showPlanChange } from './plan-change.js';
 import type { RrContext } from '../types.js';
 
 function context() {
@@ -12,6 +11,10 @@ function context() {
     locale: 'ru',
     session: {},
     t: (key: string, values: Record<string, unknown> = {}) => {
+      params.push({ key, ...values });
+      return key;
+    },
+    tPlain: (key: string, values: Record<string, unknown> = {}) => {
       params.push({ key, ...values });
       return key;
     },
@@ -45,31 +48,13 @@ const plans = {
     },
   ],
 };
-const methods = (balance: number) => ({
-  items: [
-    {
-      code: 'balance',
-      kind: 'balance',
-      available: true,
-      displayName: { ru: 'Баланс' },
-      balance: { amountMinor: balance, currency: 'RUB' },
-    },
-    { code: 'yookassa', kind: 'redirect', available: true, displayName: { ru: 'ЮKassa' } },
-  ],
-});
-
 describe('bot plan change (section 12 `plan:change`, FR-023)', () => {
   it('lists the other plans with what is left to pay', async () => {
     const { ctx, params, data } = context();
     const api = {
       getSubscription: () => ({ subscription: { canChangePlan: true, plan: { id: 'p1' } } }),
       getPlans: () => plans,
-      getPlanChangeQuote: () => ({
-        creditMinor: 10000,
-        newPriceMinor: 299000,
-        toPayMinor: 289000,
-        canPayFromBalance: false,
-      }),
+      getCheckoutQuote: () => ({ kind: 'plan_change', toPayMinor: 289000 }),
     } as never;
 
     await showPlanChange(ctx, api);
@@ -78,40 +63,5 @@ describe('bot plan change (section 12 `plan:change`, FR-023)', () => {
     expect(params).toContainEqual(
       expect.objectContaining({ key: 'bot.btn.planChangeTo', plan: 'Год' }),
     );
-  });
-
-  it('confirms the calculation and pays from the balance first when it is enough', async () => {
-    const { ctx, params, data } = context();
-    const api = {
-      getPlans: () => plans,
-      getPlanChangeQuote: () => ({
-        creditMinor: 10000,
-        newPriceMinor: 299000,
-        toPayMinor: 289000,
-        canPayFromBalance: true,
-      }),
-      getPaymentMethods: () => methods(300000),
-    } as never;
-
-    await confirmPlanChange(ctx, api, 'year');
-
-    expect(params).toContainEqual(
-      expect.objectContaining({ key: 'bot.screen.planChange.confirm', plan: 'Год' }),
-    );
-    expect(data()).toEqual([
-      'plan:change:go:year:balance',
-      'plan:change:go:year:yookassa',
-      'plan:change',
-    ]);
-  });
-
-  it('leaves the balance out when it does not cover the price', () => {
-    const { ctx } = context();
-    const keyboard = paymentKeyboard(ctx, methods(100).items, 29900, (code) => `pay:month:${code}`);
-    expect(
-      keyboard.inline_keyboard
-        .flat()
-        .map((button) => ('callback_data' in button ? button.callback_data : '')),
-    ).toEqual(['pay:month:yookassa']);
   });
 });

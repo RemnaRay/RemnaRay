@@ -24,6 +24,8 @@ function press() {
     callbackQuery: { message: { message_id: 5 } },
     t: (key: string, values: Record<string, unknown> = {}) =>
       [key, ...Object.keys(values)].join(' '),
+    tPlain: (key: string, values: Record<string, unknown> = {}) =>
+      [key, ...Object.values(values)].join('|'),
     editMessageText: (text: string) => {
       edits.push(text);
       return Promise.resolve(true);
@@ -46,11 +48,35 @@ describe('«Проверить оплату» (FR-064, F30)', () => {
 
   it('shows the success of a paid one', async () => {
     const { ctx, edits } = press();
-    const api = { checkInvoice: vi.fn().mockResolvedValue({ ...pending, status: 'paid' }) };
+    const api = {
+      checkInvoice: vi
+        .fn()
+        .mockResolvedValue({ ...pending, kind: 'purchase', provider: 'balance', status: 'paid' }),
+    };
 
     await checkPayment(ctx, api as never, pending.id);
 
     expect(edits).toEqual(['bot.screen.pay.ok']);
+  });
+
+  it('turns a paid top-up for a plan into the «Купить» offer', async () => {
+    const { ctx, edits } = press();
+    const api = {
+      checkInvoice: vi.fn().mockResolvedValue({
+        ...pending,
+        kind: 'topup',
+        status: 'paid',
+        number: '01-00001',
+        target: { planId: 'p1', planSlug: 'month', kind: 'purchase', promocode: null },
+      }),
+      getPlans: vi
+        .fn()
+        .mockResolvedValue({ items: [{ id: 'p1', slug: 'month', name: { ru: 'Месяц' } }] }),
+    };
+
+    await checkPayment(ctx, api as never, pending.id);
+
+    expect(edits[0]).toContain('bot.screen.pay.credited');
   });
 
   it.each([

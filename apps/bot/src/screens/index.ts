@@ -4,11 +4,12 @@ import { InlineKeyboard, type Bot } from 'grammy';
 import { ApiClientError, type ApiClient } from '../api-client.js';
 import type { RrContext } from '../types.js';
 import { showAccount, showHome, showTrialConfirm } from './home.js';
-import { createPayment, checkPayment, showInvoice } from './payments.js';
+import { checkPayment, showInvoice } from './payments.js';
 import { STARS_START_PAYLOAD, sendStarsInvoice } from './stars.js';
 import { showHelp } from './help.js';
 import { showProfile } from './profile.js';
 import { showPlan, showPlans } from './plans.js';
+import { buyFromCard, originOfInvoice, showCheckout, topupForPlan } from './checkout.js';
 import { showReferralList, showReferrals } from './referrals.js';
 import {
   confirmRevoke,
@@ -19,7 +20,7 @@ import {
   showQr,
   showSubscription,
 } from './subscription.js';
-import { confirmPlanChange, payPlanChange, showPlanChange } from './plan-change.js';
+import { confirmPlanChange, showPlanChange } from './plan-change.js';
 import { backButton, formatDate, formatMinor, show } from './common.js';
 import { RATING_DATA, rateTicket, ratingKeyboard } from '../support-rating.js';
 import { FAQ_DATA, faqAnswer, faqKeyboard } from '../support-faq.js';
@@ -62,9 +63,6 @@ export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
     showGuide(ctx, capture(ctx.match, 1)),
   );
   bot.callbackQuery('plan:change', (ctx) => showPlanChange(ctx, api));
-  bot.callbackQuery(/^plan:change:go:([a-z0-9_-]+):([a-z-]+)$/u, (ctx) =>
-    payPlanChange(ctx, api, capture(ctx.match, 1), capture(ctx.match, 2)),
-  );
   bot.callbackQuery(/^plan:change:([a-z0-9_-]+)$/u, (ctx) =>
     confirmPlanChange(ctx, api, capture(ctx.match, 1)),
   );
@@ -79,10 +77,37 @@ export function registerScreens(bot: Bot<RrContext>, api: ApiClient): void {
       else throw error;
     }
   });
-  bot.callbackQuery(/^plan:([a-z0-9_-]+)$/u, (ctx) => showPlan(ctx, api, capture(ctx.match, 1)));
-  bot.callbackQuery(/^pay:([a-z0-9_-]+):([a-z-]+)$/u, (ctx) =>
-    createPayment(ctx, api, capture(ctx.match, 1), capture(ctx.match, 2)),
+  const slug = '([a-z0-9_-]{1,32})';
+  const uuid = '([0-9a-f-]{36})';
+  bot.callbackQuery(new RegExp(`^b([bc]):${slug}:(\\d+)$`, 'u'), (ctx) =>
+    buyFromCard(ctx, api, {
+      kind: capture(ctx.match, 1) === 'c' ? 'plan_change' : 'purchase',
+      slug: capture(ctx.match, 2),
+      shownMinor: Number(capture(ctx.match, 3)),
+    }),
   );
+  bot.callbackQuery(new RegExp(`^t([pc]):${slug}:([a-z-]+)$`, 'u'), (ctx) =>
+    topupForPlan(ctx, api, {
+      kind: capture(ctx.match, 1) === 'c' ? 'plan_change' : 'purchase',
+      slug: capture(ctx.match, 2),
+      provider: capture(ctx.match, 3),
+    }),
+  );
+  bot.callbackQuery(new RegExp(`^tb:${uuid}$`, 'u'), async (ctx) => {
+    const origin = await originOfInvoice(ctx, api, capture(ctx.match, 1));
+    if (origin) await showCheckout(ctx, api, origin);
+    else await showPlans(ctx, api);
+  });
+  bot.callbackQuery(new RegExp(`^tbb:${uuid}:(\\d+)$`, 'u'), async (ctx) => {
+    const origin = await originOfInvoice(ctx, api, capture(ctx.match, 1));
+    if (origin)
+      await buyFromCard(ctx, api, { ...origin, shownMinor: Number(capture(ctx.match, 2)) });
+  });
+  bot.callbackQuery(new RegExp(`^tbt:${uuid}:([a-z-]+)$`, 'u'), async (ctx) => {
+    const origin = await originOfInvoice(ctx, api, capture(ctx.match, 1));
+    if (origin) await topupForPlan(ctx, api, { ...origin, provider: capture(ctx.match, 2) });
+  });
+  bot.callbackQuery(/^plan:([a-z0-9_-]+)$/u, (ctx) => showPlan(ctx, api, capture(ctx.match, 1)));
   bot.callbackQuery(/^inv:check:([0-9a-f-]+)$/u, (ctx) =>
     checkPayment(ctx, api, capture(ctx.match, 1)),
   );
@@ -162,7 +187,7 @@ export function topupProviders(methods: Awaited<ReturnType<ApiClient['getPayment
   return methods.items.filter((item) => item.available && item.kind !== 'balance');
 }
 
-/** The customer's provider choice for a top-up, as `pay:<slug>:<provider>` is for a plan. */
+/** The customer's provider choice for a top-up, as `tp:<slug>:<provider>` is for a plan. */
 export function topupProviderKeyboard(
   ctx: { t: (key: string) => string; locale: RrContext['locale'] },
   providers: ReturnType<typeof topupProviders>,
@@ -215,7 +240,7 @@ async function createTopup(
     randomUUID(),
   );
   ctx.session.lastInvoiceId = invoice.id;
-  await showInvoice(ctx, invoice);
+  await showInvoice(ctx, api, invoice);
 }
 
 async function showLanguage(ctx: RrContext): Promise<void> {

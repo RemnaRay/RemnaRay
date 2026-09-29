@@ -1,30 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { InlineKeyboard } from 'grammy';
 
 import { ApiClientError, type ApiClient, type InvoiceView } from '../api-client.js';
 import type { RrContext } from '../types.js';
 import { backButton, formatDate, formatMinor, formatTime, show } from './common.js';
-
-export async function createPayment(
-  ctx: RrContext,
-  api: ApiClient,
-  slug: string,
-  provider: string,
-): Promise<void> {
-  if (!ctx.from) return;
-  const plan = (await api.getPlans()).items.find((item) => item.slug === slug);
-  if (!plan) {
-    await show(ctx, ctx.t('bot.error.invoice_expired'), backButton(ctx, 'plans'));
-    return;
-  }
-  const invoice = await api.createInvoice(
-    ctx.from.id,
-    { kind: 'purchase', planId: plan.id, provider },
-    randomUUID(),
-  );
-  ctx.session.lastInvoiceId = invoice.id;
-  await showInvoice(ctx, invoice);
-}
 
 /**
  * FR-064 «Проверить оплату». The answer always changes the screen: a paid
@@ -43,6 +21,7 @@ export async function checkPayment(
     const invoice = await api.checkInvoice(ctx.from.id, invoiceId);
     await showInvoice(
       ctx,
+      api,
       invoice,
       invoice.status === 'pending'
         ? ctx.t('bot.screen.pay.notYet', { time: checkedAt })
@@ -56,17 +35,45 @@ export async function checkPayment(
           ? ctx.t('bot.screen.pay.checkFailed', { time: checkedAt })
           : undefined;
     if (!note) throw error;
-    await showInvoice(ctx, await api.getInvoice(ctx.from.id, invoiceId), note);
+    await showInvoice(ctx, api, await api.getInvoice(ctx.from.id, invoiceId), note);
   }
 }
 
 export async function showInvoice(
   ctx: RrContext,
+  api: ApiClient,
   invoice: InvoiceView,
   note?: string,
 ): Promise<void> {
-  if (invoice.status === 'paid') {
-    await show(ctx, ctx.t('bot.screen.pay.ok'), backButton(ctx));
+  if (invoice.status === 'paid' || invoice.status === 'underpaid') {
+    if (invoice.kind !== 'topup') {
+      await show(ctx, ctx.t('bot.screen.pay.ok'), backButton(ctx));
+      return;
+    }
+    // F37: the money is on the balance; the purchase is the customer's next step.
+    const keyboard = new InlineKeyboard();
+    if (invoice.target) {
+      const plan = (await api.getPlans()).items.find((item) => item.id === invoice.target?.planId);
+      if (plan)
+        keyboard
+          .text(
+            ctx.tPlain('bot.btn.buyPlan', {
+              plan: plan.name[ctx.locale] ?? plan.name['ru'] ?? plan.slug,
+            }),
+            `tb:${invoice.id}`,
+          )
+          .row();
+    }
+    keyboard.text(ctx.t('bot.btn.balance'), 'balance').row().text(ctx.t('bot.btn.back'), 'home');
+    await show(
+      ctx,
+      ctx.t('bot.screen.pay.credited', {
+        amount: formatMinor(invoice.amount.amountMinor, invoice.amount.currency),
+        hasNumber: invoice.number ? 'yes' : 'no',
+        number: invoice.number ?? '',
+      }),
+      keyboard,
+    );
     return;
   }
   const keyboard = new InlineKeyboard();
@@ -78,6 +85,8 @@ export async function showInvoice(
     .row()
     .text(ctx.t('bot.btn.back'), 'home');
   const wait = ctx.t('bot.screen.pay.wait', {
+    hasNumber: invoice.number ? 'yes' : 'no',
+    number: invoice.number ?? '',
     price: formatMinor(invoice.amount.amountMinor, invoice.amount.currency),
     until: formatDate(invoice.expiresAt, ctx.locale),
   });

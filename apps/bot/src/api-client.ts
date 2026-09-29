@@ -95,11 +95,40 @@ export type InvoiceView = {
   status: string;
   provider: string;
   amount: { amountMinor: number; currency: string };
+  number: string | null;
+  target: {
+    planId: string;
+    planSlug: string;
+    kind: 'purchase' | 'plan_change';
+    promocode: string | null;
+  } | null;
   paymentUrl?: string;
   starsInvoiceLink?: string;
   expiresAt: string;
   createdAt: string;
 };
+
+export type CheckoutQuote = {
+  planId: string;
+  kind: 'purchase' | 'plan_change';
+  priceMinor: number;
+  discountMinor: number;
+  creditMinor: number;
+  toPayMinor: number;
+  availableMinor: number;
+  missingMinor: number;
+  topups: Array<{ provider: string; amountMinor: number }>;
+  promocode: { code: string; applied: boolean; error?: string } | null;
+};
+
+export type InvoiceRequest =
+  | { kind: 'purchase' | 'plan_change'; planId: string; promocode?: string }
+  | { kind: 'topup'; provider: string; amountMinor: number }
+  | {
+      kind: 'topup';
+      provider: string;
+      forPlan: { planId: string; kind: 'purchase' | 'plan_change'; promocode?: string };
+    };
 
 export type StarsInvoice = {
   invoiceId: string;
@@ -458,16 +487,7 @@ export class ApiClient {
     );
   }
 
-  createInvoice(
-    telegramId: number,
-    body: {
-      kind: 'purchase' | 'topup' | 'plan_change';
-      planId?: string;
-      provider: string;
-      amountMinor?: number;
-    },
-    idempotencyKey: string,
-  ) {
+  createInvoice(telegramId: number, body: InvoiceRequest, idempotencyKey: string) {
     return this.request<InvoiceView>('/api/internal/v1/me/invoices', {
       method: 'POST',
       userId: telegramId,
@@ -497,14 +517,15 @@ export class ApiClient {
     );
   }
 
-  /** FR-023 / EX-06: what changing to `planId` costs now. */
-  getPlanChangeQuote(telegramId: number, planId: string) {
-    return this.request<{
-      creditMinor: number;
-      newPriceMinor: number;
-      toPayMinor: number;
-      canPayFromBalance: boolean;
-    }>(`/api/internal/v1/me/plan-change/quote?planId=${encodeURIComponent(planId)}`, {
+  /** F37: what `planId` costs from the balance and the top-up each provider needs. */
+  getCheckoutQuote(
+    telegramId: number,
+    planId: string,
+    kind: 'purchase' | 'plan_change',
+    promocode?: string,
+  ) {
+    const query = new URLSearchParams({ planId, kind, ...(promocode ? { promocode } : {}) });
+    return this.request<CheckoutQuote>(`/api/internal/v1/me/checkout/quote?${query.toString()}`, {
       userId: telegramId,
     });
   }

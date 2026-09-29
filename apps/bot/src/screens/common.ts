@@ -71,37 +71,3 @@ export function formatTime(value: Date, locale = 'ru'): string {
     return new Intl.DateTimeFormat(tag, { ...options, timeZone: 'UTC' }).format(value);
   }
 }
-
-type PaymentMethod = {
-  code: string;
-  displayName: Record<string, string>;
-  kind: string;
-  available: boolean;
-  balance?: { amountMinor: number; currency: string };
-};
-
-/**
- * Section 12 `plan:<slug>`: the balance first when it covers `amountMinor`,
- * then every offered provider; `data` builds each button's callback.
- */
-export function paymentKeyboard(
-  ctx: RrContext,
-  methods: PaymentMethod[],
-  amountMinor: number,
-  data: (code: string) => string,
-): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  const balance = methods.find((method) => method.kind === 'balance');
-  if (balance?.balance && balance.balance.amountMinor >= amountMinor)
-    keyboard
-      .text(
-        ctx.t('bot.btn.payBalance', {
-          balance: formatMinor(balance.balance.amountMinor, balance.balance.currency),
-        }),
-        data('balance'),
-      )
-      .row();
-  for (const method of methods.filter((item) => item.available && item.kind !== 'balance'))
-    keyboard.text(method.displayName[ctx.locale] ?? method.code, data(method.code)).row();
-  return keyboard;
-}

@@ -1,4 +1,9 @@
-import { formatMessage, SUPPORTED_LOCALES, type Locale } from '@remnaray/i18n-core';
+import {
+  formatMessage,
+  formatPlainMessage,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from '@remnaray/i18n-core';
 import type { Middleware } from 'grammy';
 
 import type { ApiClient } from './api-client.js';
@@ -32,6 +37,8 @@ export class BotI18n {
     ctx.locale = locale;
     ctx.messages = messages;
     ctx.t = (key, values = {}) => formatMessage(locale, messages, key, values);
+    // Button labels are plain text: a plan named `A & B` must not show `A &amp; B`.
+    ctx.tPlain = (key, values = {}) => formatPlainMessage(locale, messages, key, values);
   }
 
   middleware(): Middleware<RrContext> {

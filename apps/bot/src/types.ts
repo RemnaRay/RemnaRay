@@ -15,6 +15,8 @@ export type BotSession = {
 export type I18nFlavor = {
   locale: Locale;
   t: (key: string, values?: Record<string, unknown>) => string;
+  /** `t` without HTML escaping, for Telegram button labels (plain text). */
+  tPlain: (key: string, values?: Record<string, unknown>) => string;
   /** The raw catalog: array values (`landing.faq`) are JSON, not ICU messages. */
   messages: Record<string, string>;
 };
