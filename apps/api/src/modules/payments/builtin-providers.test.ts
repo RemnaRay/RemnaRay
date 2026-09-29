@@ -2,6 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  BalanceProvider,
   CryptoBotProvider,
   LavaProvider,
   PlategaProvider,
@@ -554,5 +555,18 @@ describe('provider healthchecks call the provider (FR-061)', () => {
         baseUrl: 'http://lava.test',
       }),
     ).resolves.toMatchObject({ ok: false });
+  });
+
+  it('declares the verified minimum of every provider (F37, docs/payments/README.md)', () => {
+    for (const provider of [
+      new YooKassaProvider(),
+      new RobokassaProvider(),
+      new LavaProvider(),
+      new PlategaProvider(),
+      new CryptoBotProvider(),
+      new StarsProvider(),
+    ])
+      expect(provider.capabilities.minAmountMinor).toBe(100n);
+    expect(new BalanceProvider().capabilities.minAmountMinor).toBe(0n);
   });
 });

@@ -16,6 +16,7 @@ export class MockPaymentProvider {
     statusPolling: true,
     kind: 'redirect' as const,
     currencies: ['RUB'],
+    minAmountMinor: 100n,
   };
   readonly configSchema = z.object({ secret: z.string().default('mock-secret') });
   private readonly events = new Map<string, MockEvent>();

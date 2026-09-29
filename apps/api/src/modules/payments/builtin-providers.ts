@@ -70,6 +70,7 @@ export class YooKassaProvider implements PaymentProvider {
     statusPolling: true,
     kind: 'redirect' as const,
     currencies: ['RUB'],
+    minAmountMinor: 100n,
   };
   readonly configSchema = z.object({
     shopId: z.string(),
@@ -244,6 +245,7 @@ export class RobokassaProvider implements PaymentProvider {
     statusPolling: true,
     kind: 'redirect' as const,
     currencies: ['RUB'],
+    minAmountMinor: 100n,
   };
   readonly configSchema = z.object({
     merchantLogin: z.string(),
@@ -391,6 +393,7 @@ export class LavaProvider implements PaymentProvider {
     statusPolling: true,
     kind: 'redirect' as const,
     currencies: ['RUB'],
+    minAmountMinor: 100n,
   };
   readonly configSchema = z.object({
     shopId: z.string(),
@@ -497,6 +500,7 @@ export class PlategaProvider implements PaymentProvider {
     statusPolling: true,
     kind: 'redirect' as const,
     currencies: ['RUB'],
+    minAmountMinor: 100n,
   };
   readonly configSchema = z.object({
     merchantId: z.string(),
@@ -582,6 +586,7 @@ export class CryptoBotProvider implements PaymentProvider {
     statusPolling: true,
     kind: 'redirect' as const,
     currencies: ['RUB'],
+    minAmountMinor: 100n,
   };
   readonly configSchema = z.object({
     token: z.string(),
@@ -738,6 +743,7 @@ export class StarsProvider implements PaymentProvider {
     statusPolling: false,
     kind: 'stars' as const,
     currencies: ['XTR'],
+    minAmountMinor: 100n,
   };
   /**
    * What an administrator configures (section 11.3.6). The bot token comes
@@ -832,6 +838,7 @@ export class BalanceProvider implements PaymentProvider {
     statusPolling: false,
     kind: 'balance' as const,
     currencies: ['RUB'],
+    minAmountMinor: 0n,
   };
   readonly configSchema = z.object({});
   createInvoice(p: CreateInvoiceParams) {

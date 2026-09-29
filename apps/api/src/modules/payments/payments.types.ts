@@ -75,6 +75,8 @@ export interface PaymentProvider {
     statusPolling: boolean;
     kind: 'redirect' | 'stars' | 'balance';
     currencies: string[];
+    /** F37: the smallest invoice the provider accepts, in kopecks (docs/payments/README.md). */
+    minAmountMinor: bigint;
   };
   readonly configSchema: z.ZodType;
   createInvoice(params: CreateInvoiceParams, config: ProviderConfig): Promise<CreatedInvoice>;

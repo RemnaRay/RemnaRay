@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@remnaray/db';
 
+import { planChangeCredit } from '../payments/checkout';
 import { emitWebhook, subscriptionData } from '../webhooks/outgoing';
 import { SubscriptionError } from './subscriptions.errors';
 
@@ -160,9 +161,7 @@ export class SubscriptionsRepository implements SubscriptionsRepositoryPort {
     const remainingSeconds = BigInt(
       Math.max(0, Math.floor((subscription.expiresAt.getTime() - now.getTime()) / 1000)),
     );
-    const periodSeconds = BigInt(oldPlan.durationDays) * 86_400n;
-    const creditMinor =
-      (oldPlan.priceMinor * remainingSeconds + periodSeconds - 1n) / periodSeconds;
+    const creditMinor = planChangeCredit(oldPlan, subscription.expiresAt, now);
     return {
       oldPlanId: oldPlan.id,
       newPlanId: newPlan.id,
