@@ -18,6 +18,11 @@ export type ActingAdmin = { id: string; role: AdminRole };
 const invoiceQuerySchema = z.object({
   status: z.enum(['pending', 'paid', 'expired', 'canceled', 'underpaid']).optional(),
   provider: z.string().min(1).max(32).optional(),
+  kind: z.enum(['purchase', 'topup', 'plan_change']).optional(),
+  number: z
+    .string()
+    .regex(/^\d{2}-\d{5,}$/u)
+    .optional(),
   userId: z.uuid().optional(),
   from: z.iso.datetime().optional(),
   to: z.iso.datetime().optional(),
@@ -88,6 +93,8 @@ export class AdminPaymentsService {
       where: {
         ...(input.status ? { status: input.status } : {}),
         ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.kind ? { kind: input.kind } : {}),
+        ...(input.number ? { number: input.number } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
         ...(input.from || input.to
           ? {
@@ -106,6 +113,7 @@ export class AdminPaymentsService {
     return {
       items: page.map((row) => ({
         id: row.id,
+        number: row.number,
         userId: row.userId,
         kind: row.kind,
         status: row.status,

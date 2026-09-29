@@ -14,7 +14,14 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  Input,
+  Label,
   MoneyInput,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Tabs,
   TabsContent,
   TabsList,
@@ -37,6 +44,9 @@ import { invoiceStatusLabel, providerLabel, refundableMinor, transactionTypeLabe
 type Invoices = z.infer<typeof adminInvoiceListSchema>;
 type Transactions = z.infer<typeof adminTransactionListSchema>;
 type InvoiceDetail = z.infer<typeof adminInvoiceDetailSchema>;
+type Kind = '' | 'topup' | 'purchase' | 'plan_change';
+
+const KINDS = ['topup', 'purchase', 'plan_change'] as const;
 
 export default function PaymentsClient() {
   const t = useTranslations('admin');
@@ -48,9 +58,14 @@ export default function PaymentsClient() {
   // Section 9.1: one key per opened refund, kept while its dialog is open.
   const refundKey = useMemo(() => (refundTarget ? crypto.randomUUID() : ''), [refundTarget]);
   const [pending, setPending] = useState(false);
+  const [kind, setKind] = useState<Kind>('');
+  const [number, setNumber] = useState('');
+  const [numberDraft, setNumberDraft] = useState('');
 
-  const invoices = useResource<Invoices>('admin:invoices', () =>
-    adminApi().get('api/admin/v1/invoices', adminInvoiceListSchema, { query: { limit: 50 } }),
+  const invoices = useResource<Invoices>(`admin:invoices:${kind}:${number}`, () =>
+    adminApi().get('api/admin/v1/invoices', adminInvoiceListSchema, {
+      query: { limit: 50, ...(kind ? { kind } : {}), ...(number ? { number } : {}) },
+    }),
   );
   const transactions = useResource<Transactions>('admin:transactions', () =>
     adminApi().get('api/admin/v1/transactions', adminTransactionListSchema, {
@@ -113,10 +128,60 @@ export default function PaymentsClient() {
               </TabsList>
 
               <TabsContent value="invoices">
+                <div className="mb-4 flex flex-wrap items-end gap-3">
+                  <div className="flex w-48 flex-col gap-1">
+                    <Label htmlFor="invoice-kind">{t('payments.kindLabel')}</Label>
+                    <Select
+                      value={kind || 'all'}
+                      onValueChange={(value) => {
+                        setKind(value === 'all' ? '' : (value as Kind));
+                      }}
+                    >
+                      <SelectTrigger id="invoice-kind">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">{t('payments.kind.all')}</SelectItem>
+                        {KINDS.map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {t(`payments.kind.${value}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex w-56 flex-col gap-1">
+                    <Label htmlFor="invoice-number">{t('payments.numberSearch')}</Label>
+                    <Input
+                      id="invoice-number"
+                      placeholder="01-00150"
+                      value={numberDraft}
+                      onChange={(event) => {
+                        setNumberDraft(event.target.value);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') setNumber(numberDraft.trim());
+                      }}
+                    />
+                  </div>
+                </div>
                 <AdminSection refresh={invoices.refresh} state={invoices.state}>
                   {(data) => (
                     <DataTable
                       columns={[
+                        {
+                          key: 'number',
+                          header: t('payments.number'),
+                          cell: (row) => row.number ?? '—',
+                        },
+                        {
+                          key: 'kind',
+                          header: t('payments.kindLabel'),
+                          cell: (row) =>
+                            (KINDS as readonly string[]).includes(row.kind)
+                              ? t(`payments.kind.${row.kind as (typeof KINDS)[number]}`)
+                              : row.kind,
+                        },
                         {
                           key: 'provider',
                           header: t('payments.provider'),

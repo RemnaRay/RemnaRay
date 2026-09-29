@@ -23,7 +23,8 @@ const moneySchema = z.object({ amountMinor: z.number(), currency: z.string() });
 
 const overviewSchema = z.object({
   range: z.object({ from: z.string(), to: z.string() }),
-  revenue: moneySchema,
+  receipts: moneySchema,
+  sales: moneySchema,
   payments: z.number(),
   averagePayment: moneySchema,
   newUsers: z.number(),
@@ -39,13 +40,12 @@ const overviewSchema = z.object({
 });
 
 const seriesSchema = z.object({
-  revenue: z.array(z.object({ day: z.string(), amountMinor: z.number() })),
+  receipts: z.array(z.object({ day: z.string(), amountMinor: z.number() })),
   registrations: z.array(z.object({ day: z.string(), count: z.number() })),
 });
 
 const attentionSchema = z.object({
   provisioningFailed: z.number(),
-  lateInvoicePayments: z.number(),
   stuckJobs: z.number(),
   panelLastSyncedAt: z.string().nullable(),
   panelLastReconciledAt: z.string().nullable().default(null),
@@ -93,10 +93,18 @@ export default function DashboardClient() {
               <div className="flex flex-col gap-6">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <Stat
-                    label={t('dashboard.revenue')}
+                    label={t('dashboard.receipts')}
                     value={money(
-                      data.overview.revenue.amountMinor,
-                      data.overview.revenue.currency,
+                      data.overview.receipts.amountMinor,
+                      data.overview.receipts.currency,
+                      'ru',
+                    )}
+                  />
+                  <Stat
+                    label={t('dashboard.sales')}
+                    value={money(
+                      data.overview.sales.amountMinor,
+                      data.overview.sales.currency,
                       'ru',
                     )}
                   />
@@ -139,13 +147,13 @@ export default function DashboardClient() {
                   <TrendChart
                     emptyLabel={t('dashboard.noData')}
                     formatValue={(value) => money(value, 'RUB', 'ru')}
-                    points={data.series.revenue.map((row) => ({
+                    points={data.series.receipts.map((row) => ({
                       label: row.day.slice(5),
                       value: row.amountMinor,
                     }))}
-                    seriesLabel={t('dashboard.revenue')}
-                    tableLabels={{ period: t('dashboard.day'), value: t('dashboard.revenue') }}
-                    title={t('dashboard.revenueChart')}
+                    seriesLabel={t('dashboard.receipts')}
+                    tableLabels={{ period: t('dashboard.day'), value: t('dashboard.receipts') }}
+                    title={t('dashboard.receiptsChart')}
                   />
                   <CountChart
                     emptyLabel={t('dashboard.noData')}
@@ -161,20 +169,12 @@ export default function DashboardClient() {
 
                 <div className="rounded-lg border border-border bg-surface p-4">
                   <h2 className="text-sm font-semibold">{t('dashboard.attention')}</h2>
-                  <dl className="mt-3 grid gap-3 sm:grid-cols-4">
+                  <dl className="mt-3 grid gap-3 sm:grid-cols-3">
                     <div>
                       <dt className="text-xs text-muted-foreground">
                         {t('dashboard.provisioningFailed')}
                       </dt>
                       <dd className="text-lg font-semibold">{data.attention.provisioningFailed}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-muted-foreground">
-                        {t('dashboard.lateInvoices')}
-                      </dt>
-                      <dd className="text-lg font-semibold">
-                        {data.attention.lateInvoicePayments}
-                      </dd>
                     </div>
                     <div>
                       <dt className="text-xs text-muted-foreground">{t('dashboard.stuckJobs')}</dt>

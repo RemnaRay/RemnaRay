@@ -54,7 +54,8 @@ function session(role: 'admin' | 'operator'): MockRoute {
 
 const overview = {
   range: { from: '2026-08-01T00:00:00.000Z', to: '2026-09-01T00:00:00.000Z' },
-  revenue: { amountMinor: 99800, currency: 'RUB' },
+  receipts: { amountMinor: 99800, currency: 'RUB' },
+  sales: { amountMinor: 79700, currency: 'RUB' },
   payments: 3,
   averagePayment: { amountMinor: 33266, currency: 'RUB' },
   newUsers: 5,
@@ -68,13 +69,12 @@ const overview = {
 };
 
 const series = {
-  revenue: [{ day: '2026-08-31', amountMinor: 99800 }],
+  receipts: [{ day: '2026-08-31', amountMinor: 99800 }],
   registrations: [{ day: '2026-08-31', count: 5 }],
 };
 
 const attention = {
   provisioningFailed: 1,
-  lateInvoicePayments: 0,
   stuckJobs: 0,
   panelLastSyncedAt: null,
 };
@@ -136,7 +136,8 @@ describe('admin pages', () => {
           items: [
             {
               id: 'inv-1',
-              kind: 'purchase',
+              number: '01-00150',
+              kind: 'topup',
               status: 'paid',
               provider: 'balance',
               amount: { amountMinor: 29900, currency: 'RUB' },
@@ -149,6 +150,8 @@ describe('admin pages', () => {
       '/api/admin/v1/transactions': { body: { items: [], nextCursor: null } },
     });
 
+    expect(markup).toContain('01-00150');
+    expect(markup).toContain('Пополнение');
     expect(markup).toContain('С баланса');
     expect(markup).toContain('Оплачен');
     expect(markup).not.toContain('>balance<');
@@ -158,10 +161,12 @@ describe('admin pages', () => {
     const markup = await render(DashboardClient, dashboardRoutes());
 
     expect(markup).toContain('data-state="ready"');
-    expect(markup).toContain('Выручка');
+    expect(markup).toContain('Поступления');
+    expect(markup).toContain('Продажи');
+    expect(markup).not.toContain('Оплаты просроченных счетов');
     expect(markup).toContain('Конверсия триал → оплата');
     expect(markup).toContain('50%');
-    expect(markup).toContain('Выручка по дням');
+    expect(markup).toContain('Поступления по дням');
     expect(markup).toContain('Регистрации по дням');
     expect(markup).toContain('Требует внимания');
   });

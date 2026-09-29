@@ -31,6 +31,8 @@ test(
       const { createPrismaClient } = await import('../packages/db/dist/index.js');
       const { DashboardService } =
         await import('../apps/api/dist/modules/admin-api/dashboard.service.js');
+      const { AdminPaymentsService } =
+        await import('../apps/api/dist/modules/admin-api/admin-payments.service.js');
       const { AdminUsersService } =
         await import('../apps/api/dist/modules/admin-api/admin-users.service.js');
       const prisma = createPrismaClient(databaseUrl);
@@ -39,6 +41,7 @@ test(
         get: (key) => Promise.resolve(key === 'operator.max_credit_minor' ? '100000' : '100000'),
       };
       const dashboard = new DashboardService(infra);
+      const adminPayments = new AdminPaymentsService(infra, {}, settings);
       const users = new AdminUsersService(infra, settings, {});
 
       const admin = await prisma.admin.create({
@@ -75,11 +78,12 @@ test(
         created.push(user);
       }
 
+      // F37 (ADR-021): provider money is only top-ups; purchases spend the balance.
       await prisma.transaction.createMany({
         data: [
           {
             userId: created[0].id,
-            type: 'purchase',
+            type: 'topup',
             status: 'completed',
             amountMinor: 29900n,
             currency: 'RUB',
@@ -87,7 +91,7 @@ test(
           },
           {
             userId: created[1].id,
-            type: 'purchase',
+            type: 'topup',
             status: 'completed',
             amountMinor: 29900n,
             currency: 'RUB',
@@ -101,22 +105,21 @@ test(
             currency: 'RUB',
             provider: 'yookassa',
           },
-          {
-            // Paid from the balance the top-up filled: no new money (F31).
-            userId: created[2].id,
+          ...[0, 1, 2].map((index) => ({
+            userId: created[index].id,
             type: 'purchase',
             status: 'completed',
             amountMinor: 29900n,
             currency: 'RUB',
             provider: 'balance',
-          },
+          })),
           {
             userId: created[0].id,
             type: 'refund',
             status: 'completed',
             amountMinor: 10000n,
             currency: 'RUB',
-            provider: 'mock',
+            provider: 'balance',
           },
           {
             userId: created[3].id,
@@ -126,6 +129,34 @@ test(
             currency: 'RUB',
           },
         ],
+      });
+      const receivedTopups = 29900n + 29900n + 50000n;
+      const purchasedMinor = 3n * 29900n;
+      const refundedMinor = 10000n;
+      const topup = await prisma.invoice.create({
+        data: {
+          userId: created[0].id,
+          kind: 'topup',
+          provider: 'mock',
+          status: 'paid',
+          amountMinor: 29900n,
+          currency: 'RUB',
+          expiresAt: new Date(Date.now() + 3_600_000),
+          idempotencyKey: 'm4-topup-1',
+          number: '99-00001',
+        },
+      });
+      await prisma.invoice.create({
+        data: {
+          userId: created[0].id,
+          kind: 'purchase',
+          provider: 'balance',
+          status: 'paid',
+          amountMinor: 29900n,
+          currency: 'RUB',
+          expiresAt: new Date(Date.now() + 3_600_000),
+          idempotencyKey: 'm4-purchase-1',
+        },
       });
       await prisma.subscription.createMany({
         data: [
@@ -172,19 +203,17 @@ test(
       const to = new Date(Date.now() + 86_400_000);
       const overview = await dashboard.overview({ from: from.toISOString(), to: to.toISOString() });
 
-      // AC-142: independent SQL control for every aggregate. Revenue is the
-      // money providers brought in (owner decision F31, 2026-09-26): top-ups
-      // and purchases not paid from the balance; refunds to the balance keep
-      // the money in the shop and are not subtracted.
+      // AC-142: independent SQL control for every aggregate. Receipts are the
+      // money providers brought in (F37): top-ups only.
       const [control] = await prisma.$queryRaw`
         SELECT
           (SELECT COALESCE(SUM(amount_minor), 0)
              FROM transactions
-            WHERE status = 'completed' AND type IN ('purchase','topup')
+            WHERE status = 'completed' AND type = 'topup'
               AND provider IS NOT NULL AND provider <> 'balance'
-              AND created_at BETWEEN ${from} AND ${to})::bigint AS revenue,
+              AND created_at BETWEEN ${from} AND ${to})::bigint AS receipts,
           (SELECT COUNT(*) FROM transactions
-            WHERE status = 'completed' AND type IN ('purchase','topup')
+            WHERE status = 'completed' AND type = 'topup'
               AND provider IS NOT NULL AND provider <> 'balance'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS payments,
           (SELECT COUNT(*) FROM users WHERE created_at BETWEEN ${from} AND ${to})::bigint AS new_users,
@@ -196,14 +225,18 @@ test(
             WHERE type = 'referral_reward' AND status = 'completed'
               AND created_at BETWEEN ${from} AND ${to})::bigint AS rewards`;
 
-      assert.equal(overview.revenue.amountMinor, Number(control.revenue));
+      assert.equal(overview.receipts.amountMinor, Number(receivedTopups));
       assert.equal(overview.payments, Number(control.payments));
       assert.equal(overview.newUsers, Number(control.new_users));
       assert.equal(overview.trialsIssued, Number(control.trials));
       assert.equal(overview.activeSubscriptions, Number(control.active));
       assert.equal(overview.userBalanceLiability.amountMinor, Number(control.liability));
       assert.equal(overview.referralRewards.amountMinor, Number(control.rewards));
-      assert.equal(overview.revenue.amountMinor, 109800);
+      assert.equal(overview.receipts.amountMinor, Number(control.receipts));
+      // Sales: purchases from the balance less refunds.
+      assert.equal(overview.sales.amountMinor, Number(purchasedMinor - refundedMinor));
+      assert.equal('revenue' in overview, false);
+      assert.equal('lateInvoicePayments' in (await dashboard.attention()), false);
       assert.equal(overview.payments, 3);
       assert.equal(overview.averagePayment.amountMinor, Math.floor(109800 / 3));
       assert.equal(overview.expiringInThreeDays, 1);
@@ -218,13 +251,22 @@ test(
 
       const series = await dashboard.series({ from: from.toISOString(), to: to.toISOString() });
       assert.equal(
-        series.revenue.reduce((sum, row) => sum + row.amountMinor, 0),
-        overview.revenue.amountMinor,
+        series.receipts.reduce((sum, row) => sum + row.amountMinor, 0),
+        overview.receipts.amountMinor,
       );
       assert.equal(
         series.registrations.reduce((sum, row) => sum + row.count, 0),
         overview.newUsers,
       );
+
+      const byNumber = await adminPayments.invoices({ number: topup.number });
+      assert.deepEqual(
+        byNumber.items.map((row) => row.id),
+        [topup.id],
+      );
+      assert.equal(byNumber.items[0].number, topup.number);
+      const topups = await adminPayments.invoices({ kind: 'topup' });
+      assert.ok(topups.items.length > 0 && topups.items.every((row) => row.kind === 'topup'));
 
       // AC-140: search reaches a user by Telegram id and by username.
       const byTelegram = await users.list({ q: String(created[2].telegramId) });

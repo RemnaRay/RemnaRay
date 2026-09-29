@@ -30,14 +30,11 @@ function toNumber(value: unknown): number {
 }
 
 /**
- * Money a provider brought in: top-ups and purchases, except purchases paid
- * from the balance, which spend a top-up already counted. Owner decision F31
- * (2026-09-26), a deliberate deviation from FR-142's `purchase + topup −
- * refund`, which counted that money twice; a refund goes to the balance, so
- * the money stays with the shop (the users' balance, the liability widget)
- * and is not subtracted either.
+ * F37 (ADR-021): money comes in only as provider top-ups — «Поступления». A
+ * purchase spends it from the balance — «Продажи» are purchases less refunds.
+ * The difference stays on the customers' balances (the liability widget).
  */
-const RECEIVED = Prisma.sql`status = 'completed' AND type IN ('purchase', 'topup')
+const RECEIVED = Prisma.sql`status = 'completed' AND type = 'topup'
   AND provider IS NOT NULL AND provider <> 'balance'`;
 
 /**
@@ -72,7 +69,8 @@ export class DashboardService {
     const soon = new Date(Date.now() + 3 * 86_400_000);
 
     const [
-      revenueRows,
+      receiptsRows,
+      salesRows,
       paymentRows,
       newUsers,
       trialRows,
@@ -83,10 +81,15 @@ export class DashboardService {
       referralRows,
       providerRows,
     ] = await Promise.all([
-      db.$queryRaw<{ revenue: bigint | null }[]>`
-          SELECT COALESCE(SUM(amount_minor), 0)::bigint AS revenue
+      db.$queryRaw<{ receipts: bigint | null }[]>`
+          SELECT COALESCE(SUM(amount_minor), 0)::bigint AS receipts
           FROM transactions
           WHERE ${RECEIVED} AND created_at >= ${from} AND created_at <= ${to}`,
+      db.$queryRaw<{ sales: bigint | null }[]>`
+          SELECT COALESCE(SUM(CASE WHEN type = 'purchase' THEN amount_minor ELSE -amount_minor END), 0)::bigint AS sales
+          FROM transactions
+          WHERE status = 'completed' AND type IN ('purchase', 'refund')
+            AND created_at >= ${from} AND created_at <= ${to}`,
       db.$queryRaw<{ payments: bigint; total: bigint | null }[]>`
           SELECT COUNT(*)::bigint AS payments, COALESCE(SUM(amount_minor), 0)::bigint AS total
           FROM transactions
@@ -138,7 +141,8 @@ export class DashboardService {
 
     return {
       range: { from: from.toISOString(), to: to.toISOString() },
-      revenue: money(toBigInt(revenueRows[0]?.revenue ?? 0)),
+      receipts: money(toBigInt(receiptsRows[0]?.receipts ?? 0)),
+      sales: money(toBigInt(salesRows[0]?.sales ?? 0)),
       payments,
       averagePayment: money(payments > 0 ? paymentsTotal / BigInt(payments) : 0n),
       newUsers,
@@ -156,10 +160,10 @@ export class DashboardService {
     };
   }
 
-  /** Daily series for the revenue and registration charts. */
+  /** Daily series for the receipts and registration charts. */
   async series(query: unknown) {
     const { from, to } = this.range(query);
-    const [revenue, registrations] = await Promise.all([
+    const [receipts, registrations] = await Promise.all([
       this.infra.db.$queryRaw<{ day: Date; total: bigint | null }[]>`
         SELECT date_trunc('day', created_at) AS day,
                COALESCE(SUM(amount_minor), 0)::bigint AS total
@@ -173,7 +177,7 @@ export class DashboardService {
         GROUP BY 1 ORDER BY 1`,
     ]);
     return {
-      revenue: revenue.map((row) => ({
+      receipts: receipts.map((row) => ({
         day: row.day.toISOString().slice(0, 10),
         amountMinor: toNumber(row.total ?? 0),
       })),
@@ -187,11 +191,8 @@ export class DashboardService {
   /** FR-142 "requires attention" list. */
   async attention() {
     const db = this.infra.db;
-    const [provisioningFailed, paidExpiredInvoices, failedJobs, panel] = await Promise.all([
+    const [provisioningFailed, failedJobs, panel] = await Promise.all([
       db.subscription.count({ where: { status: 'provisioning_failed' } }),
-      db.invoice.count({
-        where: { status: 'paid', paidAt: { not: null }, expiresAt: { lt: new Date() } },
-      }),
       db.outboxJob.count({
         where: { publishedAt: null, createdAt: { lt: new Date(Date.now() - 300_000) } },
       }),
@@ -199,7 +200,6 @@ export class DashboardService {
     ]);
     return {
       provisioningFailed,
-      lateInvoicePayments: paidExpiredInvoices,
       stuckJobs: failedJobs,
       panelLastSyncedAt: panel._max.syncedAt?.toISOString() ?? null,
       panelLastReconciledAt: (await lastReconcile(this.infra.redis))?.at ?? null,

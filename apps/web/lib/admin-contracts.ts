@@ -84,6 +84,7 @@ export const adminInvoiceListSchema = z.object({
   items: z.array(
     z.object({
       id: z.string(),
+      number: z.string().nullable().default(null),
       userId: z.string().optional(),
       kind: z.string(),
       status: z.string(),
