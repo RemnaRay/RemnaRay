@@ -461,8 +461,9 @@ export class PaymentsService {
    * offered to customers — enabled and with a successful last healthcheck, as
    * `GET /me/payment-methods` shows it. The built-in balance has no row to
    * enable; it pays for plans (FR-070) and never tops itself up (FR-071).
+   * The account asks it too before handing back a pending top-up (FR-020).
    */
-  private async requireOffered(code: string, kind: InvoiceRequest['kind']): Promise<void> {
+  async requireOffered(code: string, kind: InvoiceRequest['kind']): Promise<void> {
     this.providers.get(code);
     if (code === 'balance') {
       if (kind === 'topup') throw new PaymentError('PROVIDER_UNAVAILABLE');

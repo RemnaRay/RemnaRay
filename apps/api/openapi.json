@@ -2293,7 +2293,9 @@
           "409": {
             "description": "PLAN_UNAVAILABLE | PROVIDER_UNAVAILABLE | INSUFFICIENT_FUNDS (details.missingMinor) | BALANCE_SUFFICIENT | PLAN_CHANGE_NOT_ALLOWED | PROMO_*"
           },
-          "422": { "description": "BALANCE_ONLY | IDEMPOTENCY_KEY_REUSED" }
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED | BALANCE_ONLY (internal fallback only: a purchase at a provider is refused as 400 VALIDATION_ERROR)"
+          }
         },
         "parameters": [
           {

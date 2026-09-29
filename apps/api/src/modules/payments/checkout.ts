@@ -18,13 +18,18 @@ export const INVOICE_PROVIDER_CODES: Readonly<Record<string, string>> = Object.f
 /** The remainder melts; a top-up for a plan change covers it for a day. */
 export const PLAN_CHANGE_TOPUP_MARGIN_MS = 86_400_000;
 
-export function formatInvoiceNumber(provider: string, sequence: bigint): string {
+/** The two-digit prefix of `provider`'s invoice numbers; a provider without one has no numbers. */
+export function invoiceProviderCode(provider: string): string {
   // Own keys only: `toString` or `__proto__` would otherwise resolve through the prototype.
   const code = Object.hasOwn(INVOICE_PROVIDER_CODES, provider)
     ? INVOICE_PROVIDER_CODES[provider]
     : undefined;
   if (!code) throw new Error('INVOICE_NUMBER_UNKNOWN_PROVIDER');
-  return `${code}-${sequence.toString().padStart(5, '0')}`;
+  return code;
+}
+
+export function formatInvoiceNumber(provider: string, sequence: bigint): string {
+  return `${invoiceProviderCode(provider)}-${sequence.toString().padStart(5, '0')}`;
 }
 
 /** EX-06: `ceil(remaining_seconds / period_seconds × old_price_minor)`, as of `at`. */

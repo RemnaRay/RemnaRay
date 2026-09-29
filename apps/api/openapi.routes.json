@@ -3022,7 +3022,7 @@
             "description": "VALIDATION_ERROR (e.g. a purchase at a provider) | TOPUP_AMOUNT_OUT_OF_RANGE"
           },
           "422": {
-            "description": "BALANCE_ONLY | IDEMPOTENCY_KEY_REUSED"
+            "description": "IDEMPOTENCY_KEY_REUSED | BALANCE_ONLY (internal fallback only: a purchase at a provider is refused as 400 VALIDATION_ERROR)"
           }
         },
         "parameters": [

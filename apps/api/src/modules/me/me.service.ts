@@ -538,6 +538,8 @@ export class MeService {
     const quote = await this.quote(userId, purpose);
     if (quote.missingMinor === 0n) throw new ApiError('BALANCE_SUFFICIENT', HttpStatus.CONFLICT);
     try {
+      // FR-020 hands back a pending top-up only at a provider still offered.
+      await this.payments.requireOffered(provider, 'topup');
       const amount = topupAmount({
         shortMinor: quote.topupBaseMinor,
         topupMinMinor: BigInt(String(await this.settings.get('balance.topup_min_minor'))),
@@ -957,7 +959,8 @@ export class MeService {
     if (error instanceof PaymentError && error.code === 'PAYMENT_PROVIDER_NOT_FOUND')
       return new ApiError('PROVIDER_UNAVAILABLE', HttpStatus.CONFLICT);
     if (error instanceof PaymentError) {
-      // F37: a purchase at a provider (`BALANCE_ONLY`) is a request never accepted, 422.
+      // F37: a purchase at a provider is refused by the request schema (400
+      // VALIDATION_ERROR); `BALANCE_ONLY` from the core is only its fallback, 422.
       const status =
         error.message === 'IDEMPOTENCY_REQUIRED'
           ? HttpStatus.BAD_REQUEST

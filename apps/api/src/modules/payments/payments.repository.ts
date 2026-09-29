@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from '@remnaray/db';
 import { invoicesTotal, paymentsEventsTotal, revenueMinorTotal } from '@remnaray/metrics';
 
-import { formatInvoiceNumber } from './checkout';
+import { formatInvoiceNumber, invoiceProviderCode } from './checkout';
 import { PaymentError } from './payments.errors';
 import type { ProviderEvent } from './payments.types';
 import type { Tx } from '../rewards/rewards.types';
@@ -188,6 +188,8 @@ export class PaymentsRepository {
    * the provider shows; a call that fails leaves its number unused.
    */
   async nextInvoiceNumber(provider: string): Promise<string> {
+    // Refused before the counter moves: a number no invoice takes is a gap for nothing.
+    invoiceProviderCode(provider);
     const [row] = await this.prisma.$queryRaw<Array<{ last: bigint }>>(Prisma.sql`
       INSERT INTO invoice_counters (provider, last) VALUES (${provider}, 1)
       ON CONFLICT (provider) DO UPDATE SET last = invoice_counters.last + 1

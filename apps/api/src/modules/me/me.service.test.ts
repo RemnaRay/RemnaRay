@@ -511,6 +511,8 @@ function build(
     pendingTopup?: Record<string, unknown>;
     /** Enabled, healthy `payment_providers` rows beyond the two registered ones. */
     extraProviders?: string[];
+    /** Providers the payments core no longer offers (disabled, or a failed healthcheck). */
+    offline?: string[];
   } = {},
 ) {
   const target = { ...plan, ...(options.plan ?? {}), id: PLAN };
@@ -580,6 +582,11 @@ function build(
         ),
     ),
     replay: vi.fn().mockResolvedValue(null),
+    requireOffered: vi.fn((code: string) =>
+      options.offline?.includes(code)
+        ? Promise.reject(new PaymentError('PROVIDER_UNAVAILABLE'))
+        : Promise.resolve(),
+    ),
   };
   const settings = { get: (key: string) => Promise.resolve(values[key]) };
   const instance = new MeService(
@@ -689,6 +696,20 @@ describe('checkout quote (F37)', () => {
     expect(quote.discountMinor).toBe(0);
     expect(quote.promocode).toEqual({ code: 'NOPE', applied: false, error: 'PROMO_NOT_FOUND' });
   });
+
+  // One bad code must not take the checkout down: padding is trimmed before the length check.
+  it('trims the promocode before checking its length', async () => {
+    const { service } = build({ balanceMinor: 0n, promocode: null });
+    const quote = await service.checkoutQuote(USER, {
+      planId: PLAN,
+      kind: 'purchase',
+      promocode: '  NOPE ',
+    });
+    expect(quote.promocode).toEqual({ code: 'NOPE', applied: false, error: 'PROMO_NOT_FOUND' });
+    await expect(
+      service.checkoutQuote(USER, { planId: PLAN, kind: 'purchase', promocode: ' ab ' }),
+    ).rejects.toBeInstanceOf(ZodError);
+  });
 });
 
 describe('top-up for a plan (F37)', () => {
@@ -794,6 +815,32 @@ describe('top-up for a plan (F37)', () => {
       promocode: null,
     });
     expect(invoiceSchema.safeParse(view).success).toBe(true);
+    expect(payments.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('does not return a pending top-up at a provider no longer offered (FR-020)', async () => {
+    const pending = invoiceRow({
+      id: 'inv-pending',
+      kind: 'topup',
+      provider: 'yookassa',
+      amountMinor: 5000n,
+      targetPlanId: PLAN,
+      targetKind: 'purchase',
+    });
+    const { service, payments, db } = build({
+      balanceMinor: 29600n,
+      pendingTopup: pending,
+      offline: ['yookassa'],
+    });
+    await expect(
+      service.createInvoice(
+        USER,
+        { kind: 'topup', provider: 'yookassa', forPlan: { planId: PLAN, kind: 'purchase' } },
+        'key-offline',
+      ),
+    ).rejects.toMatchObject({ status: 409, code: 'PROVIDER_UNAVAILABLE' });
+    expect(payments.requireOffered).toHaveBeenCalledWith('yookassa', 'topup');
+    expect(db.invoice.findFirst).not.toHaveBeenCalled();
     expect(payments.createInvoice).not.toHaveBeenCalled();
   });
 

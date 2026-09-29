@@ -198,3 +198,22 @@ describe('PaymentsRepository.createBalanceInvoice revenue metric (section 12.2)'
     expect(inc).toHaveBeenCalledWith({ provider: 'balance' }, 29900);
   });
 });
+
+describe('PaymentsRepository.nextInvoiceNumber (F37)', () => {
+  it('numbers per provider', async () => {
+    const $queryRaw = vi.fn(() => Promise.resolve([{ last: 7n }]));
+    const repository = new PaymentsRepository({ $queryRaw } as unknown as PrismaClient);
+    await expect(repository.nextInvoiceNumber('robokassa')).resolves.toBe('04-00007');
+  });
+
+  // A provider without a code would bump a counter for a number that is never issued.
+  it('refuses a provider without a number code before touching the counter', async () => {
+    const $queryRaw = vi.fn(() => Promise.resolve([{ last: 1n }]));
+    const repository = new PaymentsRepository({ $queryRaw } as unknown as PrismaClient);
+    for (const provider of ['balance', 'ghost', 'toString'])
+      await expect(repository.nextInvoiceNumber(provider)).rejects.toThrow(
+        'INVOICE_NUMBER_UNKNOWN_PROVIDER',
+      );
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+});

@@ -8,7 +8,8 @@ export const profilePatchSchema = z
   })
   .refine((value) => Object.keys(value).length > 0, { message: 'Nothing to update.' });
 
-const promocodeCode = z.string().min(3).max(64);
+// Trimmed first: a padded code is the code, not a request refused whole.
+const promocodeCode = z.string().trim().min(3).max(64);
 const purposeSchema = z.object({
   planId: z.uuid(),
   kind: z.enum(['purchase', 'plan_change']),
