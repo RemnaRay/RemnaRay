@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { NotifyService, notificationButtons } from './notify.service';
@@ -23,7 +26,14 @@ type UserOverrides = Partial<{
   language: string;
 }>;
 
-function fixture(options: { user?: UserOverrides; lockTaken?: boolean; sendStatus?: number } = {}) {
+function fixture(
+  options: {
+    user?: UserOverrides;
+    lockTaken?: boolean;
+    sendStatus?: number;
+    messages?: Record<string, string>;
+  } = {},
+) {
   const log: Record<string, unknown>[] = [];
   const sent: unknown[] = [];
   const user = {
@@ -88,7 +98,7 @@ function fixture(options: { user?: UserOverrides; lockTaken?: boolean; sendStatu
     get: (key: string) =>
       Promise.resolve(key === 'bot.token' ? 'bot-token' : key === 'admin.language' ? 'ru' : ''),
   };
-  const i18n = { messages: () => Promise.resolve(catalog) };
+  const i18n = { messages: () => Promise.resolve({ ...catalog, ...options.messages }) };
 
   const previousFetch = globalThis.fetch;
   globalThis.fetch = ((_input: unknown, init?: { body?: string }) => {
@@ -319,6 +329,42 @@ describe('payment.to_balance buttons (F37)', () => {
                 text: "Купить «Tom & Jerry's»",
                 callback_data: 'tb:01a0ded7-ef45-767a-bbf5-fbd98a0d8762',
               },
+              { text: 'Баланс', callback_data: 'balance' },
+            ],
+          ],
+        },
+      });
+    } finally {
+      test.restore();
+    }
+  });
+
+  // Queued before the F37 deploy: the job carries `{amount}` only, the text now selects on more.
+  it('delivers a payment.to_balance queued with the amount only', async () => {
+    const ru = JSON.parse(
+      readFileSync(join(__dirname, '../../../../../locales/ru/notify.json'), 'utf8'),
+    ) as Record<string, string>;
+    const test = fixture({
+      messages: {
+        'notify.payment.to_balance': ru['notify.payment.to_balance'] ?? '',
+        'notify.btn.buyPlan': ru['notify.btn.buyPlan'] ?? '',
+      },
+    });
+    try {
+      await expect(
+        test.service.send({
+          event: 'payment.to_balance',
+          userId: '11111111-1111-7111-8111-111111111111',
+          dedupKey: 'payment.to_balance:inv-old',
+          params: { amount: '150 ₽' },
+        }),
+      ).resolves.toEqual({ status: 'sent' });
+      expect(test.sent[0]).toMatchObject({
+        text: 'Баланс пополнен на 150 ₽.',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Тарифы', callback_data: 'plans' },
               { text: 'Баланс', callback_data: 'balance' },
             ],
           ],

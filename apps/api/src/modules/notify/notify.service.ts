@@ -59,6 +59,30 @@ export function notificationButtons(
   return NOTIFY_EVENTS[event].map((key) => ({ key, callback: BUTTON_CALLBACK[key] ?? 'home' }));
 }
 
+/**
+ * Parameters an event's text gained in a release, with what an older job
+ * means by leaving them out. F37: a `payment.to_balance` queued before the
+ * deploy carries `{amount}` only — a plain top-up, no number, no plan.
+ */
+const PARAM_DEFAULTS: Partial<Record<NotifyEvent, Record<string, string>>> = {
+  'payment.to_balance': {
+    underpaid: 'no',
+    expected: '',
+    hasNumber: 'no',
+    number: '',
+    hasPlan: 'no',
+    plan: '',
+    buyInvoice: '',
+  },
+};
+
+function notificationParams(
+  event: NotifyEvent,
+  params: Record<string, string | number>,
+): Record<string, string | number> {
+  return { ...PARAM_DEFAULTS[event], ...params };
+}
+
 /** Marketing events honour `marketing_opt_out`; service events never do. */
 const MARKETING_EVENTS = new Set<string>([]);
 
@@ -137,9 +161,10 @@ export class NotifyService {
         ? (user.language as Locale)
         : 'ru';
       const catalog = await this.i18n.messages(locale);
-      const text = formatMessage(locale, catalog, `notify.${input.event}`, input.params);
-      const buttons = notificationButtons(input.event, input.params).map((button) => ({
-        text: formatPlainMessage(locale, catalog, `notify.btn.${button.key}`, input.params),
+      const params = notificationParams(input.event, input.params);
+      const text = formatMessage(locale, catalog, `notify.${input.event}`, params);
+      const buttons = notificationButtons(input.event, params).map((button) => ({
+        text: formatPlainMessage(locale, catalog, `notify.btn.${button.key}`, params),
         callback_data: button.callback,
       }));
 
