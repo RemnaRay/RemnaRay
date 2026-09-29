@@ -60,6 +60,12 @@ export default function PayStatus({
     };
   }, []);
 
+  // The top-up has landed on the balance: a quote cached before it is stale.
+  const credited = invoice?.status === 'paid' || invoice?.status === 'underpaid';
+  useEffect(() => {
+    if (credited) invalidate('me:checkout');
+  }, [credited]);
+
   useEffect(() => {
     if (terminal) return undefined;
     const timer = window.setInterval(() => {

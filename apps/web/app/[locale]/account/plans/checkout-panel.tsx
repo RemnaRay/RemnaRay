@@ -59,7 +59,8 @@ export function CheckoutPanel({ locale, planId, kind, promocode, onBought }: Pro
   const quotedAvailable = quoted?.availableMinor;
   const buyKey = useMemo(
     () => (quotedToPay === undefined ? '' : crypto.randomUUID()),
-    [quotedToPay, quotedAvailable],
+    // The body follows planId, kind and promocode: a changed input is a new key.
+    [quotedToPay, quotedAvailable, planId, kind, promocode],
   );
 
   const fail = useCallback(

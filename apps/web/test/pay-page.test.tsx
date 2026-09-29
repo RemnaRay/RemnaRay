@@ -137,4 +137,11 @@ describe('FR-134 / AC-134: payment page', () => {
     expect(markup).toContain('Баланс пополнен');
     expect(markup).toContain('Купить с баланса за 299');
   });
+
+  it('links a top-up without a target to the balance (F37)', async () => {
+    const markup = await page(invoice({ kind: 'topup', status: 'paid', terminal: true }));
+    expect(markup).toContain('Баланс пополнен');
+    expect(markup).toContain('Перейти к балансу');
+    expect(markup).not.toContain('Перейти к подписке');
+  });
 });

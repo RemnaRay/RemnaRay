@@ -356,4 +356,44 @@ describe('buying from the balance (F37)', () => {
     expect(markup).toContain('value="yookassa"');
     expect(markup).toContain('Пополнить на 50');
   });
+
+  it('changes the plan: hides the current one and shows the credit (13.4)', async () => {
+    const two = {
+      items: [
+        plans.items[0],
+        { ...plans.items[0], id: 'p2', slug: 'year', name: { ru: 'Год', en: 'Year' } },
+      ],
+    };
+    const PlansChange = ({ locale }: { locale: 'ru' }) => (
+      <PlansClient change initialPlanId="p2" locale={locale} />
+    );
+    const markup = await renderPage(PlansChange, {
+      '/api/v1/public/plans': { body: two },
+      '/api/v1/me/subscription': {
+        body: {
+          subscription: {
+            id: 's1',
+            status: 'active',
+            source: 'purchase',
+            plan: plans.items[0],
+            startsAt: new Date().toISOString(),
+            expiresAt: new Date().toISOString(),
+            daysLeft: 10,
+            canChangePlan: true,
+            canRevoke: false,
+          },
+          panel: null,
+          clients: [],
+        },
+      },
+      '/api/v1/me/checkout/quote': {
+        body: quote({ kind: 'plan_change', creditMinor: 10000, toPayMinor: 19900 }),
+      },
+      '/api/v1/me/payment-methods': { body: { items: [] } },
+    });
+    expect(markup).toContain('Смена тарифа');
+    expect(markup).not.toContain('Месяц');
+    expect(markup).toContain('Зачёт за остаток текущего тарифа: 100');
+    expect(markup).toContain('Сменить за 199');
+  });
 });
