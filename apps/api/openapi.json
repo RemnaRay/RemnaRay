@@ -366,6 +366,18 @@
           },
           "paymentUrl": { "type": "string" },
           "starsInvoiceLink": { "type": "string" },
+          "number": { "type": ["string", "null"], "default": null },
+          "target": {
+            "type": ["object", "null"],
+            "properties": {
+              "planId": { "type": "string" },
+              "planSlug": { "type": "string" },
+              "kind": { "type": "string", "enum": ["purchase", "plan_change"] },
+              "promocode": { "type": ["string", "null"] }
+            },
+            "default": null,
+            "required": ["planId", "planSlug", "kind", "promocode"]
+          },
           "expiresAt": { "type": "string" },
           "createdAt": { "type": "string" }
         },
@@ -470,6 +482,18 @@
                 },
                 "paymentUrl": { "type": "string" },
                 "starsInvoiceLink": { "type": "string" },
+                "number": { "type": ["string", "null"], "default": null },
+                "target": {
+                  "type": ["object", "null"],
+                  "properties": {
+                    "planId": { "type": "string" },
+                    "planSlug": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["purchase", "plan_change"] },
+                    "promocode": { "type": ["string", "null"] }
+                  },
+                  "default": null,
+                  "required": ["planId", "planSlug", "kind", "promocode"]
+                },
                 "expiresAt": { "type": "string" },
                 "createdAt": { "type": "string" }
               },
@@ -2260,13 +2284,16 @@
     "/api/v1/me/invoices": {
       "post": {
         "operationId": "createMyInvoice",
-        "summary": "Create an invoice",
+        "summary": "Buy a plan from the balance, or top the balance up (ADR-021)",
         "responses": {
           "201": { "description": "Invoice" },
-          "400": { "description": "TOPUP_AMOUNT_OUT_OF_RANGE" },
+          "400": {
+            "description": "VALIDATION_ERROR (e.g. a purchase at a provider) | TOPUP_AMOUNT_OUT_OF_RANGE"
+          },
           "409": {
-            "description": "PLAN_UNAVAILABLE | PROVIDER_UNAVAILABLE | INSUFFICIENT_FUNDS | PROMO_*"
-          }
+            "description": "PLAN_UNAVAILABLE | PROVIDER_UNAVAILABLE | INSUFFICIENT_FUNDS (details.missingMinor) | BALANCE_SUFFICIENT | PLAN_CHANGE_NOT_ALLOWED | PROMO_*"
+          },
+          "422": { "description": "BALANCE_ONLY | IDEMPOTENCY_KEY_REUSED" }
         },
         "parameters": [
           {
@@ -2337,13 +2364,14 @@
         "responses": { "200": { "description": "OK" }, "401": { "description": "UNAUTHENTICATED" } }
       }
     },
-    "/api/v1/me/plan-change/quote": {
+    "/api/v1/me/checkout/quote": {
       "get": {
-        "operationId": "getMyPlanChangeQuote",
-        "summary": "Credit and amount to pay",
+        "operationId": "getMyCheckoutQuote",
+        "summary": "What a plan costs from the balance, and the top-up each provider needs (ADR-021)",
         "responses": {
-          "200": { "description": "OK" },
-          "409": { "description": "PLAN_CHANGE_NOT_ALLOWED" }
+          "200": { "description": "CheckoutQuote" },
+          "400": { "description": "VALIDATION_ERROR" },
+          "409": { "description": "PLAN_UNAVAILABLE | PLAN_CHANGE_NOT_ALLOWED" }
         },
         "parameters": [
           {
@@ -2351,6 +2379,18 @@
             "in": "query",
             "required": true,
             "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["purchase", "plan_change"] }
+          },
+          {
+            "name": "promocode",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "minLength": 3, "maxLength": 64 }
           }
         ]
       }
