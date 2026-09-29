@@ -6,9 +6,10 @@ import { paymentsEventsTotal } from '@remnaray/metrics';
 import { Infrastructure } from '../../infra/infra.module';
 import { decryptSetting } from '../settings/settings.crypto';
 import type { SettingsService } from '../settings/settings.service';
+import { amountToPay, planChangeCredit, renderItemName } from './checkout';
 import { PaymentError } from './payments.errors';
 import { eventHeaders, maskEventRaw } from './payment-event-mask';
-import { PaymentsRepository } from './payments.repository';
+import { PaymentsRepository, type InvoiceTarget } from './payments.repository';
 import { PaymentProviderRegistry } from './payments.registry';
 import type { ProviderEvent } from './payments.types';
 
@@ -34,25 +35,31 @@ export class PaymentsService {
     /** Section 15.5: the reservation behind `discountMinor`. */
     promocodeRedemptionId?: string;
     idempotencyKey: string;
+    /** F37: what a top-up for a plan is meant to buy (`invoices.target_*`). */
+    target?: InvoiceTarget;
   }) {
     if (!input.idempotencyKey) throw new PaymentError('IDEMPOTENCY_REQUIRED');
     const existing = await this.replay(input);
     if (existing) return existing;
     await this.requireOffered(input.provider, input.kind);
+    // F37 (ADR-021): a plan is bought only from the balance; a provider only
+    // tops the balance up.
+    if (input.provider !== 'balance' && input.kind !== 'topup')
+      throw new PaymentError('BALANCE_ONLY');
     const user = await this.infra.db.user.findUniqueOrThrow({ where: { id: input.userId } });
     let amount = input.amountMinor ?? 0n;
-    // What the payer sees at the provider: the shop's brand, or the plan below.
-    const brand = this.settings ? String(await this.settings.get('brand.name')) : '';
-    let description = brand || 'RemnaRay';
-    let listPrice: { priceMinor: bigint; priceOverrides: unknown } | undefined;
+    const discount = input.discountMinor ?? 0n;
     if (input.kind !== 'topup') {
       if (!input.planId) throw new PaymentError('PLAN_UNAVAILABLE');
       const plan = await this.infra.db.plan.findFirst({
         where: { id: input.planId, isActive: true, deletedAt: null },
       });
       if (!plan) throw new PaymentError('PLAN_UNAVAILABLE');
-      amount = plan.priceMinor;
-      listPrice = { priceMinor: plan.priceMinor, priceOverrides: plan.priceOverrides };
+      // `amountToPay` never goes below one kopeck; a free plan stays refused,
+      // as before (zero-amount purchases are package 5, R20/R73, О-5).
+      if (input.kind === 'purchase' && plan.priceMinor <= 0n)
+        throw new PaymentError('PLAN_UNAVAILABLE', 'Amount must be positive');
+      let credit = 0n;
       if (input.kind === 'plan_change') {
         const current = await this.infra.db.subscription.findFirst({
           where: { userId: input.userId, status: 'active' },
@@ -62,18 +69,14 @@ export class PaymentsService {
           : null;
         if (!current || !oldPlan || current.expiresAt <= new Date())
           throw new PaymentError('PLAN_UNAVAILABLE', 'Plan change is unavailable');
-        const remaining = BigInt(
-          Math.max(0, Math.floor((current.expiresAt.getTime() - Date.now()) / 1000)),
-        );
-        const period = BigInt(oldPlan.durationDays) * 86_400n;
-        const credit = (oldPlan.priceMinor * remaining + period - 1n) / period;
-        amount = plan.priceMinor > credit ? plan.priceMinor - credit : 1n;
+        credit = planChangeCredit(oldPlan, current.expiresAt, new Date());
       }
-      const name = plan.name as Record<string, string>;
-      description = name[user.language] ?? name.ru ?? plan.slug;
+      amount = amountToPay({
+        priceMinor: plan.priceMinor,
+        creditMinor: credit,
+        discountMinor: discount,
+      });
     }
-    const discount = input.discountMinor ?? 0n;
-    if (discount > 0n) amount = amount > discount ? amount - discount : 1n;
     if (amount <= 0n) throw new PaymentError('PLAN_UNAVAILABLE', 'Amount must be positive');
     const provider = this.providers.get(input.provider);
     const expiresAt = new Date(
@@ -90,6 +93,24 @@ export class PaymentsService {
                nextval(pg_get_serial_sequence('invoices', 'numeric_id')) AS "numericId"
       `);
     const shopInvoiceNumber = numericId ?? undefined;
+    // F37: what the payer sees at the provider and on the receipt is one line,
+    // `fiscal.item_name_template` with the invoice's number. The number is
+    // taken last, once nothing but the provider call can fail. A balance
+    // invoice never reaches a provider and keeps the brand.
+    const brand = this.settings ? String(await this.settings.get('brand.name')) : '';
+    const number =
+      input.provider === 'balance'
+        ? undefined
+        : await this.repository.nextInvoiceNumber(input.provider);
+    const template = this.settings
+      ? await this.settings.get('fiscal.item_name_template')
+      : undefined;
+    const description = number
+      ? renderItemName(
+          typeof template === 'string' && template ? template : 'Пополнение баланса (#{number})',
+          { number, brand: brand || 'RemnaRay' },
+        )
+      : brand || 'RemnaRay';
     const fiscalMode = this.settings ? String(await this.settings.get('fiscal.mode')) : 'none';
     const fiscalEmail = this.settings
       ? String(await this.settings.get('fiscal.fallback_email'))
@@ -112,7 +133,6 @@ export class PaymentsService {
       failUrl: `${origin}/pay/${shopInvoiceId}`,
       webhookUrl: `${origin}/webhooks/${input.provider}`,
       expiresAt,
-      ...(listPrice ? { plan: listPrice } : {}),
       ...(fiscalMode === 'provider_receipt' && provider.capabilities.receipts
         ? {
             receipt: {
@@ -141,6 +161,8 @@ export class PaymentsService {
       kind: input.kind,
       ...(input.planId ? { planId: input.planId } : {}),
       provider: input.provider,
+      ...(number ? { number } : {}),
+      ...(input.target ? { target: input.target } : {}),
       amountMinor: amount,
       currency: 'RUB',
       ...(discount > 0n ? { discountMinor: discount } : {}),
@@ -448,6 +470,11 @@ export class PaymentsService {
       throw new PaymentError('PROVIDER_UNAVAILABLE');
   }
 
+  /** F37: the provider's smallest invoice, for the top-up of a plan (docs/payments/README.md). */
+  minimumMinor(provider: string): bigint {
+    return this.providers.get(provider).capabilities.minAmountMinor;
+  }
+
   private async providerConfig(code: string): Promise<Record<string, unknown>> {
     const row = await this.infra.db.paymentProvider.findUnique({ where: { code } });
     if (!row?.enabled && code !== 'mock' && code !== 'balance')
@@ -504,8 +531,14 @@ type InvoiceRequest = {
   provider: string;
   amountMinor?: bigint | undefined;
   idempotencyKey: string;
+  target?: InvoiceTarget | undefined;
 };
 
+/**
+ * A top-up for a plan is the same request when it is for the same purpose:
+ * its amount follows the balance and may differ between two presses of one
+ * button. A plain top-up is the same request only for the same amount.
+ */
 function replayed<
   T extends {
     userId: string;
@@ -513,14 +546,23 @@ function replayed<
     planId: string | null;
     provider: string;
     amountMinor: bigint;
+    targetPlanId?: string | null;
+    targetKind?: string | null;
+    targetPromocode?: string | null;
   },
 >(invoice: T, input: InvoiceRequest): T {
+  const forPlan = input.kind === 'topup' && input.target !== undefined;
   const same =
     invoice.userId === input.userId &&
     invoice.kind === input.kind &&
     (invoice.planId ?? undefined) === (input.kind === 'topup' ? undefined : input.planId) &&
     invoice.provider === input.provider &&
-    (input.kind !== 'topup' || invoice.amountMinor === input.amountMinor);
+    (forPlan
+      ? invoice.targetPlanId === input.target?.planId &&
+        invoice.targetKind === input.target?.kind &&
+        (invoice.targetPromocode ?? undefined) === input.target?.promocode
+      : (invoice.targetPlanId ?? null) === null &&
+        (input.kind !== 'topup' || invoice.amountMinor === input.amountMinor));
   if (!same) throw new PaymentError('IDEMPOTENCY_KEY_REUSED');
   return invoice;
 }

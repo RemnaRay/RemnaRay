@@ -19,7 +19,10 @@ export const INVOICE_PROVIDER_CODES: Readonly<Record<string, string>> = Object.f
 export const PLAN_CHANGE_TOPUP_MARGIN_MS = 86_400_000;
 
 export function formatInvoiceNumber(provider: string, sequence: bigint): string {
-  const code = INVOICE_PROVIDER_CODES[provider];
+  // Own keys only: `toString` or `__proto__` would otherwise resolve through the prototype.
+  const code = Object.hasOwn(INVOICE_PROVIDER_CODES, provider)
+    ? INVOICE_PROVIDER_CODES[provider]
+    : undefined;
   if (!code) throw new Error('INVOICE_NUMBER_UNKNOWN_PROVIDER');
   return `${code}-${sequence.toString().padStart(5, '0')}`;
 }

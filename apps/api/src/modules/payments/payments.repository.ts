@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from '@remnaray/db';
 import { invoicesTotal, paymentsEventsTotal, revenueMinorTotal } from '@remnaray/metrics';
 
+import { formatInvoiceNumber } from './checkout';
 import { PaymentError } from './payments.errors';
 import type { ProviderEvent } from './payments.types';
 import type { Tx } from '../rewards/rewards.types';
@@ -25,6 +26,13 @@ export interface RewardHooksPort {
   onInvoiceReleased(tx: Tx, invoiceId: string): Promise<void>;
 }
 
+/** F37 (ADR-021): what a top-up for a plan is meant to buy, for the purchase after it. */
+export type InvoiceTarget = {
+  planId: string;
+  kind: 'purchase' | 'plan_change';
+  promocode?: string | undefined;
+};
+
 export type InvoiceInput = {
   /** A pre-allocated `invoices.id`; the database default applies when absent. */
   id?: string | undefined;
@@ -34,6 +42,9 @@ export type InvoiceInput = {
   kind: 'purchase' | 'topup' | 'plan_change';
   planId?: string | undefined;
   provider: string;
+  /** F37: `NN-00001` of a provider invoice; a balance invoice has none. */
+  number?: string | undefined;
+  target?: InvoiceTarget | undefined;
   amountMinor: bigint;
   currency: string;
   discountMinor?: bigint | undefined;
@@ -65,6 +76,10 @@ function invoiceData(input: InvoiceInput) {
     kind: input.kind,
     planId: input.planId ?? null,
     provider: input.provider,
+    number: input.number ?? null,
+    targetPlanId: input.target?.planId ?? null,
+    targetKind: input.target?.kind ?? null,
+    targetPromocode: input.target?.promocode ?? null,
     status: 'pending' as const,
     amountMinor: input.amountMinor,
     currency: input.currency,
@@ -164,6 +179,21 @@ export class PaymentsRepository {
 
   async findByIdempotencyKey(key: string) {
     return this.prisma.invoice.findUnique({ where: { idempotencyKey: key } });
+  }
+
+  /**
+   * F37: the next number of a provider's invoice. Taken in its own statement
+   * before the provider is called, because the number is in the description
+   * the provider shows; a call that fails leaves its number unused.
+   */
+  async nextInvoiceNumber(provider: string): Promise<string> {
+    const [row] = await this.prisma.$queryRaw<Array<{ last: bigint }>>(Prisma.sql`
+      INSERT INTO invoice_counters (provider, last) VALUES (${provider}, 1)
+      ON CONFLICT (provider) DO UPDATE SET last = invoice_counters.last + 1
+      RETURNING last
+    `);
+    if (!row) throw new Error('INVOICE_NUMBER_NOT_ISSUED');
+    return formatInvoiceNumber(provider, row.last);
   }
 
   async createInvoice(input: InvoiceInput) {

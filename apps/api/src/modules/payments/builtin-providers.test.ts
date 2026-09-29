@@ -172,6 +172,36 @@ describe('Robokassa (section 11.3.4)', () => {
     );
   });
 
+  it('cuts Description to its 100 characters and the receipt name to its 128 (F37)', async () => {
+    const long = 'П'.repeat(120);
+    const created = await new RobokassaProvider().createInvoice(
+      params({
+        description: long,
+        receipt: {
+          customer: {},
+          items: [
+            {
+              description: long,
+              quantity: '1.00',
+              amountMinor: 29900n,
+              vatCode: 1,
+              paymentSubject: 'service',
+              paymentMode: 'full_payment',
+            },
+          ],
+        },
+      }),
+      cfg,
+    );
+    const url = new URL(created.paymentUrl);
+    const receipt = JSON.parse(decodeURIComponent(url.searchParams.get('Receipt') ?? '')) as {
+      items: Array<{ name: string }>;
+    };
+
+    expect(url.searchParams.get('Description')).toBe('П'.repeat(100));
+    expect(receipt.items[0]?.name).toBe(long);
+  });
+
   it('uses the test passwords and IsTest=1 in test mode', async () => {
     const created = await new RobokassaProvider().createInvoice(params(), {
       ...cfg,
@@ -281,6 +311,10 @@ describe('Lava invoice (section 11.3.3)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('takes no receipt: the invoice API has no receipt fields (docs/payments/lava.md)', () => {
+    expect(new LavaProvider().capabilities.receipts).toBe(false);
+  });
+
   it('points hookUrl at the shop webhook, not below the return page', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
@@ -361,18 +395,11 @@ describe('Telegram Stars pricing and invoice link (section 11.3.6)', () => {
     expect(starsAmount(10000n, 1.1)).toBe(110n);
   });
 
-  it('prices a plan by price_overrides.XTR, scaled by any discount', () => {
-    const plan = { priceMinor: 29900n, priceOverrides: { XTR: 200 } };
-    expect(starsAmount(29900n, 0.75, plan)).toBe(200n);
-    // 19900 / 29900 of 200 stars is 133.1 → 134, not the rate's 150.
-    expect(starsAmount(19900n, 0.75, plan)).toBe(134n);
-    // A one-kopeck discount keeps the plan's own star price.
-    expect(starsAmount(29899n, 0.75, plan)).toBe(200n);
-    expect(starsAmount(1n, 0.75, plan)).toBe(1n);
-    expect(starsAmount(29900n, 0.75, { priceMinor: 29900n, priceOverrides: {} })).toBe(225n);
-    expect(starsAmount(29900n, 0.75, { priceMinor: 29900n, priceOverrides: { XTR: 0 } })).toBe(
-      225n,
-    );
+  it('prices a top-up in stars by the rate only (F37: price_overrides unused)', () => {
+    expect(starsAmount(29900n, 0.75)).toBe(225n); // ceil(299 × 0.75)
+    expect(starsAmount(1n, 0.75)).toBe(1n); // at least one star
+    // No plan to read `price_overrides.XTR` from.
+    expect(starsAmount).toHaveLength(2);
   });
 
   it('creates the invoice link with payload inv_<invoiceId> and an empty provider token', async () => {
@@ -394,7 +421,6 @@ describe('Telegram Stars pricing and invoice link (section 11.3.6)', () => {
         failUrl: 'https://shop.test/pay/fail',
         webhookUrl: 'https://shop.test/webhooks/x',
         expiresAt,
-        plan: { priceMinor: 29900n, priceOverrides: {} },
       },
       { starsPerRub: 0.75, botToken: '123:token', apiBase: 'http://telegram.test' },
     );

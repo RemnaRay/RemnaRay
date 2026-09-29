@@ -20,6 +20,10 @@ describe('invoice numbers (F37)', () => {
   it('refuses a provider without a code', () => {
     expect(() => formatInvoiceNumber('balance', 1n)).toThrow('INVOICE_NUMBER_UNKNOWN_PROVIDER');
   });
+  it('refuses a name only inherited by the code table', () => {
+    expect(() => formatInvoiceNumber('toString', 1n)).toThrow('INVOICE_NUMBER_UNKNOWN_PROVIDER');
+    expect(() => formatInvoiceNumber('__proto__', 1n)).toThrow('INVOICE_NUMBER_UNKNOWN_PROVIDER');
+  });
 });
 
 describe('plan-change credit (EX-06)', () => {
@@ -28,6 +32,11 @@ describe('plan-change credit (EX-06)', () => {
     const at = new Date('2026-10-01T00:00:00Z');
     const expires = new Date(at.getTime() + 15 * 86_400_000);
     expect(planChangeCredit(old, expires, at)).toBe(14950n);
+  });
+  it('rounds an inexact share up to the next kopeck', () => {
+    // 29 900 × 1 / 2 592 000 is 0.0115 of a kopeck, credited as one.
+    const at = new Date('2026-10-01T00:00:00Z');
+    expect(planChangeCredit(old, new Date(at.getTime() + 1000), at)).toBe(1n);
   });
   it('is zero once the subscription has ended', () => {
     const at = new Date('2026-10-01T00:00:00Z');

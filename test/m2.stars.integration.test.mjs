@@ -9,7 +9,8 @@ import { PostgreSqlContainer } from '@testcontainers/postgresql';
 /**
  * TASK-M2-008 acceptance on a real database (section 11.3.6): a duplicate
  * `successful_payment` makes one transaction, and an expired invoice paid in
- * the precheckout window is credited to the balance (EX-02).
+ * the precheckout window is credited to the balance (EX-02). Since F37
+ * (ADR-021) a Stars invoice is a numbered top-up priced by the rate only.
  */
 test(
   'M2 Telegram Stars: bot-delivered payments are applied once and late ones reach the balance',
@@ -92,36 +93,58 @@ test(
         },
       });
 
+      // F37: a plan is bought only from the balance, and a refused purchase
+      // takes no number.
+      await assert.rejects(
+        payments.createInvoice({
+          userId: user.id,
+          kind: 'purchase',
+          planId: plan.id,
+          provider: 'stars',
+          idempotencyKey: 'm2-stars-purchase',
+        }),
+        { code: 'BALANCE_ONLY' },
+      );
+
       const invoice = await payments.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: plan.id,
+        kind: 'topup',
         provider: 'stars',
+        amountMinor: plan.priceMinor,
         idempotencyKey: 'm2-stars-paid',
+        target: { planId: plan.id, kind: 'purchase' },
       });
+      assert.equal(invoice.number, '06-00001', 'the first Stars invoice is 06-00001');
+      assert.equal(invoice.kind, 'topup');
+      assert.equal(invoice.planId, null);
+      assert.equal(invoice.targetPlanId, plan.id);
+      assert.equal(invoice.targetKind, 'purchase');
       assert.equal(invoice.providerInvoiceId, `inv_${invoice.id}`);
       assert.equal(invoice.providerCurrency, 'XTR');
-      assert.equal(invoice.providerAmount.toFixed(0), '200');
+      // ceil(299 × 0.75): `price_overrides.XTR = 200` is no longer read.
+      assert.equal(invoice.providerAmount.toFixed(0), '225');
       assert.match(invoice.paymentUrl, /^https:\/\/t\.me\/\$/u);
       const link = telegram.calls.find((call) => call.method === 'createInvoiceLink');
-      assert.deepEqual(link.payload.prices, [{ label: 'Звёздный', amount: 200 }]);
+      assert.deepEqual(link.payload.prices, [
+        { label: 'Пополнение баланса (#06-00001)', amount: 225 },
+      ]);
       assert.equal(link.payload.provider_token, '');
 
       // create-link returns what the bot sends with sendInvoice.
       const forBot = await stars.invoiceForBot(String(telegramId), { invoiceId: invoice.id });
       assert.deepEqual(
         { payload: forBot.payload, amount: forBot.amount, currency: forBot.currency },
-        { payload: `inv_${invoice.id}`, amount: 200, currency: 'XTR' },
+        { payload: `inv_${invoice.id}`, amount: 225, currency: 'XTR' },
       );
 
       const precheckout = {
         telegramId: Number(telegramId),
         invoicePayload: `inv_${invoice.id}`,
-        totalAmount: 200,
+        totalAmount: 225,
         currency: 'XTR',
       };
       assert.deepEqual(await stars.precheckout(precheckout), { ok: true });
-      await assert.rejects(stars.precheckout({ ...precheckout, totalAmount: 199 }), {
+      await assert.rejects(stars.precheckout({ ...precheckout, totalAmount: 224 }), {
         code: 'AMOUNT_MISMATCH',
       });
       await assert.rejects(stars.precheckout({ ...precheckout, telegramId: 1 }), {
@@ -133,7 +156,7 @@ test(
         telegramPaymentChargeId: 'stars-charge-1',
         providerPaymentChargeId: 'stars-provider-1',
         invoicePayload: `inv_${invoice.id}`,
-        totalAmount: 200,
+        totalAmount: 225,
         currency: 'XTR',
       };
       const first = await stars.successfulPayment(payment);
@@ -143,11 +166,11 @@ test(
       assert.equal((await prisma.invoice.findUnique({ where: { id: invoice.id } })).status, 'paid');
       const transactions = await prisma.transaction.findMany({ where: { invoiceId: invoice.id } });
       assert.equal(transactions.length, 1);
-      assert.equal(transactions[0].type, 'purchase');
+      assert.equal(transactions[0].type, 'topup');
       assert.equal(transactions[0].amountMinor, 29900n);
       assert.equal(
         await prisma.ledgerEntry.count({ where: { transactionId: transactions[0].id } }),
-        2,
+        1,
       );
       assert.equal(
         await prisma.paymentEvent.count({
@@ -155,20 +178,23 @@ test(
         }),
         1,
       );
+      // The top-up credits the balance and buys nothing by itself.
       assert.equal(
-        (await prisma.subscription.findFirst({ where: { userId: user.id } })).status,
-        'active',
+        (await prisma.account.findFirst({ where: { userId: user.id, kind: 'user' } })).balanceMinor,
+        29900n,
       );
+      assert.equal(await prisma.subscription.findFirst({ where: { userId: user.id } }), null);
       await assert.rejects(stars.precheckout(precheckout), { code: 'INVOICE_NOT_PENDING' });
 
       // EX-02: the invoice expires between precheckout and payment.
       const late = await payments.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: plan.id,
+        kind: 'topup',
         provider: 'stars',
+        amountMinor: plan.priceMinor,
         idempotencyKey: 'm2-stars-late',
       });
+      assert.equal(late.number, '06-00002');
       await repository.expire(new Date(Date.now() + 61 * 60_000));
       await assert.rejects(
         stars.precheckout({ ...precheckout, invoicePayload: `inv_${late.id}` }),
@@ -184,23 +210,25 @@ test(
       assert.equal(lateTransactions[0].type, 'topup');
       assert.equal(
         (await prisma.account.findFirst({ where: { userId: user.id, kind: 'user' } })).balanceMinor,
-        29900n,
+        59800n,
       );
+      assert.equal(await prisma.subscription.findFirst({ where: { userId: user.id } }), null);
 
       // A redelivery racing the first delivery applies once and fails neither,
       // even on an invoice the short payment leaves `underpaid` (EX-12).
       const short = await payments.createInvoice({
         userId: user.id,
-        kind: 'purchase',
-        planId: plan.id,
+        kind: 'topup',
         provider: 'stars',
+        amountMinor: plan.priceMinor,
         idempotencyKey: 'm2-stars-short',
       });
+      assert.equal(short.number, '06-00003');
       const shortPayment = {
         ...payment,
         telegramPaymentChargeId: 'stars-charge-short',
         invoicePayload: `inv_${short.id}`,
-        totalAmount: 100,
+        totalAmount: 90,
       };
       const results = await Promise.allSettled([
         stars.successfulPayment(shortPayment),
@@ -220,7 +248,8 @@ test(
       });
       assert.equal(shortTransactions.length, 1);
       assert.equal(shortTransactions[0].type, 'topup');
-      assert.equal(shortTransactions[0].amountMinor, 14950n);
+      // 90 of 225 stars: 29 900 × 90 / 225.
+      assert.equal(shortTransactions[0].amountMinor, 11960n);
 
       // Owner decision 2026-09-25: a second, distinct Stars charge for an
       // invoice already paid (two copies paid before the first was applied)

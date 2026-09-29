@@ -42,8 +42,6 @@ export type CreateInvoiceParams = {
   webhookUrl: string;
   expiresAt: Date;
   receipt?: ReceiptData;
-  /** The plan's list price and `price_overrides`, for providers pricing in their own currency. */
-  plan?: { priceMinor: bigint; priceOverrides: unknown };
 };
 
 export type CreatedInvoice = {

@@ -299,7 +299,8 @@ export class RobokassaProvider implements PaymentProvider {
       MerchantLogin: String(cfg.merchantLogin),
       OutSum: sum,
       InvId: invId,
-      Description: p.description,
+      // «до 100 символов» (docs/payments/robokassa.md); the receipt name above takes 128.
+      Description: truncate(p.description, 100),
       Culture: p.user.language === 'en' ? 'en' : 'ru',
       ...(p.user.email ? { Email: p.user.email } : {}),
       ...Object.fromEntries(shp),
@@ -388,7 +389,9 @@ export class RobokassaProvider implements PaymentProvider {
 export class LavaProvider implements PaymentProvider {
   readonly code = 'lava' as const;
   readonly capabilities = {
-    receipts: true,
+    // The invoice API takes no receipt data (docs/payments/lava.md); a
+    // self-employed seller registers the receipt in «Мой налог» themselves.
+    receipts: false,
     webhooks: true,
     statusPolling: true,
     kind: 'redirect' as const,
@@ -676,37 +679,14 @@ const TELEGRAM_API = 'https://api.telegram.org';
 const STAR_RATE_SCALE = 100_000_000n;
 
 /**
- * Section 11.3.6: `price_overrides.XTR ?? ceil(price_minor / 100 × starsPerRub)`,
- * at least one star. The override is the plan's own price in stars; when the
- * invoice charges less than the list price (a promocode discount, a
- * plan-change credit) the override is scaled by the same share, so a discount
- * never raises the price in stars. A top-up has no plan and uses the rate.
+ * Section 11.3.6 as changed by F37 (ADR-021): a Stars invoice is a top-up, so
+ * it is priced by the rate only — `ceil(amount_minor / 100 × starsPerRub)`, at
+ * least one star. `plans.price_overrides` is no longer read.
  */
-export function starsAmount(
-  amountMinor: bigint,
-  starsPerRub: number,
-  plan?: { priceMinor: bigint; priceOverrides: unknown },
-): bigint {
-  const overrides = plan?.priceOverrides;
-  const override =
-    overrides && typeof overrides === 'object'
-      ? (overrides as Record<string, unknown>).XTR
-      : undefined;
-  let stars: bigint;
-  if (
-    plan &&
-    plan.priceMinor > 0n &&
-    typeof override === 'number' &&
-    Number.isSafeInteger(override) &&
-    override > 0
-  ) {
-    const charged = amountMinor < plan.priceMinor ? amountMinor : plan.priceMinor;
-    stars = (BigInt(override) * charged + plan.priceMinor - 1n) / plan.priceMinor;
-  } else {
-    const rate = BigInt(starsPerRub.toFixed(8).replace('.', ''));
-    const divisor = 100n * STAR_RATE_SCALE;
-    stars = (amountMinor * rate + divisor - 1n) / divisor;
-  }
+export function starsAmount(amountMinor: bigint, starsPerRub: number): bigint {
+  const rate = BigInt(starsPerRub.toFixed(8).replace('.', ''));
+  const divisor = 100n * STAR_RATE_SCALE;
+  const stars = (amountMinor * rate + divisor - 1n) / divisor;
   return stars > 0n ? stars : 1n;
 }
 
@@ -716,7 +696,7 @@ function starsFxRate(stars: bigint, amountMinor: bigint): string {
   return `${String(scaled / STAR_RATE_SCALE)}.${(scaled % STAR_RATE_SCALE).toString().padStart(8, '0')}`;
 }
 
-/** Telegram counts the 1–32 and 1–255 limits in characters, not UTF-16 units. */
+/** Length limits in characters, not UTF-16 units (Telegram's 1–32 and 1–255, Robokassa's 100 and 128). */
 function truncate(text: string, limit: number): string {
   return Array.from(text).slice(0, limit).join('');
 }
@@ -752,7 +732,7 @@ export class StarsProvider implements PaymentProvider {
   readonly configSchema = z.object({ starsPerRub: z.number().positive().max(10_000) });
   async createInvoice(p: CreateInvoiceParams, cfg: ProviderConfig) {
     const config = starsConfig(cfg);
-    const stars = starsAmount(p.amountMinor, config.starsPerRub, p.plan);
+    const stars = starsAmount(p.amountMinor, config.starsPerRub);
     const title = truncate(p.description, 32) || 'RemnaRay';
     const description = truncate(p.description, 255) || title;
     const payload = `inv_${p.shopInvoiceId}`;

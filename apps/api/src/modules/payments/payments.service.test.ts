@@ -155,6 +155,7 @@ describe('PaymentsService provider configuration', () => {
           Promise.resolve({ ...input, status: 'pending' }),
         ),
       findInvoice: vi.fn().mockResolvedValue({ id: 'found' }),
+      nextInvoiceNumber: vi.fn().mockResolvedValue('06-00001'),
     };
     const service = new PaymentsService(
       { db } as unknown as Infrastructure,
@@ -181,6 +182,7 @@ describe('PaymentsService provider configuration', () => {
         providerAmount: '75',
         providerCurrency: 'XTR',
         paymentUrl: 'https://t.me/$link',
+        number: '06-00001',
       }),
     );
     // Section 11.4: Stars invoices live `invoice.ttl_minutes_crypto`, 60 by default.
@@ -409,6 +411,7 @@ describe('PaymentsService.createInvoice URLs handed to the provider', () => {
           Promise.resolve({ ...input, status: 'pending' }),
         ),
       findInvoice: vi.fn().mockResolvedValue({ id }),
+      nextInvoiceNumber: vi.fn().mockResolvedValue('99-00001'),
     };
     const service = new PaymentsService(
       { db } as unknown as Infrastructure,
@@ -438,7 +441,7 @@ describe('PaymentsService.createInvoice URLs handed to the provider', () => {
 });
 
 describe('PaymentsService.createInvoice payer-visible description', () => {
-  it("names a top-up after the shop's brand", async () => {
+  it('names a top-up by the default template when none is set (F37)', async () => {
     const registry = createPaymentProviderRegistry({ RR_PAYMENTS_MOCK: 'true' });
     const create = vi.spyOn(registry.get('mock'), 'createInvoice');
     const db = {
@@ -459,6 +462,7 @@ describe('PaymentsService.createInvoice payer-visible description', () => {
           Promise.resolve({ ...input, status: 'pending' }),
         ),
       findInvoice: vi.fn().mockResolvedValue({ id: 'invoice-1' }),
+      nextInvoiceNumber: vi.fn().mockResolvedValue('99-00001'),
     };
     const service = new PaymentsService(
       { db } as unknown as Infrastructure,
@@ -481,7 +485,7 @@ describe('PaymentsService.createInvoice payer-visible description', () => {
     });
 
     expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({ description: 'Manta VPN' }),
+      expect.objectContaining({ description: 'Пополнение баланса (#99-00001)' }),
       expect.anything(),
     );
   });
@@ -493,14 +497,13 @@ describe('PaymentsService.createInvoice Idempotency-Key (sections 9.2, 9.3)', ()
     userId: 'user-a',
     kind: 'purchase',
     planId: 'plan-1',
-    provider: 'mock',
+    provider: 'balance',
     amountMinor: 29900n,
-    status: 'pending',
-    paymentUrl: 'https://pay.example/a',
+    status: 'paid',
   };
   function harness() {
     const registry = createPaymentProviderRegistry({ RR_PAYMENTS_MOCK: 'true' });
-    const create = vi.spyOn(registry.get('mock'), 'createInvoice');
+    const create = vi.spyOn(registry.get('balance'), 'createInvoice');
     const repository = {
       findByIdempotencyKey: vi.fn().mockResolvedValue(stored),
       createInvoice: vi.fn(),
@@ -516,7 +519,7 @@ describe('PaymentsService.createInvoice Idempotency-Key (sections 9.2, 9.3)', ()
     userId: 'user-a',
     kind: 'purchase' as const,
     planId: 'plan-1',
-    provider: 'mock',
+    provider: 'balance',
     idempotencyKey: 'key-1',
     ...overrides,
   });
@@ -538,7 +541,7 @@ describe('PaymentsService.createInvoice Idempotency-Key (sections 9.2, 9.3)', ()
 
   it.each([
     ['another plan', { planId: 'plan-2' }],
-    ['another provider', { provider: 'balance' }],
+    ['another provider', { provider: 'mock' }],
     ['another kind', { kind: 'plan_change' }],
   ])('refuses the key reused for %s', async (_name, overrides) => {
     const { service } = harness();
@@ -553,10 +556,13 @@ describe('PaymentsService.createInvoice Idempotency-Key (sections 9.2, 9.3)', ()
       ...stored,
       kind: 'topup',
       planId: null,
+      provider: 'mock',
       amountMinor: 10000n,
     });
     await expect(
-      service.createInvoice(request({ kind: 'topup', planId: undefined, amountMinor: 20000n })),
+      service.createInvoice(
+        request({ kind: 'topup', planId: undefined, provider: 'mock', amountMinor: 20000n }),
+      ),
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
   });
 });
@@ -662,6 +668,7 @@ describe('PaymentsService receipts (FR-062)', () => {
           Promise.resolve({ ...input, status: 'pending' }),
         ),
       findInvoice: vi.fn().mockResolvedValue({ id: 'found' }),
+      nextInvoiceNumber: vi.fn().mockResolvedValue('04-00001'),
     };
     const settings: Record<string, unknown> = {
       'fiscal.mode': mode,
@@ -693,6 +700,323 @@ describe('PaymentsService receipts (FR-062)', () => {
 
   it('sends no receipt in none mode', async () => {
     expect(new URL(await robokassaLink('none')).searchParams.has('Receipt')).toBe(false);
+  });
+});
+
+const USER = 'user-1';
+const PLAN = '0199aaaa-0000-7000-8000-000000000001';
+const OTHER_PLAN = '0199aaaa-0000-7000-8000-000000000002';
+
+/**
+ * F37: a service over the mock provider. `receipts` lets the mock take a
+ * receipt; `balance` lets the balance cover a purchase.
+ */
+function setup(
+  options: { fiscal?: Record<string, unknown>; receipts?: boolean; balance?: boolean } = {},
+) {
+  const registry = createPaymentProviderRegistry({ RR_PAYMENTS_MOCK: 'true' });
+  const mock = registry.get('mock');
+  if (options.receipts) Object.assign(mock.capabilities, { receipts: true });
+  const provider = { createInvoice: vi.spyOn(mock, 'createInvoice') };
+  const db = {
+    paymentProvider: { findUnique: vi.fn().mockResolvedValue(null) },
+    user: {
+      findUniqueOrThrow: vi.fn().mockResolvedValue({
+        id: USER,
+        telegramId: 42n,
+        email: 'buyer@example.test',
+        language: 'ru',
+      }),
+    },
+    plan: {
+      findFirst: vi.fn().mockResolvedValue({
+        id: PLAN,
+        slug: 'premium',
+        name: { ru: 'Премиум' },
+        priceMinor: 29900n,
+        durationDays: 30,
+      }),
+    },
+    $queryRaw: vi.fn().mockResolvedValue([{ id: 'invoice-1', numericId: 7n }]),
+    outboxJob: { create: vi.fn() },
+  };
+  const stored = (input: Record<string, unknown>) => Promise.resolve({ ...input });
+  const repository = {
+    findByIdempotencyKey: vi.fn().mockResolvedValue(null),
+    nextInvoiceNumber: vi.fn().mockResolvedValue('99-00001'),
+    createInvoice: vi
+      .fn()
+      .mockImplementation((input: Record<string, unknown>) =>
+        stored({ ...input, status: 'pending' }),
+      ),
+    createBalanceInvoice: options.balance
+      ? vi
+          .fn()
+          .mockImplementation((input: Record<string, unknown>) =>
+            stored({ ...input, status: 'paid' }),
+          )
+      : vi.fn().mockRejectedValue(new PaymentError('INSUFFICIENT_FUNDS')),
+    findInvoice: vi.fn().mockResolvedValue({ id: 'invoice-1' }),
+  };
+  const settings: Record<string, unknown> = {
+    'brand.name': 'Manta VPN',
+    'fiscal.mode': 'none',
+    'fiscal.vat_code': 1,
+    'fiscal.fallback_email': '',
+    'fiscal.item_name_template': 'Пополнение баланса (#{number})',
+    ...Object.fromEntries(
+      Object.entries(options.fiscal ?? {}).map(([key, value]) => [`fiscal.${key}`, value]),
+    ),
+  };
+  const service = new PaymentsService(
+    { db } as unknown as Infrastructure,
+    repository as unknown as PaymentsRepository,
+    registry,
+    { get: (key: string) => Promise.resolve(settings[key]) } as never,
+  );
+  return { db, provider, repository, service };
+}
+
+describe('PaymentsService.createInvoice, purchases only from the balance (F37, ADR-021)', () => {
+  it('numbers a provider invoice and names it by the template (F37)', async () => {
+    const { service, provider, repository } = setup({
+      fiscal: { mode: 'provider_receipt', item_name_template: 'Пополнение баланса (#{number})' },
+      receipts: true,
+    });
+    repository.nextInvoiceNumber.mockResolvedValue('99-00007');
+    await service.createInvoice({
+      userId: USER,
+      kind: 'topup',
+      provider: 'mock',
+      amountMinor: 5000n,
+      idempotencyKey: 'k1',
+    });
+    const [params] = provider.createInvoice.mock.calls[0] ?? [];
+    expect(repository.nextInvoiceNumber).toHaveBeenCalledWith('mock');
+    expect(params?.description).toBe('Пополнение баланса (#99-00007)');
+    expect(params?.receipt?.items[0]?.description).toBe('Пополнение баланса (#99-00007)');
+    expect(repository.createInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ number: '99-00007' }),
+    );
+  });
+
+  it('fills the brand into the template', async () => {
+    const { service, provider, repository } = setup({
+      fiscal: { item_name_template: '{brand}: пополнение (#{number})' },
+    });
+    repository.nextInvoiceNumber.mockResolvedValue('99-00002');
+    await service.createInvoice({
+      userId: USER,
+      kind: 'topup',
+      provider: 'mock',
+      amountMinor: 5000n,
+      idempotencyKey: 'k6',
+    });
+    expect(provider.createInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Manta VPN: пополнение (#99-00002)' }),
+      expect.anything(),
+    );
+  });
+
+  it('refuses a purchase at a provider (F37: purchases only from the balance)', async () => {
+    const { service, provider, repository } = setup();
+    await expect(
+      service.createInvoice({
+        userId: USER,
+        kind: 'purchase',
+        planId: PLAN,
+        provider: 'mock',
+        idempotencyKey: 'k2',
+      }),
+    ).rejects.toMatchObject({ code: 'BALANCE_ONLY' });
+    expect(provider.createInvoice).not.toHaveBeenCalled();
+    expect(repository.nextInvoiceNumber).not.toHaveBeenCalled();
+  });
+
+  it('refuses a plan change at a provider the same way', async () => {
+    const { service, provider } = setup();
+    await expect(
+      service.createInvoice({
+        userId: USER,
+        kind: 'plan_change',
+        planId: PLAN,
+        provider: 'mock',
+        idempotencyKey: 'k7',
+      }),
+    ).rejects.toMatchObject({ code: 'BALANCE_ONLY' });
+    expect(provider.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('stores the purpose of a top-up for a plan', async () => {
+    const { service, repository } = setup();
+    repository.nextInvoiceNumber.mockResolvedValue('99-00008');
+    await service.createInvoice({
+      userId: USER,
+      kind: 'topup',
+      provider: 'mock',
+      amountMinor: 5000n,
+      idempotencyKey: 'k3',
+      target: { planId: PLAN, kind: 'purchase', promocode: 'SALE' },
+    });
+    expect(repository.createInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { planId: PLAN, kind: 'purchase', promocode: 'SALE' } }),
+    );
+  });
+
+  it('takes no number for a purchase from the balance', async () => {
+    const { service, repository } = setup({ balance: true });
+    await service.createInvoice({
+      userId: USER,
+      kind: 'purchase',
+      planId: PLAN,
+      provider: 'balance',
+      idempotencyKey: 'k4',
+    });
+    expect(repository.nextInvoiceNumber).not.toHaveBeenCalled();
+    expect(repository.createBalanceInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'purchase', amountMinor: 29900n }),
+    );
+    const [input] = repository.createBalanceInvoice.mock.calls[0] as [Record<string, unknown>];
+    expect(input).not.toHaveProperty('number');
+  });
+
+  it('charges a plan change from the balance the price less the remainder', async () => {
+    const { db, service, repository } = setup({ balance: true });
+    db.plan.findFirst.mockResolvedValue({
+      id: OTHER_PLAN,
+      slug: 'max',
+      name: { ru: 'Максимум' },
+      priceMinor: 59900n,
+      durationDays: 30,
+    });
+    Object.assign(db, {
+      subscription: {
+        findFirst: vi.fn().mockResolvedValue({
+          planId: PLAN,
+          expiresAt: new Date(Date.now() + 15 * 86_400_000 + 60_000),
+        }),
+      },
+    });
+    Object.assign(db.plan, {
+      findUnique: vi.fn().mockResolvedValue({ id: PLAN, priceMinor: 29900n, durationDays: 30 }),
+    });
+    await service.createInvoice({
+      userId: USER,
+      kind: 'plan_change',
+      planId: OTHER_PLAN,
+      provider: 'balance',
+      idempotencyKey: 'k10',
+    });
+    const [input] = repository.createBalanceInvoice.mock.calls[0] as [{ amountMinor: bigint }];
+    // 59 900 − ceil(29 900 × remaining / 30 days); the extra minute adds one kopeck of credit.
+    expect(input.amountMinor).toBe(44_949n);
+  });
+
+  it('still refuses a free plan instead of charging one kopeck for it', async () => {
+    const { db, service, repository } = setup({ balance: true });
+    db.plan.findFirst.mockResolvedValue({
+      id: PLAN,
+      slug: 'free',
+      name: { ru: 'Бесплатный' },
+      priceMinor: 0n,
+      durationDays: 30,
+    });
+    await expect(
+      service.createInvoice({
+        userId: USER,
+        kind: 'purchase',
+        planId: PLAN,
+        provider: 'balance',
+        idempotencyKey: 'k9',
+      }),
+    ).rejects.toMatchObject({ code: 'PLAN_UNAVAILABLE' });
+    expect(repository.createBalanceInvoice).not.toHaveBeenCalled();
+  });
+
+  it('replays a top-up for a plan by its purpose, not its amount', async () => {
+    const { service, repository } = setup();
+    repository.findByIdempotencyKey.mockResolvedValue({
+      id: 'inv',
+      userId: USER,
+      kind: 'topup',
+      planId: null,
+      provider: 'mock',
+      amountMinor: 5000n,
+      targetPlanId: PLAN,
+      targetKind: 'purchase',
+      targetPromocode: null,
+    });
+    await expect(
+      service.replay({
+        userId: USER,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 7000n,
+        idempotencyKey: 'k5',
+        target: { planId: PLAN, kind: 'purchase' },
+      }),
+    ).resolves.toMatchObject({ id: 'inv' });
+    await expect(
+      service.replay({
+        userId: USER,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'k5',
+        target: { planId: OTHER_PLAN, kind: 'purchase' },
+      }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+  });
+
+  it('never replays a top-up for a plan as a plain top-up, or the other way round', async () => {
+    const { service, repository } = setup();
+    repository.findByIdempotencyKey.mockResolvedValue({
+      id: 'inv',
+      userId: USER,
+      kind: 'topup',
+      planId: null,
+      provider: 'mock',
+      amountMinor: 5000n,
+      targetPlanId: PLAN,
+      targetKind: 'purchase',
+      targetPromocode: null,
+    });
+    await expect(
+      service.replay({
+        userId: USER,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'k8',
+      }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+    repository.findByIdempotencyKey.mockResolvedValue({
+      id: 'inv',
+      userId: USER,
+      kind: 'topup',
+      planId: null,
+      provider: 'mock',
+      amountMinor: 5000n,
+      targetPlanId: null,
+      targetKind: null,
+      targetPromocode: null,
+    });
+    await expect(
+      service.replay({
+        userId: USER,
+        kind: 'topup',
+        provider: 'mock',
+        amountMinor: 5000n,
+        idempotencyKey: 'k8',
+        target: { planId: PLAN, kind: 'purchase' },
+      }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+  });
+
+  it('gives the provider minimum for the top-up of a plan', () => {
+    const { service } = setup();
+    expect(service.minimumMinor('mock')).toBe(100n);
+    expect(service.minimumMinor('balance')).toBe(0n);
   });
 });
 

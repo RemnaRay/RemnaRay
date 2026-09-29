@@ -15,6 +15,7 @@ export class PaymentError extends Error {
       | 'REFUND_EXCEEDS_REMAINING'
       | 'TRANSACTION_NOT_FOUND'
       | 'INSUFFICIENT_FUNDS'
+      | 'BALANCE_ONLY'
       | 'IDEMPOTENCY_KEY_REUSED',
     message: string = code,
   ) {
