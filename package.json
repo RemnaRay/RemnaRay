@@ -20,7 +20,7 @@
     "prepare": "husky",
     "test": "node --test test/tooling.test.mjs test/proxy-smoke.test.mjs test/monitoring.test.mjs test/docs.test.mjs test/rr.test.mjs",
     "test:e2e": "pnpm build && playwright test -c e2e/playwright.config.ts",
-    "test:m1": "pnpm build && node --test test/m1.integration.test.mjs test/m1.worker-cron.integration.test.mjs test/m1.trial-provisioning.integration.test.mjs test/m1.fiscal-mode-migration.integration.test.mjs test/m1.database-url.integration.test.mjs test/m1.env.integration.test.mjs test/m1.rotate-key.integration.test.mjs",
+    "test:m1": "pnpm build && node --test test/m1.integration.test.mjs test/m1.worker-cron.integration.test.mjs test/m1.trial-provisioning.integration.test.mjs test/m1.fiscal-mode-migration.integration.test.mjs test/m1.balance-only-migration.integration.test.mjs test/m1.database-url.integration.test.mjs test/m1.env.integration.test.mjs test/m1.rotate-key.integration.test.mjs",
     "test:m2": "pnpm build && node --test test/m2.payment.integration.test.mjs test/m2.payment-recovery.integration.test.mjs test/m2.stars.integration.test.mjs test/m2.traffic-reset.integration.test.mjs",
     "test:m4": "pnpm build && node --test test/m4.admin.integration.test.mjs test/m4.rewards.integration.test.mjs test/m4.notify.integration.test.mjs test/m4.broadcast.integration.test.mjs test/m4.webhooks.integration.test.mjs test/m4.panel-sync.integration.test.mjs test/m4.support.integration.test.mjs",
     "test:m5": "pnpm build && node --test test/m5.proxy.integration.test.mjs test/m5.proxy-reloader.integration.test.mjs test/m5.backup.integration.test.mjs test/m5.premigrate-backup.integration.test.mjs test/m5.grafana.integration.test.mjs test/m5.valkey-auth.integration.test.mjs",

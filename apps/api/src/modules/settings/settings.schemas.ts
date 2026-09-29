@@ -354,9 +354,19 @@ export const settingRegistry: SettingDefinition[] = [
       description: 'Receipt fallback email.',
     },
     item_name_template: {
-      schema: z.string().min(1),
-      defaultValue: 'Subscription {plan}',
-      description: 'Receipt item name template.',
+      // F37 (ADR-021): one line for every top-up — the receipt's item and the
+      // provider's payment description; `{number}` is the invoice number.
+      schema: z
+        .string()
+        .min(1)
+        .max(128)
+        .refine(
+          (value) =>
+            [...value.matchAll(/\{(\w+)\}/gu)].every((m) => m[1] === 'number' || m[1] === 'brand'),
+          { message: 'Only {number} and {brand} are allowed.' },
+        ),
+      defaultValue: 'Пополнение баланса (#{number})',
+      description: 'Top-up receipt line and payment description; placeholders {number}, {brand}.',
     },
   }),
   ...definitions('referral', {

@@ -269,9 +269,19 @@ model Invoice {
   receipt Json?
   idempotencyKey String @unique @map("idempotency_key")
   numericId BigInt @unique @default(autoincrement()) @map("numeric_id")
+  number String? @unique(map: "ux_invoices_number")
+  targetPlanId String? @map("target_plan_id") @db.Uuid
+  targetKind InvoiceKind? @map("target_kind")
+  targetPromocode String? @map("target_promocode")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   @@map("invoices")
+}
+
+model InvoiceCounter {
+  provider String @id
+  last BigInt
+  @@map("invoice_counters")
 }
 
 model Transaction {

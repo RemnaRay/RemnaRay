@@ -136,3 +136,21 @@ test('append-only tables refuse DELETE and TRUNCATE (repair queue L-20)', async 
       ),
     );
 });
+
+test('provider invoices are numbered top-ups with a purpose (F37, ADR-021)', async () => {
+  const sql = await readFile('prisma/migrations/0014_balance_only_purchases/migration.sql', 'utf8');
+  assert.match(sql, /-- reversible: no/);
+  assert.match(sql, /ADD COLUMN number text/);
+  assert.match(sql, /ADD COLUMN target_plan_id uuid REFERENCES plans\(id\)/);
+  assert.match(sql, /ADD COLUMN target_kind invoice_kind/);
+  assert.match(sql, /ADD COLUMN target_promocode text/);
+  assert.match(
+    sql,
+    /CREATE UNIQUE INDEX ux_invoices_number ON invoices \(number\) WHERE number IS NOT NULL;/,
+  );
+  assert.match(sql, /CHECK \(provider = 'balance' OR kind = 'topup'\) NOT VALID/);
+  assert.match(sql, /CREATE TABLE invoice_counters/);
+  assert.match(sql, /DELETE FROM settings WHERE key = 'referral.count_topups';/);
+  assert.match(schema, /number\s+String\?\s+@unique/);
+  assert.match(schema, /model InvoiceCounter \{/);
+});

@@ -213,4 +213,19 @@ describe('section 17.6 reaction matrix', () => {
     expect(result.channels).toEqual(['rr:bot.reconfigure', 'rr:theme.changed']);
     expect(result.restartRequired).toEqual([]);
   });
+
+  it('defaults the receipt line to the numbered top-up template (F37)', async () => {
+    const service = new SettingsService(new MemoryRepository(), new MemoryEventBus(), appKey);
+    await service.onModuleInit();
+    expect(await service.get('fiscal.item_name_template')).toBe('Пополнение баланса (#{number})');
+  });
+
+  it('refuses a receipt template with an unknown placeholder', async () => {
+    const service = new SettingsService(new MemoryRepository(), new MemoryEventBus(), appKey);
+    await service.onModuleInit();
+    await expect(service.set({ fiscal: { item_name_template: 'Тариф {plan}' } })).rejects.toThrow();
+    await expect(
+      service.set({ fiscal: { item_name_template: '{brand} (#{number})' } }),
+    ).resolves.toBeUndefined();
+  });
 });
