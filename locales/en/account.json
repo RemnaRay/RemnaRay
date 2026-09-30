@@ -161,5 +161,6 @@
   "account.pay.credited": "Your balance was topped up.",
   "account.pay.goToBalance": "Go to the balance",
   "account.pay.expiredTopup": "The invoice expired. If you paid anyway, the money will reach your balance.",
-  "account.balance.number": "Invoice"
+  "account.balance.number": "Invoice",
+  "account.balance.amount": "Amount"
 }

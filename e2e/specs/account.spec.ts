@@ -24,21 +24,53 @@ async function botLink(
  * Signs in the way the bot's button does: the link opens a page naming the
  * account, and the customer confirms (L-3).
  */
-async function signIn(
-  context: BrowserContext,
-  baseURL: string,
-  customer?: { telegramId: string; username?: string },
-): Promise<string> {
+async function signIn(context: BrowserContext, baseURL: string): Promise<string> {
   const state = stackState();
   const page = await context.newPage();
-  await page.goto(await botLink(context, baseURL, customer?.telegramId));
-  if (!customer)
-    await expect(page.getByText(new RegExp(`@${state.user.username}`, 'u'))).toBeVisible();
+  await page.goto(await botLink(context, baseURL));
+  await expect(page.getByText(new RegExp(`@${state.user.username}`, 'u'))).toBeVisible();
   await page.getByRole('button', { name: /^(Войти|Sign in)$/u }).click();
   await page.waitForURL(/\/(ru|en)\/account/u);
   const location = page.url();
   await page.close();
   return location;
+}
+
+/**
+ * A session for a test that is not about signing in. The page's sign-in costs
+ * two `POST /api/v1/auth/*` (preview and confirm), and behind the smoke
+ * stand's proxy the whole suite shares one address and 15 of them a minute
+ * (nginx: burst 10, then one per 12 s). So the link is spent with the one POST
+ * the page's button sends, from the stand's own origin, and the stock
+ * customer's session is kept for the rest of the worker.
+ */
+let stockSession: Awaited<ReturnType<BrowserContext['cookies']>> | undefined;
+
+async function withSession(
+  context: BrowserContext,
+  baseURL: string,
+  customer?: { telegramId: string },
+): Promise<void> {
+  if (!customer && stockSession) {
+    await context.addCookies(stockSession);
+    return;
+  }
+  const link = await botLink(context, baseURL, customer?.telegramId);
+  const token = new URL(link).searchParams.get('token') ?? '';
+  const page = await context.newPage();
+  await page.goto(`${baseURL}/robots.txt`);
+  const status = await page.evaluate(async (value) => {
+    const response = await fetch('/api/v1/auth/tg', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-Requested-With': 'RemnaRay' },
+      credentials: 'include',
+      body: JSON.stringify({ token: value }),
+    });
+    return response.status;
+  }, token);
+  await page.close();
+  expect(status).toBe(204);
+  if (!customer) stockSession = await context.cookies();
 }
 
 /**
@@ -145,7 +177,7 @@ test.describe('customer account', () => {
     page,
     baseURL,
   }) => {
-    await signIn(context, baseURL ?? '');
+    await withSession(context, baseURL ?? '');
     await page.goto('/ru');
     const account = page.getByRole('link', { name: 'Личный кабинет' }).first();
     await expect(account).toBeVisible();
@@ -189,7 +221,7 @@ test.describe('customer account', () => {
     page,
     baseURL,
   }) => {
-    await signIn(context, baseURL ?? '');
+    await withSession(context, baseURL ?? '');
     await page.goto('/ru/account');
 
     await expect(page.getByRole('heading', { name: 'Подписка' })).toBeVisible();
@@ -203,7 +235,7 @@ test.describe('customer account', () => {
     page,
     baseURL,
   }) => {
-    await signIn(context, baseURL ?? '');
+    await withSession(context, baseURL ?? '');
     await page.goto('/ru/account/plans');
 
     await expect(page.locator('[data-state="ready"]')).toBeVisible();
@@ -212,10 +244,18 @@ test.describe('customer account', () => {
     // Providers only top up: they appear inside the checkout of a picked plan.
     const radios = page.locator('input[type="radio"][name="provider"]');
     await expect(radios).toHaveCount(0);
-    await page.getByRole('button', { name: 'Выбрать' }).first().click();
+    await page
+      .getByText(stackState().plan.name, { exact: true })
+      .first()
+      .locator('xpath=ancestor::div[.//button][1]')
+      .getByRole('button', { name: 'Выбрать' })
+      .click();
     await expect(page.getByTestId('checkout')).toBeVisible();
-    await expect(page.getByText(/Не хватает/u)).toBeVisible();
-    await expect(radios.first()).toBeVisible();
+    // The stock customer's 500 ₽ cover the plan: the purchase is from the
+    // balance and no provider is offered. A short balance is the top-up test.
+    await expect(page.getByRole('button', { name: /^Купить с баланса за/u })).toBeVisible();
+    await expect(page.getByText(/Не хватает/u)).toHaveCount(0);
+    await expect(radios).toHaveCount(0);
   });
 
   test('applies a promo code with one button next to the field, to every plan', async ({
@@ -223,7 +263,7 @@ test.describe('customer account', () => {
     page,
     baseURL,
   }) => {
-    await signIn(context, baseURL ?? '');
+    await withSession(context, baseURL ?? '');
     await page.goto('/ru/account/plans');
     await expect(page.locator('[data-state="ready"]')).toBeVisible();
 
@@ -244,13 +284,15 @@ test.describe('customer account', () => {
     page,
     baseURL,
   }) => {
-    await signIn(context, baseURL ?? '');
+    await withSession(context, baseURL ?? '');
     await page.goto('/ru/account/balance');
 
     await expect(page.getByText('Текущий баланс')).toBeVisible();
     await expect(page.getByText('500 ₽').first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Пополнить' }).first()).toBeVisible();
-    await expect(page.locator('[data-state="empty"]')).toBeVisible();
+    // The harness seeds the balance directly; the smoke stand posts it as an
+    // adjustment (R19), which the history lists.
+    await expect(page.locator('[data-state="empty"]').or(page.getByRole('table'))).toBeVisible();
   });
 
   test('saves a settings change and keeps it after a reload', async ({
@@ -258,7 +300,7 @@ test.describe('customer account', () => {
     page,
     baseURL,
   }) => {
-    await signIn(context, baseURL ?? '');
+    await withSession(context, baseURL ?? '');
     await page.goto('/ru/account/settings');
 
     const email = page.getByLabel('Email для чеков');
@@ -270,8 +312,9 @@ test.describe('customer account', () => {
     await expect(page.getByLabel('Email для чеков')).toHaveValue('receipts@example.test');
   });
 
-  test('signs out and returns to the landing', async ({ context, page, baseURL }) => {
-    await signIn(context, baseURL ?? '');
+  test('signs out and returns to the landing', async ({ context, page, request, baseURL }) => {
+    // A customer of its own: signing out ends the session it signed out of.
+    await withSession(context, baseURL ?? '', await newCustomer(request));
     await page.goto('/ru/account');
     await page.getByRole('button', { name: 'Выйти' }).click();
 
@@ -400,7 +443,7 @@ test.describe('customer account', () => {
   }) => {
     const state = stackState();
     const customer = await newCustomer(request);
-    await signIn(context, baseURL ?? '', customer);
+    await withSession(context, baseURL ?? '', customer);
     await page.goto('/ru/account/plans');
     await expect(page.locator('[data-state="ready"]')).toBeVisible();
 
@@ -485,7 +528,7 @@ test.describe('customer account', () => {
       )
       .toBe(state.plan.id);
 
-    await signIn(context, baseURL ?? '', customer);
+    await withSession(context, baseURL ?? '', customer);
     await page.goto('/ru/account/plans?change=1');
     await expect(page.locator('[data-state="ready"]')).toBeVisible();
     // The plan the customer is on is not offered; the next one is.

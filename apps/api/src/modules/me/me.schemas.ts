@@ -47,12 +47,8 @@ export const invoiceCreateSchema = z
         });
       return;
     }
-    if (value.provider === 'balance')
-      ctx.addIssue({
-        code: 'custom',
-        path: ['provider'],
-        message: 'The balance does not top itself up.',
-      });
+    // A top-up from the balance itself is the payments core's 409
+    // PROVIDER_UNAVAILABLE (FR-071, section 9.4), not a validation error.
     if ((value.forPlan === undefined) === (value.amountMinor === undefined))
       ctx.addIssue({
         code: 'custom',

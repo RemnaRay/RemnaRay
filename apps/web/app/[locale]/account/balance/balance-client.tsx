@@ -241,7 +241,7 @@ export default function BalanceClient({ locale }: { locale: Locale }) {
                     },
                     {
                       key: 'amount',
-                      header: t('balance.current'),
+                      header: t('balance.amount'),
                       cell: (row) => money(row.amount.amountMinor, row.amount.currency, locale),
                     },
                     {

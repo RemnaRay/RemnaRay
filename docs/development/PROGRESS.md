@@ -1861,6 +1861,59 @@ no `maxLength` on the site's promocode field).
 `0591280`; then package 5 (promocodes, prices, payments — R3, R18, R20/R73
 under О-5 in the F37 model). M5 stays NOT VERIFIED; TASK-M5-004 is unchanged.
 
+### F37 CI run (2026-09-30) — current authority for F37's CI state
+
+The owner pushed `dev`; CI run 36736541719 on `aebb6dc` (the first dev CI
+since 2026-09-27, 82 commits) failed in `e2e`, `proxy-smoke / caddy` and
+`proxy-smoke / nginx`; quality, lighthouse, docker and proxy passed. Causes,
+each from the logs, the Playwright traces and the code:
+
+- `account.spec.ts` «showcase … (F37)»: the spec expected «Не хватает» for the
+  stock customer, who has 500 ₽ against a 299 ₽ plan — a test error. It now
+  picks the stock plan by name and expects «Купить с баланса» and no provider;
+  the short-balance path stays covered by the mock top-up spec.
+- «leaves no invoice to check …» expected `409 PROVIDER_UNAVAILABLE` for a
+  top-up with `provider: "balance"`, and got 400: F37 (`d5019a1`) had added a
+  schema refinement that pre-empted the payments core's established answer
+  (`requireOffered`, section 9.4 lists 409 `PROVIDER_UNAVAILABLE`). The
+  refinement is removed; a unit test pins the 409; `docs/api.md` names it.
+- `admin.spec.ts` dashboard still looked for «Выручка», which F37 renamed to
+  «Поступления»/«Продажи».
+- `proxy-smoke / caddy` also failed «applies a promo code …» and «shows the
+  balance …»: the trace shows `POST /api/v1/auth/tg/preview` answered **429**.
+  Since L-3 (`9cdb515`, 2026-09-28, never through CI before) the page's
+  sign-in is two POSTs, and the proxy allows 15 sign-in POSTs a minute per
+  address (nginx: burst 10, then one per 12 s); the suite, plus the retries of
+  the failing test, spent them. Tests not about signing in now spend a bot
+  link with one POST from the stand's origin and reuse the stock customer's
+  session (about 9 sign-in POSTs per run instead of about 22); the sign-out
+  test uses a customer of its own. The limits are unchanged.
+- The same «shows the balance …» then hit two «Текущий баланс»: the history's
+  amount column was headed with the balance label (since `086eb86`), and the
+  smoke seed has posted its 500 ₽ as a real adjustment since `f55bc95`
+  (2026-09-28), so the history is not empty there. The column is now «Сумма»
+  / «Amount» (web test added) and the spec accepts either the empty state or
+  the table.
+- `proxy-smoke / nginx` failed before the browser suite: building the caddy
+  image, `sum.golang.org` answered a stream error (infrastructure; a re-run
+  suffices).
+- Not this run: the daily `nightly`/`rebuild` failures are on `main`, which
+  still pins `trivy-action@0.28.0` (gone upstream; `dev` pins v0.36.0) and an
+  older lockfile (`pnpm audit --audit-level high` on `dev`: no known
+  vulnerabilities).
+
+Evidence (local): `pnpm test:e2e` **40/40** — the first browser run of F37
+here (Chromium's missing `libnspr4`/`libnss3`/`libasound` unpacked from the
+Ubuntu packages into a scratch directory via `LD_LIBRARY_PATH`); unit api 528,
+web 81; typecheck (and `typecheck:e2e`); lint; i18n-check (2368 messages).
+Not verified: CI on the new commit, in particular both `proxy-smoke` browser
+suites behind the real proxies (their rate limits cannot be reproduced here).
+Queued: the sign-in page reports a 429 as «ссылка недействительна или уже
+использована» although the link is intact (package 8).
+
+**Exact next:** the owner pushes `dev` and checks CI (e2e and both
+`proxy-smoke` jobs); then package 5. M5 stays NOT VERIFIED.
+
 ## VPS acceptance run — 2026-09-26
 
 Current milestone remains M5 (NOT VERIFIED); TASK-M5-004 remains the sole

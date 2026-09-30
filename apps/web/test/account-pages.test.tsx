@@ -184,6 +184,31 @@ describe('the balance page (section 15.2)', () => {
     expect(markup).not.toContain('В обработке:');
   });
 
+  it('heads the history amount «Сумма», not a second «Текущий баланс»', async () => {
+    const markup = await renderPage(BalanceClient, {
+      ...routes(0),
+      '/api/v1/me/transactions': {
+        body: {
+          items: [
+            {
+              id: 'tx-1',
+              type: 'adjustment',
+              amount: { amountMinor: 50000, currency: 'RUB' },
+              provider: null,
+              status: 'completed',
+              createdAt: '2026-09-28T00:00:00.000Z',
+              description: 'seed balance',
+              invoiceNumber: null,
+            },
+          ],
+          nextCursor: null,
+        },
+      },
+    });
+    expect(markup).toMatch(/<th[^>]*>Сумма<\/th>/u);
+    expect(markup.match(/Текущий баланс/gu)).toHaveLength(1);
+  });
+
   it('lets the customer choose the provider of a top-up, never the balance (FR-071)', async () => {
     const markup = await renderPage(BalanceClient, {
       ...routes(0),

@@ -161,5 +161,6 @@
   "account.pay.credited": "Баланс пополнен.",
   "account.pay.goToBalance": "Перейти к балансу",
   "account.pay.expiredTopup": "Счёт истёк. Если вы всё же оплатили, деньги придут на баланс.",
-  "account.balance.number": "Счёт"
+  "account.balance.number": "Счёт",
+  "account.balance.amount": "Сумма"
 }

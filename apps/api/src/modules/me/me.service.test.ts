@@ -901,6 +901,21 @@ describe('top-up for a plan (F37)', () => {
     expect((error as { response: { error: object } }).response.error).not.toHaveProperty('details');
   });
 
+  it('leaves a top-up from the balance itself to the payments core: 409 PROVIDER_UNAVAILABLE', async () => {
+    const { service, payments } = build({ balanceMinor: 0n });
+    payments.createInvoice.mockRejectedValue(new PaymentError('PROVIDER_UNAVAILABLE'));
+    await expect(
+      service.createInvoice(
+        USER,
+        { kind: 'topup', provider: 'balance', amountMinor: 10000 },
+        'key-balance',
+      ),
+    ).rejects.toMatchObject({ status: 409, code: 'PROVIDER_UNAVAILABLE' });
+    expect(payments.createInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'topup', provider: 'balance' }),
+    );
+  });
+
   it('maps a BALANCE_ONLY refusal from the payments core to 422 (fallback)', async () => {
     const { service, payments } = build({ balanceMinor: 0n });
     payments.createInvoice.mockRejectedValue(new PaymentError('BALANCE_ONLY'));

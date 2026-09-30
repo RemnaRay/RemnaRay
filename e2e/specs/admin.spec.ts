@@ -9,8 +9,10 @@ test.describe('administration console', () => {
 
   test('dashboard renders the widgets and both charts', async ({ page }) => {
     await expect(page.locator('[data-state="ready"]')).toBeVisible();
-    await expect(page.getByText('Выручка', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText('Выручка по дням')).toBeVisible();
+    // F37: provider money is «Поступления», plans bought are «Продажи».
+    await expect(page.getByText('Поступления', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Продажи', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Поступления по дням')).toBeVisible();
     await expect(page.getByText('Регистрации по дням')).toBeVisible();
     await expect(page.getByText('Требует внимания')).toBeVisible();
   });
