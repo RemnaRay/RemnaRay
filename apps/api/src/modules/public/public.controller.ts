@@ -62,6 +62,7 @@ export class PublicController {
       botUsername,
       defaultLocale,
       enabled,
+      adminLanguage,
       trialEnabled,
       trialDays,
       topupEnabled,
@@ -77,6 +78,7 @@ export class PublicController {
       this.settings.get('bot.username'),
       this.settings.get('locale.default'),
       this.settings.get('locale.enabled'),
+      this.settings.get('admin.language'),
       this.settings.get('trial.enabled'),
       this.settings.get('trial.days'),
       this.settings.get('balance.topup_enabled'),
@@ -95,7 +97,9 @@ export class PublicController {
         botUsername: String(botUsername),
         hidePoweredBy: Boolean(hidePoweredBy),
       },
-      locales: { default: defaultLocale, enabled },
+      // `admin` is the console language: its sign-in page renders before any
+      // session exists, so it is read here and not behind the admin API.
+      locales: { default: defaultLocale, enabled, admin: adminLanguage },
       currency: 'RUB',
       features: {
         trial: { enabled: Boolean(trialEnabled), days: Number(trialDays) },

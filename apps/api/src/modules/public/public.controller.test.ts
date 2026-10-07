@@ -10,6 +10,7 @@ const settingValues: Record<string, unknown> = {
   'bot.username': 'manta_bot',
   'locale.default': 'ru',
   'locale.enabled': ['ru', 'en'],
+  'admin.language': 'en',
   'trial.enabled': true,
   'trial.days': 3,
   'balance.topup_enabled': true,
@@ -44,7 +45,7 @@ describe('public API', () => {
         botUsername: 'manta_bot',
         hidePoweredBy: false,
       },
-      locales: { default: 'ru', enabled: ['ru', 'en'] },
+      locales: { default: 'ru', enabled: ['ru', 'en'], admin: 'en' },
       currency: 'RUB',
       features: { trial: { enabled: true, days: 3 }, topup: true, referral: true, promo: true },
     });

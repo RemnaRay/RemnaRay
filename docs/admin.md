@@ -111,8 +111,10 @@ is copied into the audit row.
 
 `/admin` is served without a locale prefix and always uses the neutral `_admin`
 theme; its texts come from the shipped `admin.json` only, which section 18.4
-keeps outside the owner's override surface. The interface language follows
-`settings.locale.default` until an administrator profile language exists.
+keeps outside the owner's override surface. The interface language is
+`settings.admin.language` (the wizard sets it to the default locale);
+`GET /api/v1/public/config` carries it as `locales.admin`, so the sign-in page
+uses it too.
 
 | Path                                | Content                                                                                   |
 | ----------------------------------- | ----------------------------------------------------------------------------------------- |
